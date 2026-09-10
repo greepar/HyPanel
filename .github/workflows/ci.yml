@@ -27,6 +27,17 @@ jobs:
         with:
           global-json-file: global.json
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/HyPanel.Web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web/HyPanel.Web
+        run: npm ci
+
       - name: Restore .NET dependencies
         run: dotnet restore HyPanel.slnx
 
@@ -41,17 +52,6 @@ jobs:
 
       - name: Publish Agent NativeAOT binary
         run: dotnet publish src/HyPanel.Agent/HyPanel.Agent.csproj --configuration Release --runtime linux-x64 --self-contained true
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: web/HyPanel.Web/package-lock.json
-
-      - name: Install web dependencies
-        working-directory: web/HyPanel.Web
-        run: npm ci
 
       - name: Build web application
         working-directory: web/HyPanel.Web

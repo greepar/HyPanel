@@ -35,6 +35,14 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/HyPanel.Web/package-lock.json
+      - name: Install web dependencies
+        working-directory: web/HyPanel.Web
+        run: npm ci
       - name: Build release artifacts
         shell: sh
         env:
