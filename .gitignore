@@ -1,0 +1,13 @@
+bin/
+obj/
+.idea/
+.DS_Store
+
+node_modules/
+dist/
+
+artifacts/
+
+*.db
+*.db-shm
+*.db-wal

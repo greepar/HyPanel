@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (without a leading v)
+        required: true
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.rid }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { rid: win-x64, server: '' }
+          - { rid: win-arm64, server: '' }
+          - { rid: osx-x64, server: '' }
+          - { rid: osx-arm64, server: '' }
+          - { rid: linux-x64, server: linux-x64 }
+          - { rid: linux-arm64, server: linux-arm64 }
+          - { rid: linux-musl-x64, server: linux-musl-x64 }
+          - { rid: linux-musl-arm64, server: linux-musl-arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Build release artifacts
+        shell: sh
+        env:
+          AGENT_RIDS: ${{ matrix.rid }}
+          SERVER_RIDS: ${{ matrix.server }}
+        run: |
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
+          version='${{ inputs.version }}'
+          if [ -z "$version" ]; then version="${GITHUB_REF_NAME#v}"; fi
+          REQUIRE_ALL_AGENT_RIDS=false sh scripts/build-release.sh "$version" release-output
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.rid }}
+          path: release-output
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: gathered
+          merge-multiple: false
+      - name: Assemble release metadata
+        run: |
+          mkdir assembled
+          find gathered -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp '{}' assembled/ \;
+          cp gathered/release-linux-x64/install.sh assembled/
+          cp gathered/release-linux-x64/install.ps1 assembled/
+          jq -s --argjson frozen '["win-x64","win-arm64","osx-x64","osx-arm64","linux-x64","linux-arm64","linux-musl-x64","linux-musl-arm64"]' 'def assets: (map(.assets) | add); {schemaVersion:1, version:.[0].version, publishedAt:.[0].publishedAt, assets:assets} | if ([.assets[].rid] | unique | sort) == ($frozen | sort) and (.assets | length) == 8 then . else error("manifest must contain exactly 8 frozen Agent RIDs") end' gathered/*/manifest.json > assembled/manifest.json
+          (cd assembled && sha256sum -- * > SHA256SUMS)
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', inputs.version) }}
+          name: HyPanel ${{ inputs.version || github.ref_name }}
+          files: assembled/*

@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/HyPanel.Agent/HyPanel.Agent.csproj" />
+    <Project Path="src/HyPanel.Server/HyPanel.Server.csproj" />
+    <Project Path="src/HyPanel.Shared/HyPanel.Shared.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/HyPanel.Agent.Tests/HyPanel.Agent.Tests.csproj" />
+    <Project Path="tests/HyPanel.Server.Tests/HyPanel.Server.Tests.csproj" />
+    <Project Path="tests/HyPanel.Shared.Tests/HyPanel.Shared.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,6 @@
+@HyPanel.Server_HostAddress = http://localhost:5291
+
+GET {{HyPanel.Server_HostAddress}}/health
+Accept: application/json
+
+###

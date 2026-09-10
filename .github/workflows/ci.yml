@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: .NET, Web, and NativeAOT checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore .NET dependencies
+        run: dotnet restore HyPanel.slnx
+
+      - name: Build .NET solution
+        run: dotnet build HyPanel.slnx --configuration Release --no-restore
+
+      - name: Run .NET tests
+        run: dotnet test HyPanel.slnx --configuration Release --no-restore
+
+      - name: Publish Server NativeAOT binary
+        run: dotnet publish src/HyPanel.Server/HyPanel.Server.csproj --configuration Release --runtime linux-x64 --self-contained true
+
+      - name: Publish Agent NativeAOT binary
+        run: dotnet publish src/HyPanel.Agent/HyPanel.Agent.csproj --configuration Release --runtime linux-x64 --self-contained true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/HyPanel.Web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web/HyPanel.Web
+        run: npm ci
+
+      - name: Build web application
+        working-directory: web/HyPanel.Web
+        run: npm run build
