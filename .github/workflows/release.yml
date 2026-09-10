@@ -43,17 +43,35 @@ jobs:
       - name: Install web dependencies
         working-directory: web/HyPanel.Web
         run: npm ci
+      - name: Resolve release version
+        id: release-version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$REF_TYPE" == "tag" ]]; then
+            version="${REF_NAME#v}"
+          else
+            version="$INPUT_VERSION"
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Build release artifacts
         shell: sh
         env:
           AGENT_RIDS: ${{ matrix.rid }}
           SERVER_RIDS: ${{ matrix.server }}
+          RELEASE_VERSION: ${{ steps.release-version.outputs.version }}
         run: |
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
           export SOURCE_DATE_EPOCH
-          version='${{ inputs.version }}'
-          if [ -z "$version" ]; then version="${GITHUB_REF_NAME#v}"; fi
-          REQUIRE_ALL_AGENT_RIDS=false sh scripts/build-release.sh "$version" release-output
+          REQUIRE_ALL_AGENT_RIDS=false sh scripts/build-release.sh "$RELEASE_VERSION" release-output
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.rid }}
