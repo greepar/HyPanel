@@ -10,15 +10,17 @@
 - Embedded index and hashed JS/CSS: `EmbeddedWebResources_ContainIndexAndReferencedAssets`.
 - Asset path and MIME safety: `IsSafeAssetFileName_RejectsTraversalAndNonBasenames`, `GetContentType_ReturnsExplicitSafeMimeType`.
 
-## Final verification target
+## Final verification
 
-- Release build: 0 warnings / 0 errors.
-- Shared: 6/6.
-- Server: 60/60.
-- Agent: 111/111.
-- Total: 177/177.
-- Web production build and linux-x64 Server/Agent NativeAOT publish.
-- US embedded Web HTTP/browser smoke and US+UK Phase 7 lifecycle evidence.
+- Release build: PASS, 0 warnings / 0 errors.
+- Shared: PASS, 6/6.
+- Server: PASS, 60/60.
+- Agent: PASS, 111/111.
+- Total: PASS, 177/177.
+- Web production build: PASS.
+- Server and Agent linux-x64 NativeAOT publish: PASS.
+- US template/batch/rollback E2E and embedded Web HTTP/browser smoke: PASS; browser console has 0 errors and 0 warnings.
+- UK Agent revision, Hysteria2 listener, isolation, and cleanup checks: PASS.
 
 ## Deferred by architecture
 

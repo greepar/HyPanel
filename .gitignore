@@ -1,6 +1,7 @@
 bin/
 obj/
 .idea/
+.playwright-mcp/
 .DS_Store
 
 node_modules/
