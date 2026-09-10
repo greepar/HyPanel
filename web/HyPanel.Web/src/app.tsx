@@ -19,6 +19,8 @@ type ShadowsocksForm = { backendType: 'mihomo' | 'sing-box'; name: string; versi
 type ServiceFormState = HyForm | XrayForm | ShadowsocksForm
 type ServicePayload = { name: string; backendType: string; backendVersion: string; configSchemaVersion: 1; configJson: string }
 type Request = <T,>(path: string, init?: RequestInit) => Promise<T>
+type BackendType = ServiceFormState['backendType']
+type BackendDefinition = { name: string; core: string; protocol: string; description: string; badge: string }
 
 const themes: Theme[] = ['light', 'dark', 'system']
 const themeLabels: Record<Theme, string> = { light: '浅色', dark: '深色', system: '跟随系统' }
@@ -27,6 +29,12 @@ const adminPageLabels: Record<AdminPage, { name: string; mark: string }> = {
   templates: { name: '模板', mark: '模' }, users: { name: '用户', mark: '用' },
 }
 const statusLabels = ['未知', '安装中', '已停止', '启动中', '运行中', '停止中', '失败', '更新中']
+const backendDefinitions: Record<BackendType, BackendDefinition> = {
+  hysteria2: { name: 'Hysteria 2 官方服务端', core: 'Hysteria 2', protocol: 'Hysteria 2 / QUIC', description: '官方 Hysteria 2 内核，适合高延迟或不稳定网络。', badge: 'HY2' },
+  xray: { name: 'Xray REALITY', core: 'Xray-core', protocol: 'VLESS + TCP + REALITY', description: 'Xray-core 运行 VLESS Vision，并使用 REALITY 握手。', badge: 'XR' },
+  mihomo: { name: 'Mihomo Shadowsocks', core: 'Mihomo', protocol: 'Shadowsocks 2022', description: 'Mihomo 内核运行 Shadowsocks 2022 入站，支持 UDP。', badge: 'MI' },
+  'sing-box': { name: 'sing-box Shadowsocks', core: 'sing-box', protocol: 'Shadowsocks 2022', description: 'sing-box 内核运行 Shadowsocks 2022 入站，支持 UDP。', badge: 'SB' },
+}
 const issueKindLabels: Record<string, string> = { offline: '节点离线', revisionDrift: '配置漂移', failedService: '服务失败' }
 const serviceFieldLabels: Record<string, string> = {
   name: '服务名称', version: '后端版本', listenHost: '监听地址', port: '监听端口',
@@ -41,6 +49,21 @@ const emptyService: HyForm = { backendType: 'hysteria2', name: '', version: '2.1
 const emptyXrayService: XrayForm = { backendType: 'xray', name: '', version: '26.3.27', listenHost: '0.0.0.0', port: '443', clientId: '', clientEmail: '', flow: 'xtls-rprx-vision', realityPrivateKey: '', realityPublicKey: '', shortId: '', serverName: '', destination: '', fingerprint: 'chrome' }
 const emptyMihomoService: ShadowsocksForm = { backendType: 'mihomo', name: '', version: '1.19.30', listenHost: '0.0.0.0', port: '24446', method: '2022-blake3-aes-256-gcm', password: '', udp: true }
 const emptySingBoxService: ShadowsocksForm = { backendType: 'sing-box', name: '', version: '1.14.0', listenHost: '0.0.0.0', port: '24447', method: '2022-blake3-aes-256-gcm', password: '', udp: true }
+
+const backendFor = (backendType: string): BackendDefinition => backendDefinitions[backendType as BackendType] ?? { name: backendType, core: backendType, protocol: '未知协议', description: '未知后端类型', badge: '?' }
+
+const readConfig = (configJson: string): Record<string, unknown> => {
+  try { return JSON.parse(configJson) as Record<string, unknown> }
+  catch { return {} }
+}
+
+const serviceSummary = (service: Service) => {
+  const config = readConfig(service.configJson)
+  const listen = `${String(config.listenHost ?? '0.0.0.0')}:${String(config.listenPort ?? '未设置')}`
+  if (service.backendType === 'hysteria2') return [listen, `${config.upMbps ?? '?'} / ${config.downMbps ?? '?'} Mbps`, config.obfsPassword ? 'Salamander 混淆' : '无混淆']
+  if (service.backendType === 'xray') return [listen, String(config.serverName ?? '未设置 SNI'), 'Vision + REALITY']
+  return [listen, String(config.method ?? 'Shadowsocks 2022'), config.udp === false ? '仅 TCP' : 'TCP + UDP']
+}
 
 const storedTheme = (): Theme => {
   const value = localStorage.getItem('hypanel-theme') as Theme
@@ -388,6 +411,7 @@ function AdminPanel({ request, setError }: { request: Request; setError: (value:
       </header>
       <div className="workspace-content">
         {page === 'overview' && <><HealthSection health={health} /><NodeFleet nodes={nodes} selectedNode={node} selectNode={loadServices} /></>}
+        {page === 'services' && showService && <ServiceForm form={serviceForm} setForm={setServiceForm} save={saveService} saveAsTemplate={saveTemplate} cancel={() => { setShowService(false); setEditing(null) }} editing={editing} setError={setError} />}
         {page === 'services' && <ServicesWorkspace
           nodes={nodes}
           node={node}
@@ -400,7 +424,6 @@ function AdminPanel({ request, setError }: { request: Request; setError: (value:
           edit={service => editService(service, setEditing, setServiceForm, setShowService)}
           saveEndpoint={saveEndpoint}
         />}
-        {page === 'services' && showService && <ServiceForm form={serviceForm} setForm={setServiceForm} save={saveService} saveAsTemplate={saveTemplate} cancel={() => { setShowService(false); setEditing(null) }} editing={editing} setError={setError} />}
         {page === 'templates' && <TemplatesSection templates={templates} names={templateNames} setNames={setTemplateNames} canInstantiate={!!node} targetNodeName={node?.displayName ?? null} instantiate={instantiateTemplate} remove={deleteTemplate} />}
         {page === 'users' && <UsersSection users={users} form={userForm} setForm={setUserForm} create={createUser} issuedToken={issuedToken} clearToken={() => setIssuedToken('')} rotate={rotateUserToken} services={services} bindings={bindings} toggleBinding={toggleBinding} setError={setError} targetNodeName={node?.displayName ?? null} />}
       </div>
@@ -422,7 +445,7 @@ function ServicesWorkspace({ nodes, node, services, selected, endpointForms, loa
       </button>) : <p className="muted">暂无可选节点。</p>}
     </aside>
     <section className="card panel services-panel">
-      <div className="section-heading"><div><h2>{node?.displayName ?? '未选择节点'}</h2><p className="muted">选择服务可批量变更状态，也可编辑配置或设置公网端点。</p></div></div>
+      <div className="section-heading"><div><p className="section-kicker">当前节点</p><h2>{node?.displayName ?? '未选择节点'}</h2><p className="muted">每张卡片会分别标明运行内核、代理协议和实时状态。</p></div><span className="count-badge">{services.length} 个服务</span></div>
       {services.length ? <div className="service-list">{services.map(service => <ServiceRow
         key={service.id}
         service={service}
@@ -453,22 +476,36 @@ function HealthSection({ health }: { health: HealthSummary | null }) {
 }
 
 function ServiceRow({ service, selected, endpoint, onSelect, onEdit, onEndpointChange, onSaveEndpoint }: { service: Service; selected: boolean; endpoint: EndpointForm; onSelect: () => void; onEdit: () => void; onEndpointChange: (value: EndpointForm) => void; onSaveEndpoint: () => void }) {
-  return <article className="service-row">
-    <label className="service-select"><input type="checkbox" checked={selected} onChange={onSelect} /><span className="sr-only">选择 {service.name}</span></label>
-    <div><strong>{service.name}</strong><small className="service-meta">{service.backendType} {service.backendVersion} · {statusLabels[service.runtime?.status ?? 0] ?? '未知'}</small>{service.runtime?.errorMessage && <small className="service-error">{service.runtime.errorMessage}</small>}</div>
-    <div className="row-actions"><button type="button" className="button button-secondary" onClick={onEdit}>编辑</button></div>
-    <div className="endpoint-form">
-      <input aria-label={`${service.name} 公网主机`} placeholder="公网主机" value={endpoint.host} onInput={event => onEndpointChange({ ...endpoint, host: event.currentTarget.value })} />
-      <input aria-label={`${service.name} 公网端口`} placeholder="端口" inputMode="numeric" value={endpoint.port} onInput={event => onEndpointChange({ ...endpoint, port: event.currentTarget.value })} />
-      <input aria-label={`${service.name} TLS 服务器名称`} placeholder="TLS 服务器名称" value={endpoint.tlsServerName} onInput={event => onEndpointChange({ ...endpoint, tlsServerName: event.currentTarget.value })} />
-      <button type="button" className="button button-secondary" onClick={onSaveEndpoint}>保存端点</button>
+  const backend = backendFor(service.backendType)
+  const status = service.runtime?.status ?? 0
+  return <article className={`service-card ${selected ? 'selected' : ''}`}>
+    <div className="service-card-main">
+      <label className="service-select"><input type="checkbox" checked={selected} onChange={onSelect} /><span className="sr-only">选择 {service.name}</span></label>
+      <span className="backend-mark" aria-hidden="true">{backend.badge}</span>
+      <div className="service-identity">
+        <div className="service-title-line"><h3>{service.name}</h3><span className={`status-badge status-${status}`}>{statusLabels[status] ?? '未知'}</span>{!service.enabled && <span className="status-badge disabled">配置已停用</span>}</div>
+        <p>{backend.name}</p>
+        <div className="service-tags"><span><b>内核</b>{backend.core} {service.backendVersion}</span><span><b>协议</b>{backend.protocol}</span></div>
+      </div>
+      <button type="button" className="button button-secondary" onClick={onEdit}>编辑配置</button>
     </div>
+    <div className="service-facts">{serviceSummary(service).map((value, index) => <span key={value}><b>{['监听地址', '协议参数', '传输能力'][index]}</b>{value}</span>)}</div>
+    {service.runtime?.errorMessage && <p className="service-error"><strong>运行错误</strong>{service.runtime.errorMessage}</p>}
+    <details className="endpoint-details">
+      <summary><span>公网连接端点</span><small>{endpoint.host ? `${endpoint.host}:${endpoint.port || '?'}` : '尚未配置，点击展开'}</small></summary>
+      <div className="endpoint-form">
+        <label>公网主机<input aria-label={`${service.name} 公网主机`} placeholder="例如 us.example.com" value={endpoint.host} onInput={event => onEndpointChange({ ...endpoint, host: event.currentTarget.value })} /></label>
+        <label>公网端口<input aria-label={`${service.name} 公网端口`} placeholder="443" inputMode="numeric" value={endpoint.port} onInput={event => onEndpointChange({ ...endpoint, port: event.currentTarget.value })} /></label>
+        <label>TLS 服务器名称<input aria-label={`${service.name} TLS 服务器名称`} placeholder="通常与公网主机相同" value={endpoint.tlsServerName} onInput={event => onEndpointChange({ ...endpoint, tlsServerName: event.currentTarget.value })} /></label>
+        <button type="button" className="button button-primary" onClick={onSaveEndpoint}>保存公网端点</button>
+      </div>
+    </details>
   </article>
 }
 
 function TemplatesSection({ templates, names, setNames, canInstantiate, targetNodeName, instantiate, remove }: { templates: Template[]; names: Record<string, string>; setNames: (value: Record<string, string>) => void; canInstantiate: boolean; targetNodeName: string | null; instantiate: (template: Template) => Promise<void>; remove: (template: Template) => Promise<void> }) {
   return <section className="card panel"><div className="section-heading"><div><h2>{targetNodeName ?? '未选择节点'}的模板</h2><p className="muted">将新建服务配置保存为可复用模板。实例化操作将目标设为{targetNodeName ?? '当前所选节点'}。</p></div></div>
-    {templates.length ? templates.map(template => <div className="template-row" key={template.id}><div><strong>{template.name}</strong><p className="muted">{template.backendType} {template.backendVersion}</p></div><div className="row-actions"><input placeholder="新服务名称" value={names[template.id] ?? ''} onInput={event => setNames({ ...names, [template.id]: event.currentTarget.value })} /><button type="button" className="button button-secondary" disabled={!canInstantiate} onClick={() => void instantiate(template)}>实例化</button><button type="button" className="button button-danger" onClick={() => void remove(template)}>删除</button></div></div>) : <p className="muted">尚未保存模板。</p>}
+    {templates.length ? <div className="template-grid">{templates.map(template => { const backend = backendFor(template.backendType); return <article className="template-card" key={template.id}><div className="template-heading"><span className="backend-mark">{backend.badge}</span><div><h3>{template.name}</h3><p>{backend.name}</p></div></div><div className="service-tags"><span><b>内核</b>{backend.core} {template.backendVersion}</span><span><b>协议</b>{backend.protocol}</span></div><label>创建到 {targetNodeName ?? '所选节点'}<input placeholder="输入新服务名称" value={names[template.id] ?? ''} onInput={event => setNames({ ...names, [template.id]: event.currentTarget.value })} /></label><div className="row-actions"><button type="button" className="button button-primary" disabled={!canInstantiate} onClick={() => void instantiate(template)}>用此模板创建</button><button type="button" className="button button-danger" onClick={() => void remove(template)}>删除模板</button></div></article> })}</div> : <p className="muted">尚未保存模板。</p>}
   </section>
 }
 
@@ -484,7 +521,7 @@ function UsersSection({ users, form, setForm, create, issuedToken, clearToken, r
       <div className="row-actions"><button className="button button-primary">创建用户</button></div>
     </form>
     {issuedToken && <SensitiveToken token={issuedToken} clear={clearToken} setError={setError} />}
-    <div className="user-list">{users.map(item => <article className="user-row" key={item.id}><div><strong>{item.username}</strong><span className="service-meta">{item.role === 'Admin' ? '管理员' : '用户'} · {item.enabled ? '已启用' : '已停用'} · {item.trafficLimitBytes === null ? '不限' : bytes(item.trafficLimitBytes)} · {item.expiresAtUtc ? new Date(item.expiresAtUtc).toLocaleDateString('zh-CN') : '永不过期'}</span><div className="grant-list">{services.map(service => <label key={service.id} className="toggle-label"><input type="checkbox" checked={bindings[item.id]?.includes(service.id) ?? false} onChange={() => void toggleBinding(item.id, service.id)} />{service.name}</label>)}</div></div><button type="button" className="button button-secondary" onClick={() => void rotate(item)}>轮换令牌</button></article>)}</div>
+    <div className="user-list">{users.map(item => <article className="user-row" key={item.id}><div><strong>{item.username}</strong><span className="service-meta">{item.role === 'Admin' ? '管理员' : '用户'} · {item.enabled ? '已启用' : '已停用'} · {item.trafficLimitBytes === null ? '不限流量' : bytes(item.trafficLimitBytes)} · {item.expiresAtUtc ? new Date(item.expiresAtUtc).toLocaleDateString('zh-CN') : '永不过期'}</span><p className="grant-heading">可访问的服务</p><div className="grant-list">{services.map(service => { const backend = backendFor(service.backendType); return <label key={service.id} className="grant-option"><input type="checkbox" checked={bindings[item.id]?.includes(service.id) ?? false} onChange={() => void toggleBinding(item.id, service.id)} /><span><strong>{service.name}</strong><small>{backend.core} · {backend.protocol}</small></span></label> })}</div></div><button type="button" className="button button-secondary" onClick={() => void rotate(item)}>轮换令牌</button></article>)}</div>
   </section>
 }
 
@@ -499,15 +536,23 @@ function editService(service: Service, setEditing: (value: Service) => void, set
 }
 
 function ServiceForm({ form, setForm, save, saveAsTemplate, cancel, editing, setError }: { form: ServiceFormState; setForm: (value: ServiceFormState) => void; save: (event: Event) => Promise<void>; saveAsTemplate: (payload: ServicePayload) => Promise<void>; cancel: () => void; editing: Service | null; setError: (value: string) => void }) {
-  const keys = form.backendType === 'xray' ? ['name', 'version', 'listenHost', 'port', 'clientId', 'clientEmail', 'realityPrivateKey', 'realityPublicKey', 'shortId', 'serverName', 'destination'] : form.backendType === 'mihomo' || form.backendType === 'sing-box' ? ['name', 'version', 'listenHost', 'port', 'password'] : ['name', 'version', 'listenHost', 'port', 'certificatePath', 'privateKeyPath', 'authPassword', 'masqueradeUrl', 'obfsPassword', 'upMbps', 'downMbps']
   const change = (key: string, value: string) => setForm({ ...form, [key]: value } as ServiceFormState)
   const secret = (key: string) => /password|privatekey/i.test(key)
   const changeBackend = (value: string) => setForm(value === 'xray' ? emptyXrayService : value === 'mihomo' ? emptyMihomoService : value === 'sing-box' ? emptySingBoxService : emptyService)
   const saveTemplate = async () => { try { await saveAsTemplate(configFor(form)) } catch (reason) { setError(messageFor(reason, '无法保存模板')) } }
-  return <form className="card panel form-grid" onSubmit={event => void save(event)}><h2>{editing ? '编辑' : '创建'} {form.backendType} 服务</h2>
-    <label>后端类型<select value={form.backendType} disabled={!!editing} onChange={event => changeBackend(event.currentTarget.value)}><BackendOptions /></select></label>
-    {keys.map(key => <label key={key}>{serviceFieldLabels[key] ?? key}<input required={key === 'password' || key === 'realityPrivateKey'} type={secret(key) ? 'password' : 'text'} value={String(form[key as keyof ServiceFormState] ?? '')} onInput={event => change(key, event.currentTarget.value)} /></label>)}
-    <div className="row-actions"><button className="button button-primary">保存</button>{!editing && <button className="button button-secondary" type="button" onClick={() => void saveTemplate()}>保存为模板</button>}<button className="button button-secondary" type="button" onClick={cancel}>取消</button></div>
+  const field = (key: string, hint?: string, required = false) => <label key={key}>{serviceFieldLabels[key] ?? key}<input required={required} type={secret(key) ? 'password' : 'text'} value={String(form[key as keyof ServiceFormState] ?? '')} onInput={event => change(key, event.currentTarget.value)} />{hint && <small>{hint}</small>}</label>
+  const backend = backendFor(form.backendType)
+  return <form className="card panel service-editor" onSubmit={event => void save(event)}>
+    <div className="editor-heading"><div><p className="section-kicker">{editing ? '编辑服务' : '新建服务'}</p><h2>{editing ? form.name : '选择运行方案并填写配置'}</h2></div><button className="button button-secondary" type="button" onClick={cancel}>关闭</button></div>
+    <fieldset className="backend-fieldset" disabled={!!editing}><legend>运行方案</legend><p className="field-help">这里同时标明运行内核和对外提供的协议，它们不是同一概念。</p><div className="backend-picker">{(Object.keys(backendDefinitions) as BackendType[]).map(type => { const option = backendDefinitions[type]; return <label className={`backend-option ${form.backendType === type ? 'selected' : ''}`} key={type}><input type="radio" name="backend" value={type} checked={form.backendType === type} onChange={() => changeBackend(type)} /><span className="backend-mark">{option.badge}</span><span><strong>{option.name}</strong><small>{option.core} · {option.protocol}</small><em>{option.description}</em></span></label> })}</div></fieldset>
+    <section className="editor-section"><div className="editor-section-title"><span>01</span><div><h3>基本信息</h3><p>用于在面板中识别这个服务及其运行版本。</p></div></div><div className="editor-fields">{field('name', '建议包含地区和用途，例如“英国 Hysteria 2”。', true)}{field('version', `${backend.core} 的二进制版本。`, true)}</div></section>
+    <section className="editor-section"><div className="editor-section-title"><span>02</span><div><h3>监听设置</h3><p>Agent 将在节点上使用以下地址和端口启动服务。</p></div></div><div className="editor-fields">{field('listenHost', '0.0.0.0 表示监听所有网卡。', true)}{field('port', '请确认防火墙已放行对应 TCP 或 UDP 端口。', true)}</div></section>
+    <section className="editor-section"><div className="editor-section-title"><span>03</span><div><h3>{backend.protocol}</h3><p>{backend.description}</p></div></div><div className="editor-fields">
+      {form.backendType === 'hysteria2' && <>{field('certificatePath', '节点上的 TLS 证书完整路径。', true)}{field('privateKeyPath', '节点上的 TLS 私钥完整路径。', true)}{field('authPassword', '客户端连接时使用的认证密码。', true)}{field('masqueradeUrl', '未识别流量将被代理到此 HTTPS 地址。', true)}{field('obfsPassword', '可选；填写后启用 Salamander 混淆。')}{field('upMbps', '服务端发送带宽上限。', true)}{field('downMbps', '服务端接收带宽上限。', true)}</>}
+      {form.backendType === 'xray' && <>{field('clientId', 'VLESS 客户端 UUID。', true)}{field('clientEmail', '用于日志识别此客户端。')}{field('realityPrivateKey', editing ? '安全原因不会回显已有私钥；保存修改时必须重新填写。' : 'REALITY 服务端私钥。', true)}{field('realityPublicKey', '分发给客户端的 REALITY 公钥。', true)}{field('shortId', 'REALITY Short ID，十六进制字符串。', true)}{field('serverName', '客户端握手使用的 SNI。', true)}{field('destination', 'REALITY 伪装目标，例如 example.com:443。', true)}</>}
+      {(form.backendType === 'mihomo' || form.backendType === 'sing-box') && <>{field('password', 'Shadowsocks 2022 密钥，保存后不会再次显示。', true)}<div className="fixed-setting"><span>加密方法</span><strong>{form.method}</strong><small>当前运行方案固定使用此方法</small></div><div className="fixed-setting"><span>网络支持</span><strong>TCP + UDP</strong><small>UDP 已固定启用</small></div></>}
+    </div></section>
+    <footer className="editor-actions"><div><strong>{backend.name}</strong><small>{backend.core} {form.version} · {backend.protocol}</small></div><div className="row-actions"><button className="button button-primary">{editing ? '保存修改' : '创建服务'}</button>{!editing && <button className="button button-secondary" type="button" onClick={() => void saveTemplate()}>仅保存为模板</button>}<button className="button button-secondary" type="button" onClick={cancel}>取消</button></div></footer>
   </form>
 }
 
@@ -521,7 +566,6 @@ function UserPanel({ request, setError }: { request: Request; setError: (value: 
   return <><section className="intro"><div><p className="eyebrow">账户</p><h1>您的订阅。</h1><p className="muted">查看用量、账户限制和可撤销的订阅链接。</p></div></section><div className="stats-grid"><Stat label="已用流量" value={bytes(total)} note="上传 + 下载" /><Stat label="流量上限" value={me?.trafficLimitBytes === null ? '不限' : bytes(me?.trafficLimitBytes ?? 0)} note="流量额度" /><Stat label="到期时间" value={me?.expiresAtUtc ? new Date(me.expiresAtUtc).toLocaleDateString('zh-CN') : '永不过期'} note="账户有效期" /></div><section className="card panel"><div className="section-heading"><h2>订阅链接</h2><button type="button" className="button button-primary" onClick={() => void rotate()}>签发新令牌</button></div>{issuedToken && <SensitiveToken token={issuedToken} clear={() => setIssuedToken('')} setError={setError} />}</section></>
 }
 
-function BackendOptions() { return <><option value="hysteria2">hysteria2</option><option value="xray">xray</option><option value="mihomo">mihomo</option><option value="sing-box">sing-box</option></> }
 function SensitiveToken({ token, clear, setError }: { token: string; clear: () => void; setError: (value: string) => void }) { const links = ['raw', 'base64', 'mihomo', 'singbox'].map(format => `${location.origin}/s/${encodeURIComponent(token)}?format=${format}`); const copy = async (link: string) => { try { await navigator.clipboard.writeText(link) } catch (reason) { setError(messageFor(reason, '无法复制订阅链接')) } }; return <aside className="token-result"><strong>请立即复制：此令牌无法恢复。</strong>{links.map(link => <p key={link}><code>{link}</code><button type="button" className="button button-secondary" onClick={() => void copy(link)}>复制</button></p>)}<button type="button" className="button button-secondary" onClick={clear}>隐藏</button></aside> }
 function Stat({ label, value, note }: { label: string; value: string; note: string }) { return <article className="card stat-card"><span className="stat-label">{label}</span><strong>{value}</strong><span className="muted">{note}</span></article> }
 function Shell({ children, theme, setTheme, status, onEnd, adminWorkspace = false }: { children: ComponentChildren; theme: Theme; setTheme: (theme: Theme) => void; status: string; onEnd?: () => void; adminWorkspace?: boolean }) { return <div className="app-shell"><header className="topbar"><a className="brand" href="/"><span className="brand-mark">H</span>HyPanel</a><div className="topbar-actions"><span className="status"><span className="status-dot" />{status}</span><div className="theme-picker">{themes.map(value => <button key={value} type="button" className={theme === value ? 'theme-button active' : 'theme-button'} onClick={() => setTheme(value)}>{themeLabels[value]}</button>)}</div>{onEnd && <button type="button" className="button button-secondary" onClick={() => void onEnd()}>结束会话</button>}</div></header><main className={adminWorkspace ? 'content admin-content' : 'content'}>{children}</main></div> }
