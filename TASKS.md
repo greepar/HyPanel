@@ -375,3 +375,8 @@ Planned slices:
 - Owner: terra
 - Status: DONE
 - Result: Split the Admin UI into 概览、服务、模板、用户 workspaces with desktop sidebar, sticky workspace header, responsive mobile navigation, complete Simplified Chinese UI text, and preserved monochrome themes and behavior.
+
+### HP-801 — Release version and artifact publishing
+- Owner: architect
+- Status: DONE
+- Result: Tag-driven semantic version validation and GitHub Release publishing verified with `v0.2.0`; 17 release assets, 8 Agent RIDs, 4 Server RIDs, manifest, and SHA256SUMS published.

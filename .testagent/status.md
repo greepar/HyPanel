@@ -21,6 +21,7 @@
 - Server and Agent linux-x64 NativeAOT publish: PASS.
 - US template/batch/rollback E2E and embedded Web HTTP/browser smoke: PASS; browser console has 0 errors and 0 warnings.
 - UK Agent revision, Hysteria2 listener, isolation, and cleanup checks: PASS.
+- GitHub Release `v0.2.0`: PASS; 17 assets, 8 Agent RIDs, 4 Server RIDs, manifest version `0.2.0`, and SHA256SUMS.
 
 ## Deferred by architecture
 

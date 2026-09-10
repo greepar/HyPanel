@@ -55,6 +55,21 @@ Build all supported release archives and checksums:
 SOURCE_DATE_EPOCH=$(date +%s) sh scripts/build-release.sh 0.2.0 artifacts/release
 ```
 
+## Releases
+
+Release artifacts are built and published by GitHub Actions from semantic
+version tags. Push a tag in the form `vMAJOR.MINOR.PATCH`, for example:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The tag workflow validates the version, builds the supported Agent and Server
+RID archives, generates `manifest.json` and `SHA256SUMS`, and publishes a
+GitHub Release with the same version. The workflow also supports manual runs
+with a version input.
+
 The Server serves the manifest, verified same-origin assets, and fixed
 installers from `HyPanel:ReleasesDirectory`. Generate short-lived installation
 commands through the Admin API; enrollment tokens are never placed in URLs and
