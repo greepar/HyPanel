@@ -1,13 +1,10 @@
 HyPanel/
-├── AGENTS.md
 ├── README.md
 ├── TASKS.md
-├── opencode.json
-├── .opencode/
-│   └── agents/
-│       ├── architect.md
-│       ├── terra.md
-│       └── luna.md
+├── src/
+├── tests/
+├── web/
+├── scripts/
 └── docs/
     ├── CONTEXT.md
     ├── ARCHITECTURE.md

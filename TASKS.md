@@ -368,3 +368,10 @@ Planned slices:
 - Depends on: HP-701 through HP-703
 - Status: DONE
 - Result: 177/177 tests, zero-warning Release build, Web build, linux-x64 Server/Agent NativeAOT, US embedded-Web HTTP/browser validation with zero console errors, and UK lifecycle/cleanup confirmation.
+
+## Phase 8 — Admin workspace layout
+
+### HP-800 — Adapt reference dashboard layout
+- Owner: terra
+- Status: DONE
+- Result: Split the Admin UI into 概览、服务、模板、用户 workspaces with desktop sidebar, sticky workspace header, responsive mobile navigation, complete Simplified Chinese UI text, and preserved monochrome themes and behavior.

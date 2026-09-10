@@ -23,7 +23,6 @@ The project intentionally avoids a heavy distributed-control stack. Early versio
 
 See:
 
-- `AGENTS.md` — coding-agent rules and model routing.
 - `docs/CONTEXT.md` — compact product context.
 - `docs/ARCHITECTURE.md` — architecture.
 - `docs/CONTRACTS.md` — public contract invariants.
@@ -68,3 +67,8 @@ cd web/HyPanel.Web
 npm ci
 npm run build
 ```
+
+## License
+
+HyPanel is licensed under the GNU General Public License v3.0 only
+(`GPL-3.0-only`). See `LICENSE` for the complete license text.
