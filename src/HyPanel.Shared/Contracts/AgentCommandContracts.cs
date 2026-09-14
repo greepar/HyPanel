@@ -3,6 +3,7 @@ namespace HyPanel.Shared.Contracts;
 public enum AgentCommandType
 {
     RunHealthCheck = 0,
+    CollectServiceLogs = 1,
 }
 
 public enum AgentCommandStatus
@@ -16,7 +17,8 @@ public sealed record AgentCommand(
     Guid CommandId,
     AgentCommandType Type,
     DateTimeOffset CreatedAt,
-    DateTimeOffset? ExpiresAt);
+    DateTimeOffset? ExpiresAt,
+    Guid? TargetServiceId = null);
 
 public sealed record AgentCommandResult(
     Guid CommandId,
@@ -24,4 +26,5 @@ public sealed record AgentCommandResult(
     DateTimeOffset StartedAt,
     DateTimeOffset? CompletedAt,
     string? ErrorCode,
-    string? ErrorMessage);
+    string? ErrorMessage,
+    string? Output = null);

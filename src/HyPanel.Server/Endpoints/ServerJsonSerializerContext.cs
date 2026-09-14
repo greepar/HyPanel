@@ -1,13 +1,17 @@
 namespace HyPanel.Server.Endpoints;
 
 using System.Text.Json.Serialization;
+using HyPanel.Shared.Contracts;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(CreateNodeRequest))]
 [JsonSerializable(typeof(CreateNodeResponse))]
 [JsonSerializable(typeof(CreateEnrollmentTokenResponse))]
 [JsonSerializable(typeof(AdminNodeObservationResponse[]))]
+[JsonSerializable(typeof(NodeMetrics))]
 [JsonSerializable(typeof(CreateHealthCheckCommandResponse))]
+[JsonSerializable(typeof(CreateDiagnosticCommandResponse))]
+[JsonSerializable(typeof(ServiceDiagnosticResponse[]))]
 [JsonSerializable(typeof(InstallCommandRequest))]
 [JsonSerializable(typeof(InstallCommandResponse))]
 [JsonSerializable(typeof(CreateServiceRequest))]

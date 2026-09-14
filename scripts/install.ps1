@@ -123,6 +123,7 @@ try {
     $dataDir = if ($dryRoot) { Join-Path $root 'data' } else { Join-Path $env:ProgramData 'HyPanel\Agent' }
     $download = Join-Path ([IO.Path]::GetTempPath()) ("HyPanel.Agent.{0}.zip" -f [Guid]::NewGuid())
     $staging = Join-Path ([IO.Path]::GetTempPath()) ("HyPanel.Agent.{0}.staging" -f [Guid]::NewGuid())
+    $stateBackup = Join-Path $dataDir (".re-enrollment-backup.{0}" -f [Guid]::NewGuid().ToString('N'))
     $serviceExists = $false
     New-Item -ItemType Directory -Force -Path $root, $dataDir | Out-Null
     try {
@@ -134,6 +135,11 @@ try {
         if ($stagingMode) { exit 0 }
         $serviceExists = (-not $dryRoot) -and ((sc.exe query HyPanelAgent 2>$null) -match 'SERVICE_NAME')
         if ($serviceExists) { sc.exe stop HyPanelAgent | Out-Null; Start-Sleep -Seconds 1 }
+        New-Item -ItemType Directory -Path $stateBackup | Out-Null
+        foreach ($stateName in @('credentials.json', 'state.json', 'command-state.json', 'usage-state.json')) {
+            $statePath = Join-Path $dataDir $stateName
+            if (Test-Path $statePath) { Move-Item $statePath $stateBackup }
+        }
         $backupDir = "$agentDir.bak"
         if (Test-Path $backupDir) { Remove-Item $backupDir -Recurse -Force }
         if (Test-Path $agentDir) { Move-Item $agentDir $backupDir }
@@ -153,8 +159,18 @@ try {
             if (-not (Test-Path $credentials)) { Fail 'Agent did not complete enrollment within 30 seconds.' }
             Restricted-File $bootstrap "HYPANEL_DATA_DIR=$dataDir`r`n"
             New-ItemProperty -Path $serviceKey -Name Environment -PropertyType MultiString -Value @("HYPANEL_DATA_DIR=$dataDir") -Force | Out-Null
+            Remove-Item $stateBackup -Recurse -Force
         }
     } catch {
+        if (Test-Path $stateBackup) {
+            foreach ($stateName in @('credentials.json', 'state.json', 'command-state.json', 'usage-state.json')) {
+                $statePath = Join-Path $dataDir $stateName
+                if (Test-Path $statePath) { Remove-Item $statePath -Force }
+                $backupPath = Join-Path $stateBackup $stateName
+                if (Test-Path $backupPath) { Move-Item $backupPath $dataDir }
+            }
+            Remove-Item $stateBackup -Recurse -Force
+        }
         if (Test-Path "$agentDir.bak") {
             if (Test-Path $agentDir) { Remove-Item $agentDir -Recurse -Force }
             Move-Item "$agentDir.bak" $agentDir

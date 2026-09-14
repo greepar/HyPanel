@@ -99,6 +99,7 @@ case "$OS" in
     Darwin) DATA_DIR=${HYPANEL_DATA_DIR:-"/Library/Application Support/HyPanel"} ;;
 esac
 BOOTSTRAP_ENV="$DATA_DIR/bootstrap.env"
+REENROLL_BACKUP="$DATA_DIR/.re-enrollment-backup.$$"
 
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 TMPDIR_BASE=${TMPDIR:-/tmp}
@@ -336,6 +337,11 @@ service_start() {
 }
 
 service_stop
+mkdir "$REENROLL_BACKUP"
+chmod 700 "$REENROLL_BACKUP"
+for state_file in credentials.json state.json command-state.json usage-state.json; do
+    if [ -e "$DATA_DIR/$state_file" ]; then mv "$DATA_DIR/$state_file" "$REENROLL_BACKUP/$state_file"; fi
+done
 HAD_OLD=0
 if [ -e "$INSTALL_ROOT" ]; then mv "$INSTALL_ROOT" "$BACKUP_INSTALL"; HAD_OLD=1; fi
 mv "$STAGED_INSTALL" "$INSTALL_ROOT"
@@ -394,7 +400,10 @@ esac
 
 if ! service_start; then
     note "new agent failed to start; restoring previous binary"
-    rm -rf "$INSTALL_ROOT"; [ "$HAD_OLD" = 1 ] && mv "$BACKUP_INSTALL" "$INSTALL_ROOT" && service_start || true
+    rm -rf "$INSTALL_ROOT"
+    for state_file in "$REENROLL_BACKUP"/*; do [ -e "$state_file" ] && mv "$state_file" "$DATA_DIR/"; done
+    rmdir "$REENROLL_BACKUP"
+    [ "$HAD_OLD" = 1 ] && mv "$BACKUP_INSTALL" "$INSTALL_ROOT" && service_start || true
     fail "agent start failed; enrollment token remains in $BOOTSTRAP_ENV"
 fi
 
@@ -403,6 +412,7 @@ while [ "$elapsed" -lt 30 ]; do
     if [ -s "$DATA_DIR/credentials.json" ]; then
         printf 'HYPANEL_DATA_DIR="%s"\n' "$(escape_env "$DATA_DIR")" > "$BOOTSTRAP_ENV"
         chmod 600 "$BOOTSTRAP_ENV"
+        rm -rf "$REENROLL_BACKUP"
         rm -rf "$BACKUP_INSTALL"
         note "enrollment completed successfully"
         exit 0
@@ -414,5 +424,8 @@ done
 note "agent did not create credentials.json within 30 seconds; restoring previous binary"
 service_stop
 rm -rf "$INSTALL_ROOT"
+rm -f "$DATA_DIR/credentials.json" "$DATA_DIR/state.json" "$DATA_DIR/command-state.json" "$DATA_DIR/usage-state.json"
+for state_file in "$REENROLL_BACKUP"/*; do [ -e "$state_file" ] && mv "$state_file" "$DATA_DIR/"; done
+rmdir "$REENROLL_BACKUP"
 if [ "$HAD_OLD" = 1 ]; then mv "$BACKUP_INSTALL" "$INSTALL_ROOT"; service_start || true; fi
 fail "enrollment failed or timed out; enrollment token remains in $BOOTSTRAP_ENV"

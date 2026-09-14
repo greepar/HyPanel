@@ -121,33 +121,43 @@ internal sealed partial class SqliteServerRepository(
             return null;
         }
 
-        await using (var insertAgent = connection.CreateCommand())
+        Guid enrolledAgentId;
+        await using (var upsertAgent = connection.CreateCommand())
         {
-            insertAgent.Transaction = transaction;
-            insertAgent.CommandText = """
-                                      INSERT INTO agents (
-                                          id, node_id, secret_hash, enrolled_at_utc, last_seen_at_utc,
-                                          reported_version, reported_platform, applied_revision, latest_metric_snapshot_json)
-                                      VALUES (@id, @nodeId, @secretHash, @enrolledAtUtc, NULL, @reportedVersion, @reportedPlatform, @appliedRevision, NULL);
-                                      """;
-            insertAgent.Parameters.AddWithValue("@id", agentId.ToString("D"));
-            insertAgent.Parameters.AddWithValue("@nodeId", nodeId.Value.ToString("D"));
-            insertAgent.Parameters.Add("@secretHash", SqliteType.Blob).Value = secretHash;
-            insertAgent.Parameters.AddWithValue("@enrolledAtUtc", SqliteValue.ToUtcText(nowUtc));
-            insertAgent.Parameters.AddWithValue("@reportedVersion", reportedVersion);
-            insertAgent.Parameters.AddWithValue("@reportedPlatform", reportedPlatform);
-            insertAgent.Parameters.AddWithValue("@appliedRevision", 0L);
-            await insertAgent.ExecuteNonQueryAsync(cancellationToken);
+            upsertAgent.Transaction = transaction;
+            upsertAgent.CommandText = """
+                                       INSERT INTO agents (
+                                           id, node_id, secret_hash, enrolled_at_utc, last_seen_at_utc,
+                                           reported_version, reported_platform, applied_revision, latest_metric_snapshot_json)
+                                       VALUES (@id, @nodeId, @secretHash, @enrolledAtUtc, NULL, @reportedVersion, @reportedPlatform, 0, NULL)
+                                       ON CONFLICT(node_id) DO UPDATE SET
+                                           secret_hash = excluded.secret_hash,
+                                           enrolled_at_utc = excluded.enrolled_at_utc,
+                                           last_seen_at_utc = NULL,
+                                           reported_version = excluded.reported_version,
+                                           reported_platform = excluded.reported_platform,
+                                           applied_revision = 0,
+                                           latest_metric_snapshot_json = NULL
+                                       RETURNING id;
+                                       """;
+            upsertAgent.Parameters.AddWithValue("@id", agentId.ToString("D"));
+            upsertAgent.Parameters.AddWithValue("@nodeId", nodeId.Value.ToString("D"));
+            upsertAgent.Parameters.Add("@secretHash", SqliteType.Blob).Value = secretHash;
+            upsertAgent.Parameters.AddWithValue("@enrolledAtUtc", SqliteValue.ToUtcText(nowUtc));
+            upsertAgent.Parameters.AddWithValue("@reportedVersion", reportedVersion);
+            upsertAgent.Parameters.AddWithValue("@reportedPlatform", reportedPlatform);
+            enrolledAgentId = SqliteValue.ToGuid((string)(await upsertAgent.ExecuteScalarAsync(cancellationToken)
+                ?? throw new InvalidOperationException("Agent enrollment did not return an identity.")));
         }
 
-        if (!await TryConsumeTokenAsync(connection, transaction, tokenHash, agentId, nowUtc, cancellationToken))
+        if (!await TryConsumeTokenAsync(connection, transaction, tokenHash, enrolledAgentId, nowUtc, cancellationToken))
         {
             await transaction.RollbackAsync(cancellationToken);
             return null;
         }
 
         await transaction.CommitAsync(cancellationToken);
-        return new AgentEnrollmentResult(agentId, nodeId.Value);
+        return new AgentEnrollmentResult(enrolledAgentId, nodeId.Value);
     }
 
     public async Task<AgentRecord?> GetAgentAsync(Guid id, CancellationToken cancellationToken)
@@ -223,7 +233,8 @@ internal sealed partial class SqliteServerRepository(
         await using var command = connection.CreateCommand();
         command.CommandText = """
                               SELECT n.id, n.display_name, n.desired_revision,
-                                     a.id, a.last_seen_at_utc, a.reported_version, a.reported_platform, a.applied_revision
+                                     a.id, a.last_seen_at_utc, a.reported_version, a.reported_platform, a.applied_revision,
+                                     a.latest_metric_snapshot_json
                               FROM nodes n
                               LEFT JOIN agents a ON a.node_id = n.id
                               ORDER BY n.created_at_utc, n.id;
@@ -239,7 +250,8 @@ internal sealed partial class SqliteServerRepository(
                 reader.IsDBNull(4) ? null : SqliteValue.ToDateTimeOffset(reader.GetString(4)),
                 reader.IsDBNull(5) ? null : reader.GetString(5),
                 reader.IsDBNull(6) ? null : reader.GetString(6),
-                reader.IsDBNull(7) ? null : reader.GetInt64(7)));
+                reader.IsDBNull(7) ? null : reader.GetInt64(7),
+                reader.IsDBNull(8) ? null : reader.GetString(8)));
         }
 
         return observations;
@@ -284,7 +296,72 @@ internal sealed partial class SqliteServerRepository(
             null,
             null,
             null,
-            expiresAtUtc);
+            expiresAtUtc,
+            null,
+            null);
+    }
+
+    public async Task<AgentCommandRecord?> CreateCollectServiceLogsCommandAsync(
+        Guid commandId, Guid nodeId, Guid serviceId, DateTimeOffset expiresAtUtc,
+        CancellationToken cancellationToken)
+    {
+        var createdAtUtc = timeProvider.GetUtcNow();
+        if (expiresAtUtc <= createdAtUtc)
+            throw new ArgumentOutOfRangeException(nameof(expiresAtUtc), "Expiration must be in the future.");
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+                              INSERT INTO agent_commands (
+                                  id, agent_id, type, status, created_at_utc, started_at_utc, completed_at_utc,
+                                  error_code, error_message, expires_at_utc, target_service_id, output)
+                              SELECT @id, a.id, 'CollectServiceLogs', 'Pending', @created, NULL, NULL,
+                                     NULL, NULL, @expires, s.id, NULL
+                              FROM service_instances s
+                              INNER JOIN agents a ON a.node_id = s.node_id
+                              WHERE s.id = @service AND s.node_id = @node
+                                AND NOT EXISTS (
+                                  SELECT 1 FROM agent_commands active
+                                  WHERE active.target_service_id = s.id
+                                    AND active.type = 'CollectServiceLogs'
+                                    AND active.status IN ('Pending', 'Running')
+                                    AND (active.expires_at_utc IS NULL OR active.expires_at_utc > @created));
+                              """;
+        command.Parameters.AddWithValue("@id", commandId.ToString("D"));
+        command.Parameters.AddWithValue("@node", nodeId.ToString("D"));
+        command.Parameters.AddWithValue("@service", serviceId.ToString("D"));
+        command.Parameters.AddWithValue("@created", SqliteValue.ToUtcText(createdAtUtc));
+        command.Parameters.AddWithValue("@expires", SqliteValue.ToUtcText(expiresAtUtc));
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return null;
+        }
+
+        await using var prune = connection.CreateCommand();
+        prune.Transaction = transaction;
+        prune.CommandText = """
+                            DELETE FROM agent_commands
+                            WHERE target_service_id = @service
+                              AND type = 'CollectServiceLogs'
+                              AND status IN ('Pending', 'Running')
+                              AND expires_at_utc IS NOT NULL
+                              AND expires_at_utc <= @created;
+                            DELETE FROM agent_commands
+                            WHERE target_service_id = @service AND type = 'CollectServiceLogs'
+                              AND status IN ('Succeeded', 'Failed')
+                              AND id NOT IN (
+                                SELECT id FROM agent_commands
+                                WHERE target_service_id = @service AND type = 'CollectServiceLogs'
+                                  AND status IN ('Succeeded', 'Failed')
+                                ORDER BY created_at_utc DESC LIMIT 20);
+                            """;
+        prune.Parameters.AddWithValue("@service", serviceId.ToString("D"));
+        prune.Parameters.AddWithValue("@created", SqliteValue.ToUtcText(createdAtUtc));
+        await prune.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return await GetAgentCommandAsync(commandId, cancellationToken);
     }
 
     public async Task<bool> TryUpdateAgentSyncAsync(
@@ -336,7 +413,11 @@ internal sealed partial class SqliteServerRepository(
 
             foreach (var result in commandResults)
             {
-                await RecordCommandResultAsync(connection, transaction, agentId, result, cancellationToken);
+                if (!await RecordCommandResultAsync(connection, transaction, agentId, result, cancellationToken))
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return false;
+                }
             }
 
             foreach (var state in serviceStates)
@@ -643,13 +724,16 @@ internal sealed partial class SqliteServerRepository(
         {
             foreach (var table in new[]
                      {
+                         "agent_commands",
                          "usage_totals", "user_service_bindings", "service_public_endpoints",
                          "service_runtime_states"
                      })
             {
                 await using var child = connection.CreateCommand();
                 child.Transaction = transaction;
-                child.CommandText = $"DELETE FROM {table} WHERE service_id = @id;";
+                child.CommandText = table == "agent_commands"
+                    ? "DELETE FROM agent_commands WHERE target_service_id = @id;"
+                    : $"DELETE FROM {table} WHERE service_id = @id;";
                 child.Parameters.AddWithValue("@id", serviceId.ToString("D"));
                 await child.ExecuteNonQueryAsync(cancellationToken);
             }
@@ -736,7 +820,7 @@ internal sealed partial class SqliteServerRepository(
         return (revision, services);
     }
 
-    public async Task<IReadOnlyList<AgentCommandRecord>> GetActiveHealthCheckCommandsAsync(Guid agentId,
+    public async Task<IReadOnlyList<AgentCommandRecord>> GetActiveCommandsAsync(Guid agentId,
         CancellationToken cancellationToken)
     {
         var nowUtc = timeProvider.GetUtcNow();
@@ -744,10 +828,10 @@ internal sealed partial class SqliteServerRepository(
         await using var connection = await connectionFactory.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-                              SELECT id, agent_id, type, status, created_at_utc, started_at_utc, completed_at_utc, error_code, error_message, expires_at_utc
+                              SELECT id, agent_id, type, status, created_at_utc, started_at_utc, completed_at_utc, error_code, error_message, expires_at_utc, target_service_id, output
                               FROM agent_commands
                               WHERE agent_id = @agentId
-                                AND type = 'RunHealthCheck'
+                                AND type IN ('RunHealthCheck', 'CollectServiceLogs')
                                 AND status IN ('Pending', 'Running')
                                 AND (expires_at_utc IS NULL OR expires_at_utc > @nowUtc)
                               ORDER BY created_at_utc;
@@ -763,12 +847,41 @@ internal sealed partial class SqliteServerRepository(
         return commands;
     }
 
+    public async Task<IReadOnlyList<AgentCommandRecord>> GetActiveHealthCheckCommandsAsync(Guid agentId,
+        CancellationToken cancellationToken)
+    {
+        var commands = await GetActiveCommandsAsync(agentId, cancellationToken);
+        return commands.Where(static command => command.Type == "RunHealthCheck").ToArray();
+    }
+
+    public async Task<IReadOnlyList<AgentCommandRecord>> GetServiceDiagnosticsAsync(Guid nodeId, Guid serviceId,
+        CancellationToken cancellationToken)
+    {
+        var records = new List<AgentCommandRecord>();
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+                              SELECT c.id, c.agent_id, c.type, c.status, c.created_at_utc, c.started_at_utc,
+                                     c.completed_at_utc, c.error_code, c.error_message, c.expires_at_utc,
+                                     c.target_service_id, c.output
+                              FROM agent_commands c
+                              INNER JOIN service_instances s ON s.id = c.target_service_id
+                              WHERE s.node_id = @node AND s.id = @service AND c.type = 'CollectServiceLogs'
+                              ORDER BY c.created_at_utc DESC LIMIT 20;
+                              """;
+        command.Parameters.AddWithValue("@node", nodeId.ToString("D"));
+        command.Parameters.AddWithValue("@service", serviceId.ToString("D"));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) records.Add(ReadAgentCommand(reader));
+        return records;
+    }
+
     public async Task<AgentCommandRecord?> GetAgentCommandAsync(Guid commandId, CancellationToken cancellationToken)
     {
         await using var connection = await connectionFactory.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-                              SELECT id, agent_id, type, status, created_at_utc, started_at_utc, completed_at_utc, error_code, error_message, expires_at_utc
+                              SELECT id, agent_id, type, status, created_at_utc, started_at_utc, completed_at_utc, error_code, error_message, expires_at_utc, target_service_id, output
                               FROM agent_commands WHERE id = @id;
                               """;
         command.Parameters.AddWithValue("@id", commandId.ToString("D"));
@@ -776,13 +889,29 @@ internal sealed partial class SqliteServerRepository(
         return await reader.ReadAsync(cancellationToken) ? ReadAgentCommand(reader) : null;
     }
 
-    private static async Task RecordCommandResultAsync(
+    private static async Task<bool> RecordCommandResultAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         Guid agentId,
         AgentCommandResult result,
         CancellationToken cancellationToken)
     {
+        string? output = null;
+        if (result.Output is not null)
+        {
+            // Output is only valid as the terminal success payload of this Agent's own CollectServiceLogs
+            // command. Anything else is a contract violation and rejects the whole sync transaction rather
+            // than being silently discarded.
+            if (result.Status != AgentCommandStatus.Succeeded) return false;
+            await using var ownership = connection.CreateCommand();
+            ownership.Transaction = transaction;
+            ownership.CommandText = "SELECT 1 FROM agent_commands WHERE id = @id AND agent_id = @agentId AND type = 'CollectServiceLogs';";
+            ownership.Parameters.AddWithValue("@id", result.CommandId.ToString("D"));
+            ownership.Parameters.AddWithValue("@agentId", agentId.ToString("D"));
+            if (await ownership.ExecuteScalarAsync(cancellationToken) is null) return false;
+            output = result.Output;
+        }
+
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = result.Status == AgentCommandStatus.Running
@@ -800,7 +929,8 @@ internal sealed partial class SqliteServerRepository(
                   started_at_utc = COALESCE(started_at_utc, @startedAtUtc),
                   completed_at_utc = @completedAtUtc,
                   error_code = @errorCode,
-                  error_message = @errorMessage
+                  error_message = @errorMessage,
+                  output = @output
               WHERE id = @id
                 AND agent_id = @agentId
                 AND status NOT IN ('Succeeded', 'Failed');
@@ -812,7 +942,30 @@ internal sealed partial class SqliteServerRepository(
         command.Parameters.AddWithValue("@completedAtUtc", SqliteValue.ToDbValue(result.CompletedAt));
         command.Parameters.AddWithValue("@errorCode", SqliteValue.ToDbValue(result.ErrorCode));
         command.Parameters.AddWithValue("@errorMessage", SqliteValue.ToDbValue(result.ErrorMessage));
+        command.Parameters.AddWithValue("@output", SqliteValue.ToDbValue(output));
         await command.ExecuteNonQueryAsync(cancellationToken);
+        if (result.Status is AgentCommandStatus.Succeeded or AgentCommandStatus.Failed)
+        {
+            await using var prune = connection.CreateCommand();
+            prune.Transaction = transaction;
+            prune.CommandText = """
+                                DELETE FROM agent_commands
+                                WHERE type = 'CollectServiceLogs'
+                                  AND target_service_id = (
+                                    SELECT target_service_id FROM agent_commands WHERE id = @id)
+                                  AND status IN ('Succeeded', 'Failed')
+                                  AND id NOT IN (
+                                    SELECT id FROM agent_commands
+                                    WHERE type = 'CollectServiceLogs'
+                                      AND target_service_id = (
+                                        SELECT target_service_id FROM agent_commands WHERE id = @id)
+                                      AND status IN ('Succeeded', 'Failed')
+                                    ORDER BY created_at_utc DESC LIMIT 20);
+                                """;
+            prune.Parameters.AddWithValue("@id", result.CommandId.ToString("D"));
+            await prune.ExecuteNonQueryAsync(cancellationToken);
+        }
+        return true;
     }
 
     private static async Task UpsertServiceRuntimeStateAsync(SqliteConnection connection, SqliteTransaction transaction,
@@ -1029,5 +1182,7 @@ internal sealed partial class SqliteServerRepository(
         reader.IsDBNull(5) ? null : SqliteValue.ToDateTimeOffset(reader.GetString(5)),
         reader.IsDBNull(6) ? null : SqliteValue.ToDateTimeOffset(reader.GetString(6)),
         reader.IsDBNull(7) ? null : reader.GetString(7), reader.IsDBNull(8) ? null : reader.GetString(8),
-        reader.IsDBNull(9) ? null : SqliteValue.ToDateTimeOffset(reader.GetString(9)));
+        reader.IsDBNull(9) ? null : SqliteValue.ToDateTimeOffset(reader.GetString(9)),
+        reader.IsDBNull(10) ? null : SqliteValue.ToGuid(reader.GetString(10)),
+        reader.IsDBNull(11) ? null : reader.GetString(11));
 }

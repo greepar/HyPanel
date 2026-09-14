@@ -15,6 +15,17 @@ public sealed class AgentCommandStateStoreTests
         dataDirectory = Path.Combine(Path.GetTempPath(), "HyPanel.Agent.Tests", Guid.NewGuid().ToString("N"));
     }
 
+    [TestMethod]
+    public void IsExpired_OnlyCommandsAtOrBeforeNowAreExpired()
+    {
+        var now = DateTimeOffset.Parse("2026-09-11T12:00:00+00:00");
+        var id = Guid.NewGuid();
+
+        Assert.IsFalse(SyncWorker.IsExpired(new AgentCommand(id, AgentCommandType.RunHealthCheck, now, null), now));
+        Assert.IsTrue(SyncWorker.IsExpired(new AgentCommand(id, AgentCommandType.RunHealthCheck, now, now), now));
+        Assert.IsFalse(SyncWorker.IsExpired(new AgentCommand(id, AgentCommandType.RunHealthCheck, now, now.AddSeconds(1)), now));
+    }
+
     [TestCleanup]
     public void Cleanup()
     {

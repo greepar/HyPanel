@@ -64,6 +64,7 @@ internal static class AdminServicesEndpoints
             .FirstOrDefault(service => service.Id == serviceId);
         if (existing is null) return Results.NotFound();
         if (!TryValidateUpdate(request, out var name, out var version, out var configJson)) return Results.BadRequest();
+        if (!TryMergeRedactedSecrets(existing.ConfigJson, configJson, out configJson)) return Results.BadRequest();
         var now = timeProvider.GetUtcNow();
         var result = await repository.UpdateServiceAsync(
             new ServiceInstanceRecord(serviceId, nodeId, name, existing.BackendType, version, request.Enabled,
@@ -105,12 +106,17 @@ internal static class AdminServicesEndpoints
         var access = await authorization.AuthorizeAsync(request, ct);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
         var endpoint = await repository.GetServicePublicEndpointAsync(nodeId, serviceId, ct);
-        return endpoint is null
-            ? Results.NotFound()
-            : Results.Json(
+        if (endpoint is not null)
+        {
+            return Results.Json(
                 new ServicePublicEndpointResponse(endpoint.Host, endpoint.Port, endpoint.TlsServerName,
                     endpoint.UpdatedAtUtc),
                 ServerJsonSerializerContext.Default.ServicePublicEndpointResponse);
+        }
+
+        var serviceExists = (await repository.GetServicesForNodeAsync(nodeId, ct))
+            .Any(item => item.Service.Id == serviceId);
+        return serviceExists ? Results.NoContent() : Results.NotFound();
     }
 
     private static async Task<IResult> SetPublicEndpointAsync(Guid nodeId, Guid serviceId,
@@ -213,14 +219,47 @@ internal static class AdminServicesEndpoints
         return node?.ToJsonString() ?? "null";
     }
 
+    internal static bool TryMergeRedactedSecrets(string existingJson, string submittedJson, out string mergedJson)
+    {
+        mergedJson = string.Empty;
+        try
+        {
+            var existing = JsonNode.Parse(existingJson);
+            var submitted = JsonNode.Parse(submittedJson);
+            MergeRedactedSecrets(existing, submitted);
+            mergedJson = submitted?.ToJsonString() ?? "null";
+            return mergedJson.Length <= MaximumConfigLength;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static void MergeRedactedSecrets(JsonNode? existing, JsonNode? submitted)
+    {
+        if (existing is not JsonObject existingObject || submitted is not JsonObject submittedObject) return;
+        foreach (var pair in submittedObject.ToArray())
+        {
+            if (pair.Value is JsonValue value && value.TryGetValue<string>(out var text) && text == "[REDACTED]" &&
+                IsSecretName(pair.Key) && existingObject[pair.Key] is { } existingValue)
+                submittedObject[pair.Key] = existingValue.DeepClone();
+            else if (existingObject[pair.Key] is { } existingChild)
+                MergeRedactedSecrets(existingChild, pair.Value);
+        }
+    }
+
+    private static bool IsSecretName(string name) =>
+        name.EndsWith("Password", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("realityPrivateKey", StringComparison.OrdinalIgnoreCase);
+
     private static void Redact(JsonNode? node)
     {
         if (node is JsonObject obj)
         {
             foreach (var pair in obj.ToArray())
             {
-                if (pair.Key.EndsWith("Password", StringComparison.OrdinalIgnoreCase) ||
-                    pair.Key.Equals("realityPrivateKey", StringComparison.OrdinalIgnoreCase))
+                if (IsSecretName(pair.Key))
                     obj[pair.Key] = "[REDACTED]";
                 else Redact(pair.Value);
             }

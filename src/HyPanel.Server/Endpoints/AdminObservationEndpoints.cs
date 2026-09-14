@@ -1,6 +1,9 @@
 namespace HyPanel.Server.Endpoints;
 
+using System.Text.Json;
 using HyPanel.Server.Persistence;
+using HyPanel.Shared.Contracts;
+using HyPanel.Shared.Serialization;
 
 internal static class AdminObservationEndpoints
 {
@@ -38,10 +41,34 @@ internal static class AdminObservationEndpoints
                 observation.ReportedVersion,
                 observation.ReportedPlatform,
                 observation.DesiredRevision,
-                observation.AppliedRevision);
+                observation.AppliedRevision,
+                TryReadMetrics(observation.LatestMetricSnapshotJson, nowUtc));
         }
 
         return Results.Json(response, ServerJsonSerializerContext.Default.AdminNodeObservationResponseArray);
+    }
+
+    /// <summary>
+    /// The latest metric snapshot is written by the Agent sync path. A missing or unreadable snapshot is treated as
+    /// "no telemetry yet" so one bad row can never fail the whole observation listing.
+    /// </summary>
+    internal static NodeMetrics? TryReadMetrics(string? snapshotJson, DateTimeOffset? now = null)
+    {
+        if (string.IsNullOrWhiteSpace(snapshotJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            var metrics = JsonSerializer.Deserialize(snapshotJson, HyPanelJsonSerializerContext.Default.NodeMetrics);
+            var current = now ?? TimeProvider.System.GetUtcNow();
+            return metrics is not null && AgentSyncEndpoints.IsValidMetrics(metrics, current) ? metrics : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static async Task<IResult> CreateHealthCheckCommandAsync(

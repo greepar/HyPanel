@@ -1,10 +1,13 @@
 namespace HyPanel.Server;
 
+using System.Net;
 using System.Text.Json.Serialization;
+using System.Threading.RateLimiting;
 using HyPanel.Server.Endpoints;
 using HyPanel.Server.Persistence;
 using HyPanel.Server.Releases;
 using HyPanel.Shared.Serialization;
+using Microsoft.AspNetCore.HttpOverrides;
 
 public static class Program
 {
@@ -19,6 +22,7 @@ public static class Program
             options.SerializerOptions.TypeInfoResolverChain.Insert(0, ServerJsonSerializerContext.Default);
             options.SerializerOptions.TypeInfoResolverChain.Insert(0, HealthJsonSerializerContext.Default);
         });
+        builder.Services.Configure<ForwardedHeadersOptions>(ConfigureForwardedHeaders);
         builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
         builder.Services.AddSingleton<AdminTokenAuthentication>();
         builder.Services.AddSingleton<AdminAuthorization>();
@@ -31,8 +35,22 @@ public static class Program
         builder.Services.AddSingleton<EnrollmentService>();
         builder.Services.AddSingleton<ReleaseCatalog>();
         builder.Services.AddSingleton<BackendArtifactCatalog>();
+        builder.Services.AddSingleton<InstallCodeService>();
+        builder.Services.AddRateLimiter(options => options.AddPolicy("install-code", context =>
+            RateLimitPartition.GetFixedWindowLimiter(
+                context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                static _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 10,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 0,
+                    AutoReplenishment = true
+                })));
 
         var app = builder.Build();
+
+        app.UseForwardedHeaders();
+        app.UseRateLimiter();
 
         _ = app.Services.GetRequiredService<AdminTokenAuthentication>();
         _ = app.Services.GetRequiredService<ReleaseCatalog>();
@@ -46,6 +64,7 @@ public static class Program
         AdminServiceTemplateEndpoints.Map(app);
         AdminObservationEndpoints.Map(app);
         AdminHealthSummaryEndpoints.Map(app);
+        AdminDiagnosticsEndpoints.Map(app);
         AdminEnrollmentTokensEndpoints.Map(app);
         AgentEnrollmentEndpoints.Map(app);
         AgentSyncEndpoints.Map(app);
@@ -55,6 +74,18 @@ public static class Program
         EmbeddedWebEndpoints.Map(app);
 
         await app.RunAsync();
+    }
+
+    internal static void ConfigureForwardedHeaders(ForwardedHeadersOptions options)
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor |
+                                   ForwardedHeaders.XForwardedProto |
+                                   ForwardedHeaders.XForwardedHost;
+        options.ForwardLimit = 1;
+        options.KnownProxies.Clear();
+        options.KnownIPNetworks.Clear();
+        options.KnownProxies.Add(IPAddress.Loopback);
+        options.KnownProxies.Add(IPAddress.IPv6Loopback);
     }
 }
 

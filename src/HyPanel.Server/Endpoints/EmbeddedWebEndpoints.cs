@@ -46,9 +46,18 @@ internal static class EmbeddedWebEndpoints
             return;
         }
 
+        ApplySecurityHeaders(context.Response);
         context.Response.ContentType = contentType;
         context.Response.ContentLength = resource.Length;
         await resource.CopyToAsync(context.Response.Body, context.RequestAborted);
+    }
+
+    internal static void ApplySecurityHeaders(HttpResponse response)
+    {
+        response.Headers["X-Content-Type-Options"] = "nosniff";
+        response.Headers["Referrer-Policy"] = "no-referrer";
+        response.Headers["Content-Security-Policy"] =
+            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
     }
 
     internal static bool IsSafeAssetFileName(string file) =>

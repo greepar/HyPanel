@@ -2,6 +2,7 @@ namespace HyPanel.Agent.Backends.Infrastructure;
 
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text;
 using HyPanel.Shared.Contracts;
 
 public sealed record BackendProcessStatus(
@@ -153,7 +154,30 @@ public sealed class BackendProcessSupervisor(ILogger<BackendProcessSupervisor> l
     {
         try
         {
-            while (await reader.ReadLineAsync() is { } line) managed.AddLog($"{stream}: {line}");
+            var line = new StringBuilder(ManagedProcess.MaxLogEntryCharacters);
+            var buffer = new char[1];
+            var overflowed = false;
+            while (await reader.ReadAsync(buffer) != 0)
+            {
+                var character = buffer[0];
+                if (character == '\n')
+                {
+                    managed.AddLog(overflowed ? $"{stream}: [line omitted: exceeded limit]" : $"{stream}: {line.ToString().TrimEnd('\r')}");
+                    line.Clear();
+                    overflowed = false;
+                }
+                else if (!overflowed && line.Length < ManagedProcess.MaxLogEntryCharacters)
+                {
+                    line.Append(character);
+                }
+                else
+                {
+                    line.Clear();
+                    overflowed = true;
+                }
+            }
+            if (overflowed || line.Length > 0)
+                managed.AddLog(overflowed ? $"{stream}: [line omitted: exceeded limit]" : $"{stream}: {line.ToString().TrimEnd('\r')}");
         }
         catch (Exception exception) when (exception is IOException or ObjectDisposedException)
         {
@@ -169,6 +193,7 @@ public sealed class BackendProcessSupervisor(ILogger<BackendProcessSupervisor> l
     private sealed class ManagedProcess(Guid serviceId)
     {
         private const int MaxLogEntries = 256;
+        internal const int MaxLogEntryCharacters = 4096;
         private readonly Queue<string> logs = new();
         public Guid ServiceId { get; } = serviceId;
         public SemaphoreSlim Gate { get; } = new(1, 1);
@@ -179,6 +204,7 @@ public sealed class BackendProcessSupervisor(ILogger<BackendProcessSupervisor> l
 
         public void AddLog(string line)
         {
+            if (line.Length > MaxLogEntryCharacters) line = "[line omitted: exceeded limit]";
             lock (logs)
             {
                 if (logs.Count == MaxLogEntries) logs.Dequeue();

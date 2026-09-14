@@ -193,4 +193,64 @@ public sealed class HyPanelJsonSerializerContextTests
         Assert.AreEqual(result.ErrorCode, roundTripped.ErrorCode);
         Assert.AreEqual(result.ErrorMessage, roundTripped.ErrorMessage);
     }
+
+    [TestMethod]
+    public void CollectServiceLogsCommand_RoundTripsTargetServiceIdAndStringEnum()
+    {
+        var targetServiceId = Guid.Parse("abababab-abab-abab-abab-abababababab");
+        var command = new AgentCommand(
+            Guid.Parse("cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd"),
+            AgentCommandType.CollectServiceLogs,
+            DateTimeOffset.Parse("2026-09-09T15:00:00+00:00"),
+            DateTimeOffset.Parse("2026-09-09T15:02:00+00:00"),
+            targetServiceId);
+
+        var json = JsonSerializer.Serialize(command, HyPanelJsonSerializerContext.Default.AgentCommand);
+        var roundTripped = JsonSerializer.Deserialize(json, HyPanelJsonSerializerContext.Default.AgentCommand);
+
+        Assert.IsNotNull(roundTripped);
+        StringAssert.Contains(json, "\"type\":\"CollectServiceLogs\"");
+        StringAssert.Contains(json, "\"targetServiceId\":\"abababab-abab-abab-abab-abababababab\"");
+        Assert.AreEqual(command.CommandId, roundTripped.CommandId);
+        Assert.AreEqual(AgentCommandType.CollectServiceLogs, roundTripped.Type);
+        Assert.AreEqual(targetServiceId, roundTripped.TargetServiceId);
+        Assert.AreEqual(command.ExpiresAt, roundTripped.ExpiresAt);
+    }
+
+    [TestMethod]
+    public void RunHealthCheckCommand_OmitsTargetServiceId()
+    {
+        var command = new AgentCommand(
+            Guid.Parse("efefefef-efef-efef-efef-efefefefefef"),
+            AgentCommandType.RunHealthCheck,
+            DateTimeOffset.Parse("2026-09-09T16:00:00+00:00"),
+            null);
+
+        var json = JsonSerializer.Serialize(command, HyPanelJsonSerializerContext.Default.AgentCommand);
+
+        Assert.IsNull(command.TargetServiceId);
+        StringAssert.Contains(json, "\"targetServiceId\":null");
+        Assert.AreEqual(AgentCommandType.RunHealthCheck, command.Type);
+    }
+
+    [TestMethod]
+    public void SuccessfulCommandOutput_RoundTripsOptionalPayload()
+    {
+        var result = new AgentCommandResult(
+            Guid.Parse("12121212-1212-1212-1212-121212121212"),
+            AgentCommandStatus.Succeeded,
+            DateTimeOffset.Parse("2026-09-09T17:00:00+00:00"),
+            DateTimeOffset.Parse("2026-09-09T17:00:01+00:00"),
+            null,
+            null,
+            "stderr: started\nstdout: ready");
+
+        var json = JsonSerializer.Serialize(result, HyPanelJsonSerializerContext.Default.AgentCommandResult);
+        var roundTripped = JsonSerializer.Deserialize(json, HyPanelJsonSerializerContext.Default.AgentCommandResult);
+
+        Assert.IsNotNull(roundTripped);
+        Assert.AreEqual(AgentCommandStatus.Succeeded, roundTripped.Status);
+        Assert.AreEqual(result.Output, roundTripped.Output);
+        Assert.IsNull(roundTripped.ErrorCode);
+    }
 }

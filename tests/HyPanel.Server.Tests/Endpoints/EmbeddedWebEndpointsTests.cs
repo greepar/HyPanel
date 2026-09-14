@@ -1,11 +1,26 @@
 namespace HyPanel.Server.Tests.Endpoints;
 
 using HyPanel.Server.Endpoints;
+using Microsoft.AspNetCore.Http;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 [TestClass]
 public sealed class EmbeddedWebEndpointsTests
 {
+    [TestMethod]
+    public void ApplySecurityHeaders_RestrictsEmbeddedApplicationOriginsAndFraming()
+    {
+        var context = new DefaultHttpContext();
+
+        EmbeddedWebEndpoints.ApplySecurityHeaders(context.Response);
+
+        Assert.AreEqual("nosniff", context.Response.Headers["X-Content-Type-Options"]);
+        Assert.AreEqual("no-referrer", context.Response.Headers["Referrer-Policy"]);
+        var policy = context.Response.Headers["Content-Security-Policy"].ToString();
+        StringAssert.Contains(policy, "default-src 'self'");
+        StringAssert.Contains(policy, "img-src 'self' data:");
+        StringAssert.Contains(policy, "frame-ancestors 'none'");
+    }
     [TestMethod]
     public void EmbeddedWebResources_ContainIndexAndReferencedAssets()
     {

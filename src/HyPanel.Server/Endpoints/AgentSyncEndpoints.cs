@@ -1,6 +1,7 @@
 namespace HyPanel.Server.Endpoints;
 
 using System.Text.Json;
+using System.Text;
 using HyPanel.Server.Persistence;
 using HyPanel.Server.Releases;
 using HyPanel.Shared.Contracts;
@@ -13,6 +14,7 @@ internal static class AgentSyncEndpoints
     private const int MaximumCommandResults = 100;
     private const int MaximumErrorCodeLength = 128;
     private const int MaximumErrorMessageLength = 1024;
+    private const int MaximumCommandOutputBytes = 65536;
     private const int SyncIntervalSeconds = 8;
     private static readonly TimeSpan MaximumFutureClockSkew = TimeSpan.FromMinutes(5);
 
@@ -63,16 +65,17 @@ internal static class AgentSyncEndpoints
             return Results.Unauthorized();
         }
 
-        var commands = await repository.GetActiveHealthCheckCommandsAsync(agent.AgentId, cancellationToken);
+        var commands = await repository.GetActiveCommandsAsync(agent.AgentId, cancellationToken);
         var responseCommands = new AgentCommand[commands.Count];
         for (var index = 0; index < commands.Count; index++)
         {
             var command = commands[index];
             responseCommands[index] = new AgentCommand(
                 command.Id,
-                AgentCommandType.RunHealthCheck,
+                command.Type == "CollectServiceLogs" ? AgentCommandType.CollectServiceLogs : AgentCommandType.RunHealthCheck,
                 command.CreatedAtUtc,
-                command.ExpiresAtUtc);
+                command.ExpiresAtUtc,
+                command.TargetServiceId);
         }
 
         var response = new AgentSyncResponse(
@@ -137,7 +140,7 @@ internal static class AgentSyncEndpoints
         && HasMaximumLength(state.ErrorCode, MaximumErrorCodeLength) && HasMaximumLength(state.ErrorMessage, MaximumErrorMessageLength)
         && (state.Traffic is null || (state.Traffic.UploadBytes >= 0 && state.Traffic.DownloadBytes >= 0 && state.Traffic.ObservedAt <= nowUtc + MaximumFutureClockSkew));
 
-    private static bool IsValidMetrics(NodeMetrics metrics, DateTimeOffset nowUtc) =>
+    internal static bool IsValidMetrics(NodeMetrics metrics, DateTimeOffset nowUtc) =>
         metrics.ObservedAt > nowUtc + MaximumFutureClockSkew
             ? false
             : metrics.UptimeSeconds >= 0
@@ -157,7 +160,8 @@ internal static class AgentSyncEndpoints
         if (result.CommandId == Guid.Empty
             || result.StartedAt > nowUtc + MaximumFutureClockSkew
             || !HasMaximumLength(result.ErrorCode, MaximumErrorCodeLength)
-            || !HasMaximumLength(result.ErrorMessage, MaximumErrorMessageLength))
+            || !HasMaximumLength(result.ErrorMessage, MaximumErrorMessageLength)
+            || result.Output is not null && Encoding.UTF8.GetByteCount(result.Output) > MaximumCommandOutputBytes)
         {
             return false;
         }
@@ -166,7 +170,8 @@ internal static class AgentSyncEndpoints
         {
             AgentCommandStatus.Running => result.CompletedAt is null
                 && result.ErrorCode is null
-                && result.ErrorMessage is null,
+                && result.ErrorMessage is null
+                && result.Output is null,
             AgentCommandStatus.Succeeded => result.CompletedAt is { } completedAt
                 && completedAt >= result.StartedAt
                 && completedAt <= nowUtc + MaximumFutureClockSkew
@@ -174,7 +179,8 @@ internal static class AgentSyncEndpoints
                 && result.ErrorMessage is null,
             AgentCommandStatus.Failed => result.CompletedAt is { } completedAt
                 && completedAt >= result.StartedAt
-                && completedAt <= nowUtc + MaximumFutureClockSkew,
+                && completedAt <= nowUtc + MaximumFutureClockSkew
+                && result.Output is null,
             _ => false,
         };
     }

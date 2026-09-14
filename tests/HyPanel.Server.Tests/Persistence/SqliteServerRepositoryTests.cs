@@ -34,7 +34,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -49,6 +49,8 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.Contains(names, "expires_at_utc");
+        CollectionAssert.Contains(names, "target_service_id");
+        CollectionAssert.Contains(names, "output");
         CollectionAssert.AreEquivalent(new[]
             {
                 "id", "name", "normalized_name", "backend_type", "backend_version", "config_schema_version",
@@ -141,7 +143,67 @@ public sealed class SqliteServerRepositoryTests
     }
 
     [TestMethod]
-    public void HealthSummaryBuild_ClassifiesOnlineDriftOfflineAndFailedServices()
+    public void MergeRedactedSecrets_PreservesMatchingSecretsButAllowsExplicitRemoval()
+    {
+        const string existing = "{\"authPassword\":\"keep-auth\",\"obfsPassword\":\"keep-obfs\",\"nested\":{\"realityPrivateKey\":\"keep-key\"}}";
+        const string submitted = "{\"authPassword\":\"[REDACTED]\",\"nested\":{\"realityPrivateKey\":\"[REDACTED]\"}}";
+
+        Assert.IsTrue(AdminServicesEndpoints.TryMergeRedactedSecrets(existing, submitted, out var merged));
+        using var document = JsonDocument.Parse(merged);
+        Assert.AreEqual("keep-auth", document.RootElement.GetProperty("authPassword").GetString());
+        Assert.AreEqual("keep-key", document.RootElement.GetProperty("nested").GetProperty("realityPrivateKey").GetString());
+        Assert.IsFalse(document.RootElement.TryGetProperty("obfsPassword", out _));
+        Assert.IsFalse(merged.Contains("[REDACTED]", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void TrafficLimitValidation_RejectsValuesThatJavaScriptCannotRepresentExactly()
+    {
+        Assert.IsTrue(UserEndpoints.IsValidTrafficLimit(null));
+        Assert.IsTrue(UserEndpoints.IsValidTrafficLimit(UserEndpoints.MaximumBrowserSafeBytes));
+        Assert.IsFalse(UserEndpoints.IsValidTrafficLimit(-1));
+        Assert.IsFalse(UserEndpoints.IsValidTrafficLimit(UserEndpoints.MaximumBrowserSafeBytes + 1));
+    }
+
+    [TestMethod]
+    public async Task NodeObservations_ReturnLatestMetricSnapshot_ForAdminTelemetry()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        var agentId = await CreateAgentAsync(fixture, nodeId, "telemetry-token", "telemetry-secret");
+        var metrics = new NodeMetrics(fixture.Time.GetUtcNow(), 3600, 12.5, 16_000, 4_000, 100_000, 25_000, 700, 800);
+        var snapshotJson = JsonSerializer.Serialize(metrics,
+            HyPanel.Shared.Serialization.HyPanelJsonSerializerContext.Default.NodeMetrics);
+
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "1.0.0", "linux-x64", 0, snapshotJson,
+            [], [], CancellationToken.None));
+
+        var observation = (await fixture.Repository.GetNodeObservationsAsync(CancellationToken.None))
+            .Single(item => item.Id == nodeId);
+        var readBack = AdminObservationEndpoints.TryReadMetrics(observation.LatestMetricSnapshotJson);
+
+        Assert.IsNotNull(readBack);
+        Assert.AreEqual(metrics.CpuUsagePercent, readBack.CpuUsagePercent);
+        Assert.AreEqual(metrics.MemoryTotalBytes, readBack.MemoryTotalBytes);
+        Assert.AreEqual(metrics.DiskAvailableBytes, readBack.DiskAvailableBytes);
+        Assert.AreEqual(metrics.NetworkUploadBytes, readBack.NetworkUploadBytes);
+        Assert.AreEqual(metrics.ObservedAt, readBack.ObservedAt);
+    }
+
+    [TestMethod]
+    public void TryReadMetrics_MissingOrMalformedSnapshot_ReturnsNullWithoutThrowing()
+    {
+        Assert.IsNull(AdminObservationEndpoints.TryReadMetrics(null));
+        Assert.IsNull(AdminObservationEndpoints.TryReadMetrics("   "));
+        Assert.IsNull(AdminObservationEndpoints.TryReadMetrics("{ not json"));
+        var now = DateTimeOffset.Parse("2026-09-11T12:00:00+00:00");
+        var invalid = JsonSerializer.Serialize(new NodeMetrics(now, 1, 10, 10, 11, 10, 5, 0, 0),
+            HyPanel.Shared.Serialization.HyPanelJsonSerializerContext.Default.NodeMetrics);
+        Assert.IsNull(AdminObservationEndpoints.TryReadMetrics(invalid, now));
+    }
+
+    [TestMethod]
+    public async Task HealthSummaryBuild_ClassifiesOnlineDriftOfflineAndFailedServices()
     {
         var now = new DateTimeOffset(2026, 9, 10, 12, 0, 0, TimeSpan.Zero);
         var onlineNode = Guid.NewGuid();
@@ -356,6 +418,42 @@ public sealed class SqliteServerRepositoryTests
             token, Guid.NewGuid(), "secret", "1.0.0", "linux-x64", CancellationToken.None);
 
         Assert.IsNull(enrollment);
+    }
+
+    [TestMethod]
+    public async Task TryConsumeEnrollmentTokenAndCreateAgentAsync_ReEnrollmentRotatesExistingNodeIdentity()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        var originalAgentId = Guid.NewGuid();
+        await fixture.Repository.CreateNodeAsync(nodeId, "node", CancellationToken.None);
+        await fixture.Repository.CreateEnrollmentTokenAsync(Guid.NewGuid(), nodeId, "first-token",
+            fixture.Time.GetUtcNow().AddMinutes(5), CancellationToken.None);
+        var first = await fixture.Repository.TryConsumeEnrollmentTokenAndCreateAgentAsync(
+            "first-token", originalAgentId, "first-secret", "1.0.0", "linux-x64", CancellationToken.None);
+        Assert.IsNotNull(first);
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentReportAsync(
+            originalAgentId, "1.0.0", "linux-x64", 4, "metrics", CancellationToken.None));
+
+        await fixture.Repository.CreateEnrollmentTokenAsync(Guid.NewGuid(), nodeId, "second-token",
+            fixture.Time.GetUtcNow().AddMinutes(5), CancellationToken.None);
+        var second = await fixture.Repository.TryConsumeEnrollmentTokenAndCreateAgentAsync(
+            "second-token", Guid.NewGuid(), "second-secret", "2.0.0", "linux-arm64", CancellationToken.None);
+
+        Assert.IsNotNull(second);
+        Assert.AreEqual(originalAgentId, second.AgentId);
+        var agent = await fixture.Repository.GetAgentAsync(originalAgentId, CancellationToken.None);
+        Assert.IsNotNull(agent);
+        Assert.IsNull(agent.LastSeenAtUtc);
+        Assert.AreEqual("2.0.0", agent.ReportedVersion);
+        Assert.AreEqual("linux-arm64", agent.ReportedPlatform);
+        Assert.AreEqual(0L, agent.AppliedRevision);
+        Assert.IsNull(agent.LatestMetricSnapshotJson);
+        var authentication = await fixture.Repository.GetAgentAuthenticationAsync(originalAgentId, CancellationToken.None);
+        Assert.IsNotNull(authentication);
+        CollectionAssert.AreEqual(
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("second-secret")),
+            authentication.SecretHash);
     }
 
     [TestMethod]
@@ -855,6 +953,138 @@ public sealed class SqliteServerRepositoryTests
 
         Assert.AreEqual(1, commands.Count);
         Assert.AreEqual(activeCommandId, commands[0].Id);
+    }
+
+    [TestMethod]
+    public async Task Diagnostics_CommandCreation_EnforcesOwnershipAndSingleActiveCommand()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        var agentId = await CreateAgentAsync(fixture, nodeId, "diagnostic-token", "diagnostic-secret");
+        var service = await fixture.Repository.CreateServiceAsync(CreateService(nodeId, Guid.NewGuid(), "diagnostic"),
+            CancellationToken.None);
+
+        Assert.IsNull(await fixture.Repository.CreateCollectServiceLogsCommandAsync(Guid.NewGuid(), Guid.NewGuid(),
+            service.Service!.Id, fixture.Time.GetUtcNow().AddMinutes(2), CancellationToken.None));
+
+        var commandId = Guid.NewGuid();
+        var created = await fixture.Repository.CreateCollectServiceLogsCommandAsync(commandId, nodeId,
+            service.Service.Id, fixture.Time.GetUtcNow().AddMinutes(2), CancellationToken.None);
+        Assert.IsNotNull(created);
+        Assert.AreEqual("CollectServiceLogs", created.Type);
+        Assert.AreEqual(service.Service.Id, created.TargetServiceId);
+        Assert.IsNull(created.Output);
+
+        Assert.IsNull(await fixture.Repository.CreateCollectServiceLogsCommandAsync(Guid.NewGuid(), nodeId,
+            service.Service.Id, fixture.Time.GetUtcNow().AddMinutes(3), CancellationToken.None));
+
+        var healthId = Guid.NewGuid();
+        Assert.IsNotNull(await fixture.Repository.CreateRunHealthCheckCommandAsync(healthId, agentId,
+            fixture.Time.GetUtcNow().AddMinutes(5), CancellationToken.None));
+        var healthChecks = await fixture.Repository.GetActiveHealthCheckCommandsAsync(agentId, CancellationToken.None);
+        Assert.AreEqual(1, healthChecks.Count);
+        Assert.AreEqual(healthId, healthChecks[0].Id);
+        var allActive = await fixture.Repository.GetActiveCommandsAsync(agentId, CancellationToken.None);
+        CollectionAssert.AreEquivalent(new[] { commandId, healthId }, allActive.Select(command => command.Id).ToArray());
+    }
+
+    [TestMethod]
+    public async Task Diagnostics_SyncPersistsBoundedOutput_AndRejectsForgedOutputOnHealthCheck()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        var agentId = await CreateAgentAsync(fixture, nodeId, "output-token", "output-secret");
+        var service = await fixture.Repository.CreateServiceAsync(CreateService(nodeId, Guid.NewGuid(), "logs"),
+            CancellationToken.None);
+
+        var commandId = Guid.NewGuid();
+        Assert.IsNotNull(await fixture.Repository.CreateCollectServiceLogsCommandAsync(commandId, nodeId,
+            service.Service!.Id, fixture.Time.GetUtcNow().AddMinutes(2), CancellationToken.None));
+        var startedAt = fixture.Time.GetUtcNow();
+        var succeeded = new AgentCommandResult(commandId, AgentCommandStatus.Succeeded, startedAt,
+            startedAt.AddSeconds(1), null, null, "stdout: ready");
+
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "1.0.0", "linux-x64", 0, null, [],
+            [succeeded], CancellationToken.None));
+
+        var diagnostics = await fixture.Repository.GetServiceDiagnosticsAsync(nodeId, service.Service.Id,
+            CancellationToken.None);
+        Assert.AreEqual(1, diagnostics.Count);
+        Assert.AreEqual("Succeeded", diagnostics[0].Status);
+        Assert.AreEqual("stdout: ready", diagnostics[0].Output);
+
+        // A health-check command must never accept a success payload.
+        var healthId = Guid.NewGuid();
+        Assert.IsNotNull(await fixture.Repository.CreateRunHealthCheckCommandAsync(healthId, agentId,
+            fixture.Time.GetUtcNow().AddMinutes(5), CancellationToken.None));
+        var forged = new AgentCommandResult(healthId, AgentCommandStatus.Succeeded, startedAt,
+            startedAt.AddSeconds(1), null, null, "not allowed");
+        Assert.IsFalse(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "1.0.0", "linux-x64", 0, null, [],
+            [forged], CancellationToken.None));
+        var untouched = await fixture.Repository.GetAgentCommandAsync(healthId, CancellationToken.None);
+        Assert.AreEqual("Pending", untouched!.Status);
+    }
+
+    [TestMethod]
+    public async Task Diagnostics_TerminalRetention_KeepsOnlyTwentyMostRecent()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        var agentId = await CreateAgentAsync(fixture, nodeId, "retention-token", "retention-secret");
+        var service = await fixture.Repository.CreateServiceAsync(CreateService(nodeId, Guid.NewGuid(), "retention"),
+            CancellationToken.None);
+
+        for (var index = 0; index < 25; index++)
+        {
+            var commandId = Guid.NewGuid();
+            Assert.IsNotNull(await fixture.Repository.CreateCollectServiceLogsCommandAsync(commandId, nodeId,
+                service.Service!.Id, fixture.Time.GetUtcNow().AddMinutes(2), CancellationToken.None));
+            var startedAt = fixture.Time.GetUtcNow();
+            Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "1.0.0", "linux-x64", 0, null, [],
+                [new AgentCommandResult(commandId, AgentCommandStatus.Succeeded, startedAt, startedAt, null, null,
+                    $"run {index}")], CancellationToken.None));
+        }
+
+        var diagnostics = await fixture.Repository.GetServiceDiagnosticsAsync(nodeId, service.Service!.Id,
+            CancellationToken.None);
+        Assert.AreEqual(20, diagnostics.Count);
+        Assert.IsTrue(diagnostics.Any(record => record.Output == "run 24"));
+        await using var connection = await fixture.OpenConnectionAsync();
+        await using var count = connection.CreateCommand();
+        count.CommandText = "SELECT COUNT(*) FROM agent_commands WHERE target_service_id = @service AND type = 'CollectServiceLogs' AND status IN ('Succeeded', 'Failed');";
+        count.Parameters.AddWithValue("@service", service.Service.Id.ToString("D"));
+        Assert.AreEqual(20L, (long)(await count.ExecuteScalarAsync())!);
+    }
+
+    [TestMethod]
+    public async Task DeleteService_WithDiagnosticCommand_RemovesCommandAndServiceAtomically()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        await CreateAgentAsync(fixture, nodeId, "delete-diagnostic-token", "delete-diagnostic-secret");
+        var service = await fixture.Repository.CreateServiceAsync(CreateService(nodeId, Guid.NewGuid(), "delete logs"),
+            CancellationToken.None);
+        var commandId = Guid.NewGuid();
+        Assert.IsNotNull(await fixture.Repository.CreateCollectServiceLogsCommandAsync(commandId, nodeId,
+            service.Service!.Id, fixture.Time.GetUtcNow().AddMinutes(2), CancellationToken.None));
+
+        var revision = await fixture.Repository.DeleteServiceAsync(nodeId, service.Service.Id, CancellationToken.None);
+
+        Assert.IsNotNull(revision);
+        Assert.IsNull(await fixture.Repository.GetAgentCommandAsync(commandId, CancellationToken.None));
+        Assert.AreEqual(0, (await fixture.Repository.GetServicesForNodeAsync(nodeId, CancellationToken.None)).Count);
+    }
+
+    [TestMethod]
+    public void DiagnosticEffectiveStatus_ExpiredActiveCommand_IsExpiredButTerminalStatusIsPreserved()
+    {
+        var now = DateTimeOffset.Parse("2026-09-11T12:00:00+00:00");
+        var pending = new AgentCommandRecord(Guid.NewGuid(), Guid.NewGuid(), "CollectServiceLogs", "Pending", now.AddMinutes(-3),
+            null, null, null, null, now.AddMinutes(-1), Guid.NewGuid(), null);
+        var succeeded = pending with { Status = "Succeeded", CompletedAtUtc = now.AddMinutes(-2) };
+
+        Assert.AreEqual("Expired", AdminDiagnosticsEndpoints.EffectiveStatus(pending, now));
+        Assert.AreEqual("Succeeded", AdminDiagnosticsEndpoints.EffectiveStatus(succeeded, now));
     }
 
     private static ServiceInstanceRecord CreateService(Guid nodeId, Guid id, string name) => new(

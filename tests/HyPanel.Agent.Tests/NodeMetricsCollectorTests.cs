@@ -27,6 +27,8 @@ public sealed class NodeMetricsCollectorTests
             Assert.IsTrue(metrics.DiskAvailableBytes <= metrics.DiskTotalBytes);
             Assert.IsTrue(metrics.NetworkUploadBytes >= 0);
             Assert.IsTrue(metrics.NetworkDownloadBytes >= 0);
+            Assert.IsTrue(Math.Abs(metrics.UptimeSeconds - Environment.TickCount64 / 1000) <= 2,
+                "Uptime must represent the host/container clock, not Agent process lifetime.");
         }
     }
 }

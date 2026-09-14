@@ -30,7 +30,9 @@ internal sealed record AgentCommandRecord(
     DateTimeOffset? CompletedAtUtc,
     string? ErrorCode,
     string? ErrorMessage,
-    DateTimeOffset? ExpiresAtUtc);
+    DateTimeOffset? ExpiresAtUtc,
+    Guid? TargetServiceId,
+    string? Output);
 
 internal sealed record EnrollmentTokenIssue(EnrollmentTokenRecord Token, string PlaintextToken);
 
@@ -46,7 +48,8 @@ internal sealed record NodeObservationRecord(
     DateTimeOffset? LastSeenAtUtc,
     string? ReportedVersion,
     string? ReportedPlatform,
-    long? AppliedRevision);
+    long? AppliedRevision,
+    string? LatestMetricSnapshotJson = null);
 
 internal sealed record ServiceInstanceRecord(
     Guid Id,

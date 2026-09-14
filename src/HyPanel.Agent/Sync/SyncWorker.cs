@@ -16,6 +16,7 @@ public sealed class SyncWorker(
     AgentCommandStateStore commandStateStore,
     AgentUsageStateStore usageStateStore,
     NodeMetricsCollector metricsCollector,
+    ServiceLogCollector logCollector,
     ServiceReconciler reconciler,
     HttpClient httpClient,
     TimeProvider timeProvider,
@@ -163,8 +164,16 @@ public sealed class SyncWorker(
             }
 
             var startedAt = timeProvider.GetUtcNow();
+            if (IsExpired(command, startedAt))
+            {
+                var expired = Failed(command.CommandId, startedAt, "command_expired",
+                    "Command expired before execution.");
+                commandState = Complete(commandState, expired);
+                await commandStateStore.SaveAsync(commandState, cancellationToken);
+                continue;
+            }
             var running = new AgentCommandResult(command.CommandId, AgentCommandStatus.Running, startedAt, null, null,
-                null);
+                null, null);
             commandState = commandState with { PendingResults = commandState.PendingResults.Append(running).ToArray() };
             await commandStateStore.SaveAsync(commandState, cancellationToken);
 
@@ -175,6 +184,9 @@ public sealed class SyncWorker(
 
         return commandState;
     }
+
+    public static bool IsExpired(AgentCommand command, DateTimeOffset now) =>
+        command.ExpiresAt is { } expiresAt && expiresAt <= now;
 
     private async Task<AgentCommandStoreState> FinalizeInterruptedCommandsAsync(AgentCommandStoreState state,
         CancellationToken cancellationToken)
@@ -208,10 +220,28 @@ public sealed class SyncWorker(
         DateTimeOffset startedAt,
         CancellationToken cancellationToken)
     {
+        if (command.Type == AgentCommandType.CollectServiceLogs)
+        {
+            if (command.TargetServiceId is not { } serviceId)
+                return Failed(command.CommandId, startedAt, "target_required", "A target service is required.");
+            try
+            {
+                var output = await logCollector.CollectAsync(serviceId, cancellationToken);
+                return output is null
+                    ? Failed(command.CommandId, startedAt, "service_not_managed", "The service is not managed by this Agent.")
+                    : new AgentCommandResult(command.CommandId, AgentCommandStatus.Succeeded, startedAt,
+                        timeProvider.GetUtcNow(), null, null, output);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                                                   or InvalidDataException or JsonException)
+            {
+                return Failed(command.CommandId, startedAt, "log_collection_failed", "Service logs could not be collected.");
+            }
+        }
+
         if (command.Type != AgentCommandType.RunHealthCheck)
         {
-            return new AgentCommandResult(command.CommandId, AgentCommandStatus.Failed, startedAt,
-                timeProvider.GetUtcNow(), "unsupported_command", "Command is not supported.");
+            return Failed(command.CommandId, startedAt, "unsupported_command", "Command is not supported.");
         }
 
         try
@@ -223,17 +253,18 @@ public sealed class SyncWorker(
                           !string.IsNullOrWhiteSpace(persistedCredentials.AgentSecret);
             return healthy
                 ? new AgentCommandResult(command.CommandId, AgentCommandStatus.Succeeded, startedAt,
-                    timeProvider.GetUtcNow(), null, null)
-                : new AgentCommandResult(command.CommandId, AgentCommandStatus.Failed, startedAt,
-                    timeProvider.GetUtcNow(), "credentials_unavailable", "Persisted credentials are unavailable.");
+                    timeProvider.GetUtcNow(), null, null, null)
+                : Failed(command.CommandId, startedAt, "credentials_unavailable", "Persisted credentials are unavailable.");
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
                                               or InvalidOperationException)
         {
-            return new AgentCommandResult(command.CommandId, AgentCommandStatus.Failed, startedAt,
-                timeProvider.GetUtcNow(), "health_check_failed", "Agent metrics could not be collected.");
+            return Failed(command.CommandId, startedAt, "health_check_failed", "Agent metrics could not be collected.");
         }
     }
+
+    private AgentCommandResult Failed(Guid commandId, DateTimeOffset startedAt, string code, string message) =>
+        new(commandId, AgentCommandStatus.Failed, startedAt, timeProvider.GetUtcNow(), code, message, null);
 
     private static bool IsTransient(Exception exception) => exception is HttpRequestException or TaskCanceledException;
     private static string GetAgentVersion() => typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";

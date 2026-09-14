@@ -7,6 +7,7 @@ using Microsoft.Data.Sqlite;
 
 internal static class UserEndpoints
 {
+    internal const long MaximumBrowserSafeBytes = 9_007_199_254_740_991;
     public static void Map(IEndpointRouteBuilder endpoints)
     {
         endpoints.MapPost("/api/auth/v1/login", LoginAsync);
@@ -72,7 +73,7 @@ internal static class UserEndpoints
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
         if (!TryUsername(body.Username, out var username, out var normalized) ||
             body.Password is not { Length: >= 12 and <= 256 } || body.Role is not ("Admin" or "User") ||
-            body.TrafficLimitBytes < 0) return Results.BadRequest();
+            !IsValidTrafficLimit(body.TrafficLimitBytes)) return Results.BadRequest();
         try
         {
             var issue = await repo.CreateUserAsync(Guid.NewGuid(), username, normalized, passwords.Hash(body.Password),
@@ -94,7 +95,7 @@ internal static class UserEndpoints
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
         if (!TryUsername(body.Username, out var username, out var normalized) ||
             body.Password is not null and not { Length: >= 12 and <= 256 } || body.Role is not ("Admin" or "User") ||
-            body.TrafficLimitBytes < 0) return Results.BadRequest();
+            !IsValidTrafficLimit(body.TrafficLimitBytes)) return Results.BadRequest();
         try
         {
             var user = await repo.UpdateUserAsync(id, username, normalized,
@@ -185,6 +186,8 @@ internal static class UserEndpoints
             : Results.Json(new RotateSubscriptionTokenResponse(token),
                 ServerJsonSerializerContext.Default.RotateSubscriptionTokenResponse);
     }
+
+    internal static bool IsValidTrafficLimit(long? value) => value is null or >= 0 and <= MaximumBrowserSafeBytes;
 
     private static bool TryUsername(string? input, out string username, out string normalized)
     {

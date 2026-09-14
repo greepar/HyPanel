@@ -17,3 +17,13 @@ Acceptance checklist:
 - Replaying `(AgentId, BatchId)` does not add usage twice.
 - Wrong Agent/service ownership or absent user binding rolls back the whole sync.
 - Usage arithmetic overflow rolls back the whole sync.
+
+---
+
+# Phase 9 diagnostics test research
+
+Scope: additive `CollectServiceLogs` command contract, Agent bounded/redacted collection, Server migration and persistence.
+
+Risks to prove: string-enum JSON compatibility for the new command, optional field defaults, UTF-8 byte caps without
+splitting surrogate pairs, exact secret redaction, unmanaged-service refusal, empty-buffer success, Node/Agent
+ownership, output accepted only for successful log commands, duplicate active command prevention, terminal retention.

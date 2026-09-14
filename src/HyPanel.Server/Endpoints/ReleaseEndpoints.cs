@@ -14,6 +14,7 @@ internal static class ReleaseEndpoints
         endpoints.MapGet("/api/backend-releases/v1/assets/{fileName}", GetBackendAssetAsync);
         endpoints.MapGet("/install.sh", GetUnixInstaller);
         endpoints.MapGet("/install.ps1", GetPowerShellInstaller);
+        endpoints.MapGet("/i/{code}", GetBootstrapInstaller).RequireRateLimiting("install-code");
         endpoints.MapPost("/api/admin/v1/nodes/{nodeId:guid}/install-command", CreateInstallCommandAsync);
     }
 
@@ -53,6 +54,25 @@ internal static class ReleaseEndpoints
     private static IResult GetPowerShellInstaller(ReleaseCatalog catalog) =>
         GetScript(catalog, "install.ps1", "text/plain");
 
+    private static IResult GetBootstrapInstaller(
+        string code,
+        HttpResponse response,
+        InstallCodeService installCodes)
+    {
+        if (!installCodes.TryConsume(code, out var entry))
+        {
+            return Results.NotFound();
+        }
+
+        response.Headers.CacheControl = "no-store";
+        response.Headers.Pragma = "no-cache";
+        response.Headers["Referrer-Policy"] = "no-referrer";
+        var script = entry.Platform == "unix"
+            ? BuildUnixBootstrap(entry.BaseUrl, entry.EnrollmentToken)
+            : BuildPowerShellBootstrap(entry.BaseUrl, entry.EnrollmentToken);
+        return Results.Text(script, "text/plain; charset=utf-8");
+    }
+
     private static IResult GetScript(ReleaseCatalog catalog, string fileName, string contentType)
     {
         var path = catalog.GetFixedScriptPath(fileName);
@@ -67,6 +87,7 @@ internal static class ReleaseEndpoints
         AdminAuthorization authorization,
         SqliteServerRepository repository,
         EnrollmentService enrollmentService,
+        InstallCodeService installCodes,
         CancellationToken cancellationToken)
     {
         var access = await authorization.AuthorizeAsync(httpRequest, cancellationToken);
@@ -88,9 +109,11 @@ internal static class ReleaseEndpoints
         }
 
         var token = await enrollmentService.IssueTokenAsync(nodeId, EnrollmentTokenLifetime, cancellationToken);
+        var installUrl = baseUrl + "/i/" + installCodes.Issue(
+            request.Platform, token.PlaintextToken, baseUrl, EnrollmentTokenLifetime);
         var command = request.Platform == "unix"
-            ? $"curl -fsSL {ShellQuote(baseUrl + "/install.sh")} | env HYPANEL_PANEL_URL={ShellQuote(baseUrl)} HYPANEL_ENROLLMENT_TOKEN={ShellQuote(token.PlaintextToken)} sh"
-            : $"$env:HYPANEL_PANEL_URL = {PowerShellQuote(baseUrl)}; $env:HYPANEL_ENROLLMENT_TOKEN = {PowerShellQuote(token.PlaintextToken)}; irm {PowerShellQuote(baseUrl + "/install.ps1")} | iex";
+            ? $"curl -Ls {installUrl} | bash"
+            : $"irm {installUrl} | iex";
         return Results.Json(new InstallCommandResponse(command),
             ServerJsonSerializerContext.Default.InstallCommandResponse);
     }
@@ -123,4 +146,16 @@ internal static class ReleaseEndpoints
 
     private static string PowerShellQuote(string value) =>
         "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
+
+    internal static string BuildUnixBootstrap(string baseUrl, string token) =>
+        "#!/bin/sh\n" +
+        "set -eu\n" +
+        $"export HYPANEL_PANEL_URL={ShellQuote(baseUrl)}\n" +
+        $"export HYPANEL_ENROLLMENT_TOKEN={ShellQuote(token)}\n" +
+        $"curl -fsSL {ShellQuote(baseUrl + "/install.sh")} | sh\n";
+
+    internal static string BuildPowerShellBootstrap(string baseUrl, string token) =>
+        $"$env:HYPANEL_PANEL_URL = {PowerShellQuote(baseUrl)}\n" +
+        $"$env:HYPANEL_ENROLLMENT_TOKEN = {PowerShellQuote(token)}\n" +
+        $"irm {PowerShellQuote(baseUrl + "/install.ps1")} | iex\n";
 }

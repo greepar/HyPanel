@@ -38,6 +38,7 @@ public static class Program
         builder.Services.AddSingleton<BackendBinaryManager>();
         builder.Services.AddSingleton<BackendInstanceStore>();
         builder.Services.AddSingleton<BackendProcessSupervisor>();
+        builder.Services.AddSingleton<ServiceLogCollector>();
         builder.Services.AddSingleton<ServiceReconciler>();
         builder.Services.AddHostedService<SyncWorker>();
 

@@ -1,5 +1,7 @@
 namespace HyPanel.Server.Endpoints;
 
+using HyPanel.Shared.Contracts;
+
 internal sealed record CreateNodeRequest(string DisplayName);
 
 internal sealed record CreateNodeResponse(Guid Id, string DisplayName, DateTimeOffset CreatedAtUtc);
@@ -15,9 +17,23 @@ internal sealed record AdminNodeObservationResponse(
     string? ReportedVersion,
     string? Platform,
     long DesiredRevision,
-    long? AppliedRevision);
+    long? AppliedRevision,
+    NodeMetrics? Metrics);
 
 internal sealed record CreateHealthCheckCommandResponse(Guid CommandId);
+
+internal sealed record CreateDiagnosticCommandResponse(Guid CommandId);
+
+internal sealed record ServiceDiagnosticResponse(
+    Guid CommandId,
+    string Status,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset? StartedAtUtc,
+    DateTimeOffset? CompletedAtUtc,
+    DateTimeOffset? ExpiresAtUtc,
+    string? ErrorCode,
+    string? ErrorMessage,
+    string? Output);
 
 internal sealed record InstallCommandRequest(string Platform);
 

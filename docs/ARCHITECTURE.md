@@ -81,11 +81,7 @@ Recommended initial stack:
 - Preact.
 - Vite.
 
-The Server build runs the Web production build and embeds the generated Vite
-assets into the managed assembly and NativeAOT executable. Deployment remains
-a single immutable Server binary; there is no mutable external Web root. The
-runtime exposes only `/` and `/assets/{file}` for embedded content and does not
-use an SPA catch-all that could turn an unknown `/api/*` route into HTML 200.
+Compiled assets are served by HyPanel.Server.
 
 ## 3. Core domain
 
@@ -114,41 +110,25 @@ TCP/443 and UDP/443 do not conflict.
 
 Compile-time adapter from HyPanel's generic lifecycle into backend-specific behavior.
 
-Frozen Phase 3 shape lives in `HyPanel.Agent.Backends.IBackendProvider`:
+Target minimal shape conceptually:
 
 ```csharp
 interface IBackendProvider
 {
-    string BackendType { get; }
+    BackendType Type { get; }
     BackendCapabilities Capabilities { get; }
 
-    ValueTask<BackendValidationResult> ValidateAsync(...);
-    ValueTask<RenderedBackendConfig> RenderConfigAsync(...);
-    ValueTask<BackendProcessSpec> CreateProcessSpecAsync(...);
-    ValueTask<BackendHealthResult> CheckHealthAsync(...);
-    ValueTask<BackendTrafficSnapshot?> CollectTrafficAsync(...);
+    Task EnsureInstalledAsync(...);
+    Task ApplyConfigAsync(...);
+    Task StartAsync(...);
+    Task StopAsync(...);
+    Task RestartAsync(...);
+    Task<ServiceRuntimeState> GetStatusAsync(...);
+    Task<IReadOnlyList<UsageSample>> CollectUsageAsync(...);
 }
 ```
 
-Providers do not download binaries, write live files, or own generic process
-supervision. Shared Agent infrastructure performs hash-verified same-origin
-download, staging/atomic replacement, process lifetime, log boundaries, and
-rollback. This keeps security-critical mechanics consistent across backends.
-
-The first Xray provider is intentionally limited to VLESS/TCP/REALITY/Vision.
-Additional transports and protocols require a new schema version instead of
-catch-all backend JSON. The provider owns strict parsing, deterministic Xray
-JSON rendering, TCP port declaration, process specification and local health.
-Shared infrastructure continues to own artifact acquisition, files, process
-lifetime and rollback. The REALITY private key stays in operational desired
-config and is always redacted; subscriptions receive only the public key.
-Phase 5 does not advertise Xray traffic statistics or hot reload.
-
-Mihomo and sing-box v1 intentionally share one Shadowsocks 2022 schema. This
-tests the provider boundary without turning either core into arbitrary config
-passthrough. Providers own deterministic native YAML/JSON rendering and declare
-the same listen port for TCP and UDP; shared reconciliation retains acquisition,
-atomic replacement, supervision and rollback ownership.
+Do not freeze exact signatures until Phase 1/3 design confirms the minimal data needed.
 
 Potential capabilities:
 
@@ -247,58 +227,10 @@ Expected initial entities:
 - Usage
 - EnrollmentTokens
 - Release/update metadata if persisted
-- ServiceTemplates
 
 Protocol-specific service configuration may be stored as versioned JSON rather than creating many protocol tables.
 
 Secrets must not be accidentally exposed through generic DTO serialization.
-
-### Phase 7 operational persistence
-
-Migration v6 adds `service_templates`. Template display names are NFKC-trimmed
-and have an invariant-lowercase unique key. Backend/version/schema and config
-use the same validation boundary as service creation, and Admin reads redact
-backend secrets.
-
-Template instantiation creates an enabled ServiceInstance and increments its
-Node revision in one transaction. Batch service enable/disable first validates
-every Node/service ownership pair, then changes all requested desired state in
-one transaction and increments each affected Node revision exactly once. Any
-invalid item rolls back the complete batch.
-
-The health summary is derived from current Node observations and service
-runtime rows. It is a snapshot, not a second monitoring persistence model.
-Batch Agent binary update, backend update channels, update signing, and mTLS or
-device keys remain deferred until a dedicated artifact trust, handoff,
-verification, and rollback protocol is frozen.
-
-### Phase 1 SQLite schema
-
-Phase 1 uses `Microsoft.Data.Sqlite` with explicit parameterized SQL and a
-small startup migration runner. EF Core is intentionally not introduced.
-SQLite foreign keys and WAL mode are enabled for every opened connection.
-
-The initial tables are:
-
-- `schema_migrations`: applied migration version and timestamp.
-- `nodes`: Node identity, display name, desired revision, and creation time.
-- `agents`: Agent identity, unique Node binding, SHA-256 secret hash,
-  enrollment/last-seen timestamps, reported version/platform, applied revision,
-  and latest validated metric snapshot.
-- `enrollment_tokens`: token identity, unique SHA-256 token hash, target Node,
-  creation/expiration/consumption timestamps, and the consuming Agent ID.
-- `agent_commands`: stable command ID, target Agent, type, lifecycle status,
-  timestamps, and safe error fields.
-
-GUIDs and UTC timestamps use canonical text representations. Revisions and
-byte counters are non-negative SQLite integers. Token consumption and Agent
-creation are one transaction. A unique Agent/command ID plus terminal-state
-updates make command result ingestion retry-safe.
-
-The basic Admin bootstrap credential is supplied through the
-`HYPANEL_ADMIN_TOKEN` environment/configuration secret. It is compared in
-constant time and is never persisted or logged. This is an initial single-admin
-bootstrap boundary, not the Phase 4 user account model.
 
 ## 6. Agent storage
 
@@ -381,11 +313,7 @@ Required views:
 
 Retry-safe ingestion is mandatory. Prefer a simple explicit idempotency key/window/sequence scheme over complicated event infrastructure.
 
-Phase 4 uses transactional delta batches. `(AgentId, BatchId)` is the durable
-idempotency key: inserting the receipt and adding every user/service delta occur
-in one SQLite transaction. Duplicate receipts are acknowledged without adding
-again. Agents persist unacknowledged batches. This handles ambiguous sync
-retries without event-stream infrastructure.
+The exact chosen strategy is an architect-owned decision and must be documented before implementation.
 
 ## 10. Security boundaries
 

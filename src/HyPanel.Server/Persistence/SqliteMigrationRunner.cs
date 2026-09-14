@@ -10,6 +10,7 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
     private const long UsersAndUsageSchemaVersion = 4;
     private const long ServicePublicEndpointsSchemaVersion = 5;
     private const long ServiceTemplatesSchemaVersion = 6;
+    private const long ServiceDiagnosticsSchemaVersion = 7;
 
     public async Task MigrateAsync(CancellationToken cancellationToken)
     {
@@ -225,6 +226,19 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             insertMigration.Transaction = transaction;
             insertMigration.CommandText = "INSERT INTO schema_migrations (version, applied_at_utc) VALUES (@version, @appliedAtUtc);";
             insertMigration.Parameters.AddWithValue("@version", ServiceTemplatesSchemaVersion);
+            insertMigration.Parameters.AddWithValue("@appliedAtUtc", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+            await insertMigration.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, ServiceDiagnosticsSchemaVersion, cancellationToken))
+        {
+            await ExecuteAsync(connection, transaction, "ALTER TABLE agent_commands ADD COLUMN target_service_id TEXT NULL REFERENCES service_instances(id) ON DELETE RESTRICT;", cancellationToken);
+            await ExecuteAsync(connection, transaction, "ALTER TABLE agent_commands ADD COLUMN output TEXT NULL;", cancellationToken);
+            await ExecuteAsync(connection, transaction, "CREATE INDEX ix_agent_commands_service_type_created ON agent_commands (target_service_id, type, created_at_utc);", cancellationToken);
+            await using var insertMigration = connection.CreateCommand();
+            insertMigration.Transaction = transaction;
+            insertMigration.CommandText = "INSERT INTO schema_migrations (version, applied_at_utc) VALUES (@version, @appliedAtUtc);";
+            insertMigration.Parameters.AddWithValue("@version", ServiceDiagnosticsSchemaVersion);
             insertMigration.Parameters.AddWithValue("@appliedAtUtc", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
             await insertMigration.ExecuteNonQueryAsync(cancellationToken);
         }
