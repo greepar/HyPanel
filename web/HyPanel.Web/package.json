@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "lucide-preact": "^1.46.0",
     "preact": "^10.27.2",
     "qrcode": "^1.5.4"
   },

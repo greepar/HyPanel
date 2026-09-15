@@ -1,5 +1,6 @@
 export type Theme = 'light' | 'dark' | 'system'
-export type AdminRoute = 'overview' | 'nodes' | 'services' | 'templates' | 'users'
+export type NodeTab = 'overview' | 'services' | 'network' | 'logs' | 'settings'
+export type AdminRoute = 'overview' | 'nodes' | 'templates' | 'users' | `nodes/${string}/${NodeTab}`
 export type AppRoute = AdminRoute | 'subscription'
 export type Role = 'Admin' | 'User'
 

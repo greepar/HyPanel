@@ -1,32 +1,32 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef } from 'preact/hooks'
+import { Check, ChevronDown, LayoutDashboard, LayoutTemplate, LogOut, Monitor, Moon, Server, Sun, Users } from 'lucide-preact'
 import type { AppRoute, Role, Theme } from './domain'
 
 export const themes: Theme[] = ['light', 'dark', 'system']
 const themeLabels: Record<Theme, string> = { light: '浅色', dark: '深色', system: '系统' }
-const navigation: { route: AppRoute; label: string; admin: boolean }[] = [
-  { route: 'overview', label: '概览', admin: true },
-  { route: 'nodes', label: '节点', admin: true },
-  { route: 'services', label: '服务', admin: true },
-  { route: 'templates', label: '模板', admin: true },
-  { route: 'users', label: '用户', admin: true },
-  { route: 'subscription', label: '我的订阅', admin: false },
+const navigation: { route: AppRoute; label: string; admin: boolean; icon: typeof Server }[] = [
+  { route: 'overview', label: '概览', admin: true, icon: LayoutDashboard },
+  { route: 'nodes', label: '节点', admin: true, icon: Server },
+  { route: 'templates', label: '模板', admin: true, icon: LayoutTemplate },
+  { route: 'users', label: '用户', admin: true, icon: Users },
+  { route: 'subscription', label: '我的订阅', admin: false, icon: LayoutDashboard },
 ]
 
 export function AppShell({ children, theme, setTheme, route, navigate, identity, role, logout }: { children: ComponentChildren; theme: Theme; setTheme: (value: Theme) => void; route?: AppRoute; navigate?: (value: AppRoute) => void; identity?: string; role?: Role | 'Bootstrap'; logout?: () => void }) {
   const items = navigation.filter(item => role === 'User' ? !item.admin : item.admin)
+  const activeRoute = route?.startsWith('nodes/') ? 'nodes' : route
   return <div className="app-shell">
     <header className="topbar">
       <a className="brand" href={role === 'User' ? '#/subscription' : '#/overview'}>HyPanel</a>
       <div className="topbar-actions">
         <span className="status"><i className="status-dot" />{identity ?? '安全控制平面'}</span>
-        <div className="theme-picker" aria-label="颜色主题">{themes.map(value => <button key={value} type="button" aria-pressed={theme === value} className={theme === value ? 'theme-button active' : 'theme-button'} onClick={() => setTheme(value)}>{themeLabels[value]}</button>)}</div>
-        {logout && <button type="button" className="button button-secondary" onClick={logout}>退出</button>}
+        <details className="user-menu"><summary>账户 <ChevronDown size={14} /></summary><div className="user-menu-popover"><p>主题</p>{themes.map(value => { const Icon = value === 'light' ? Sun : value === 'dark' ? Moon : Monitor; return <button key={value} type="button" onClick={() => setTheme(value)}><Icon size={16} />{themeLabels[value]}{theme === value && <Check size={15} />}</button> })}{logout && <button type="button" onClick={logout}><LogOut size={16} />退出</button>}</div></details>
       </div>
     </header>
     {route && navigate && role ? <div className="workspace">
       <aside className="sidebar">
-        <nav aria-label="主导航">{items.map(item => <a key={item.route} href={`#/${item.route}`} className={route === item.route ? 'nav-item active' : 'nav-item'} aria-current={route === item.route ? 'page' : undefined} onClick={event => { event.preventDefault(); navigate(item.route) }}>{item.label}</a>)}</nav>
+        <nav aria-label="主导航">{items.map(item => { const Icon = item.icon; return <a key={item.route} href={`#/${item.route}`} className={activeRoute === item.route ? 'nav-item active' : 'nav-item'} aria-current={activeRoute === item.route ? 'page' : undefined} onClick={event => { event.preventDefault(); navigate(item.route) }}><Icon size={18} />{item.label}</a> })}</nav>
         <div className="sidebar-footer"><span>当前身份</span><strong>{identity}</strong><small>{role === 'Bootstrap' ? '初始管理员令牌' : role === 'Admin' ? '管理员' : '普通用户'}</small></div>
       </aside>
       <main className="main">{children}</main>

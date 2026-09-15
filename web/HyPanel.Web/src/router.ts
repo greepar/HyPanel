@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'preact/hooks'
 import type { AppRoute, Role } from './domain'
 
-const adminRoutes: AppRoute[] = ['overview', 'nodes', 'services', 'templates', 'users']
+const adminRoutes: AppRoute[] = ['overview', 'nodes', 'templates', 'users']
+const nodeRoute = /^nodes\/[^/]+\/(overview|services|network|logs|settings)$/
 const routeFromHash = (): AppRoute => {
   const value = location.hash.replace(/^#\/?/, '') as AppRoute
-  return [...adminRoutes, 'subscription'].includes(value) ? value : 'overview'
+  return [...adminRoutes, 'subscription'].includes(value) || nodeRoute.test(value) ? value : 'overview'
 }
 
 export function useRoute(role: Role | 'Bootstrap' | null) {
