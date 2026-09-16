@@ -222,7 +222,7 @@ internal sealed partial class SqliteServerRepository(
         command.Parameters.AddWithValue("@reportedPlatform", reportedPlatform);
         command.Parameters.AddWithValue("@appliedRevision", appliedRevision);
         command.Parameters.AddWithValue("@latestMetricSnapshotJson", SqliteValue.ToDbValue(latestMetricSnapshotJson));
-        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+        return await command.ExecuteNonQueryAsync(cancellationToken) >= 1;
     }
 
     public async Task<IReadOnlyList<NodeObservationRecord>> GetNodeObservationsAsync(
@@ -234,7 +234,9 @@ internal sealed partial class SqliteServerRepository(
         command.CommandText = """
                               SELECT n.id, n.display_name, n.desired_revision,
                                      a.id, a.last_seen_at_utc, a.reported_version, a.reported_platform, a.applied_revision,
-                                     a.latest_metric_snapshot_json
+                                      a.latest_metric_snapshot_json, n.agent_update_policy, n.desired_agent_version,
+                                      n.agent_update_id, a.update_status, a.update_target_version,
+                                      a.update_started_at_utc, a.update_error
                               FROM nodes n
                               LEFT JOIN agents a ON a.node_id = n.id
                               ORDER BY n.created_at_utc, n.id;
@@ -251,10 +253,86 @@ internal sealed partial class SqliteServerRepository(
                 reader.IsDBNull(5) ? null : reader.GetString(5),
                 reader.IsDBNull(6) ? null : reader.GetString(6),
                 reader.IsDBNull(7) ? null : reader.GetInt64(7),
-                reader.IsDBNull(8) ? null : reader.GetString(8)));
+                reader.IsDBNull(8) ? null : reader.GetString(8),
+                reader.GetString(9),
+                reader.IsDBNull(10) ? null : reader.GetString(10),
+                reader.IsDBNull(11) ? null : SqliteValue.ToGuid(reader.GetString(11)),
+                reader.IsDBNull(12) ? null : reader.GetString(12),
+                reader.IsDBNull(13) ? null : reader.GetString(13),
+                reader.IsDBNull(14) ? null : SqliteValue.ToDateTimeOffset(reader.GetString(14)),
+                reader.IsDBNull(15) ? null : reader.GetString(15)));
         }
 
         return observations;
+    }
+
+    public async Task<AgentUpdateTargetRecord?> GetAgentUpdateTargetAsync(Guid agentId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT n.id, a.id, a.reported_version, a.reported_platform, n.agent_update_policy,
+                   n.desired_agent_version, n.agent_update_id
+            FROM agents a INNER JOIN nodes n ON n.id = a.node_id WHERE a.id = @agentId;
+            """;
+        command.Parameters.AddWithValue("@agentId", agentId.ToString("D"));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(2) || reader.IsDBNull(3)) return null;
+        return new AgentUpdateTargetRecord(SqliteValue.ToGuid(reader.GetString(0)),
+            SqliteValue.ToGuid(reader.GetString(1)), reader.GetString(2), reader.GetString(3), reader.GetString(4),
+            reader.IsDBNull(5) ? null : reader.GetString(5),
+            reader.IsDBNull(6) ? null : SqliteValue.ToGuid(reader.GetString(6)));
+    }
+
+    public async Task<bool> SetAgentUpdatePolicyAsync(Guid nodeId, string policy,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE nodes SET agent_update_policy = @policy WHERE id = @nodeId;";
+        command.Parameters.AddWithValue("@nodeId", nodeId.ToString("D"));
+        command.Parameters.AddWithValue("@policy", policy);
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+    }
+
+    public async Task<bool> RequestAgentUpdateAsync(Guid nodeId, string version, Guid updateId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE nodes SET desired_agent_version = @version, agent_update_id = @updateId
+            WHERE id = @nodeId AND EXISTS (SELECT 1 FROM agents WHERE node_id = @nodeId);
+            UPDATE agents SET update_status = NULL, update_target_version = NULL,
+                update_started_at_utc = NULL, update_error = NULL
+            WHERE node_id = @nodeId AND changes() = 1;
+            """;
+        command.Parameters.AddWithValue("@nodeId", nodeId.ToString("D"));
+        command.Parameters.AddWithValue("@version", version);
+        command.Parameters.AddWithValue("@updateId", updateId.ToString("D"));
+        return await command.ExecuteNonQueryAsync(cancellationToken) >= 1;
+    }
+
+    public async Task RecordAgentUpdateReportAsync(Guid agentId, AgentUpdateReport? report,
+        CancellationToken cancellationToken)
+    {
+        if (report is null) return;
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE agents SET update_status = @status, update_target_version = @target,
+                update_started_at_utc = @started, update_error = @error
+            WHERE id = @agentId AND EXISTS (
+                SELECT 1 FROM nodes n WHERE n.id = agents.node_id AND n.agent_update_id = @updateId);
+            """;
+        command.Parameters.AddWithValue("@agentId", agentId.ToString("D"));
+        command.Parameters.AddWithValue("@updateId", report.UpdateId.ToString("D"));
+        command.Parameters.AddWithValue("@status", report.Status.ToString());
+        command.Parameters.AddWithValue("@target", report.TargetVersion);
+        command.Parameters.AddWithValue("@started", SqliteValue.ToUtcText(report.StartedAt));
+        command.Parameters.AddWithValue("@error", SqliteValue.ToDbValue(report.LastError));
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<AgentCommandRecord?> CreateRunHealthCheckCommandAsync(

@@ -18,7 +18,17 @@ internal sealed record AdminNodeObservationResponse(
     string? Platform,
     long DesiredRevision,
     long? AppliedRevision,
-    NodeMetrics? Metrics);
+    NodeMetrics? Metrics,
+    string AgentUpdatePolicy,
+    string? LatestAgentVersion,
+    string? DesiredAgentVersion,
+    string AgentUpdateStatus,
+    string? AgentUpdateError);
+
+internal sealed record SetAgentUpdatePolicyRequest(string Policy);
+internal sealed record RequestAgentUpdateResponse(Guid UpdateId, string Version);
+internal sealed record BatchAgentUpdateRequest(Guid[] NodeIds);
+internal sealed record BatchAgentUpdateResponse(string Version, int UpdatedNodes);
 
 internal sealed record CreateHealthCheckCommandResponse(Guid CommandId);
 

@@ -7,14 +7,45 @@ public sealed record AgentSyncRequest(
     NodeMetrics Metrics,
     IReadOnlyList<ServiceRuntimeState> Services,
     IReadOnlyList<UsageBatch> UsageBatches,
-    IReadOnlyList<AgentCommandResult> CommandResults);
+    IReadOnlyList<AgentCommandResult> CommandResults,
+    AgentUpdateReport? AgentUpdate = null);
 
 public sealed record AgentSyncResponse(
     long DesiredRevision,
     NodeDesiredState? DesiredState,
     IReadOnlyList<AgentCommand> Commands,
     IReadOnlyList<Guid> AcceptedUsageBatchIds,
-    int SyncIntervalSeconds);
+    int SyncIntervalSeconds,
+    AgentUpdateDescriptor? AgentUpdate = null);
+
+public enum AgentUpdateStatus
+{
+    Idle = 0,
+    Downloading = 1,
+    Staged = 2,
+    Applying = 3,
+    RestartPending = 4,
+    Verifying = 5,
+    Succeeded = 6,
+    Failed = 7,
+}
+
+public sealed record AgentUpdateDescriptor(
+    Guid UpdateId,
+    string Version,
+    string Rid,
+    string FileName,
+    string Sha256,
+    long Size);
+
+public sealed record AgentUpdateReport(
+    Guid UpdateId,
+    AgentUpdateStatus Status,
+    string TargetVersion,
+    string Rid,
+    DateTimeOffset StartedAt,
+    string? PreviousVersion,
+    string? LastError);
 
 public sealed record NodeDesiredState(
     long Revision,

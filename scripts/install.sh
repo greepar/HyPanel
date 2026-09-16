@@ -301,6 +301,9 @@ if [ "$STAGING_INSTALL" = 0 ] && [ "$OS" = Linux ] && { command -v systemctl >/d
         fi
     fi
     chown "$AGENT_USER" "$DATA_DIR"
+    mkdir -p "$INSTALL_ROOT"
+    chown "$AGENT_USER" "$INSTALL_ROOT"
+    chmod 750 "$INSTALL_ROOT"
 fi
 umask 077
 escape_env() { printf '%s' "$1" | sed 's/[\\`"$]/\\&/g'; }
@@ -346,6 +349,7 @@ HAD_OLD=0
 if [ -e "$INSTALL_ROOT" ]; then mv "$INSTALL_ROOT" "$BACKUP_INSTALL"; HAD_OLD=1; fi
 mv "$STAGED_INSTALL" "$INSTALL_ROOT"
 chmod 755 "$INSTALL_ROOT"
+[ -n "$AGENT_USER" ] && chown "$AGENT_USER" "$INSTALL_ROOT" "$AGENT_PATH"
 
 case "$OS" in
     Linux)

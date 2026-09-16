@@ -11,6 +11,7 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
     private const long ServicePublicEndpointsSchemaVersion = 5;
     private const long ServiceTemplatesSchemaVersion = 6;
     private const long ServiceDiagnosticsSchemaVersion = 7;
+    private const long AgentUpdateSchemaVersion = 8;
 
     public async Task MigrateAsync(CancellationToken cancellationToken)
     {
@@ -239,6 +240,25 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             insertMigration.Transaction = transaction;
             insertMigration.CommandText = "INSERT INTO schema_migrations (version, applied_at_utc) VALUES (@version, @appliedAtUtc);";
             insertMigration.Parameters.AddWithValue("@version", ServiceDiagnosticsSchemaVersion);
+            insertMigration.Parameters.AddWithValue("@appliedAtUtc", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+            await insertMigration.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, AgentUpdateSchemaVersion, cancellationToken))
+        {
+            await ExecuteAsync(connection, transaction, """
+                ALTER TABLE nodes ADD COLUMN agent_update_policy TEXT NOT NULL DEFAULT 'Manual' CHECK (agent_update_policy IN ('Manual', 'Auto'));
+                ALTER TABLE nodes ADD COLUMN desired_agent_version TEXT NULL;
+                ALTER TABLE nodes ADD COLUMN agent_update_id TEXT NULL;
+                ALTER TABLE agents ADD COLUMN update_status TEXT NULL;
+                ALTER TABLE agents ADD COLUMN update_target_version TEXT NULL;
+                ALTER TABLE agents ADD COLUMN update_started_at_utc TEXT NULL;
+                ALTER TABLE agents ADD COLUMN update_error TEXT NULL;
+                """, cancellationToken);
+            await using var insertMigration = connection.CreateCommand();
+            insertMigration.Transaction = transaction;
+            insertMigration.CommandText = "INSERT INTO schema_migrations (version, applied_at_utc) VALUES (@version, @appliedAtUtc);";
+            insertMigration.Parameters.AddWithValue("@version", AgentUpdateSchemaVersion);
             insertMigration.Parameters.AddWithValue("@appliedAtUtc", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
             await insertMigration.ExecuteNonQueryAsync(cancellationToken);
         }

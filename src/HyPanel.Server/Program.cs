@@ -34,6 +34,9 @@ public static class Program
         builder.Services.AddSingleton<SqliteServerRepository>();
         builder.Services.AddSingleton<EnrollmentService>();
         builder.Services.AddSingleton<ReleaseCatalog>();
+        builder.Services.AddHttpClient("release-sync", client => client.Timeout = TimeSpan.FromMinutes(10))
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = true });
+        builder.Services.AddHostedService<ReleaseSyncWorker>();
         builder.Services.AddSingleton<BackendArtifactCatalog>();
         builder.Services.AddSingleton<InstallCodeService>();
         builder.Services.AddRateLimiter(options => options.AddPolicy("install-code", context =>

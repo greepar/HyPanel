@@ -3,6 +3,7 @@ namespace HyPanel.Server.Endpoints;
 using HyPanel.Server.Persistence;
 using HyPanel.Shared.Contracts;
 using HyPanel.Shared.Serialization;
+using HyPanel.Shared.Versioning;
 
 internal static class AgentEnrollmentEndpoints
 {
@@ -48,6 +49,7 @@ internal static class AgentEnrollmentEndpoints
     private static bool IsValidRequest(AgentEnrollmentRequest request) =>
         AdminNodesEndpoints.TryNormalize(request.Token, MaximumTokenLength, out _)
         && AdminNodesEndpoints.TryNormalize(request.AgentVersion, MaximumAgentVersionLength, out _)
+        && SemanticVersion.TryParse(request.AgentVersion, out _)
         && AdminNodesEndpoints.TryNormalize(request.Platform, MaximumPlatformLength, out _)
         && request.Machine is not null
         && AdminNodesEndpoints.TryNormalize(request.Machine.Hostname, MaximumHostnameLength, out _);

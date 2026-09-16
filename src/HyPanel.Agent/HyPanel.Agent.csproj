@@ -8,7 +8,17 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>true</InvariantGlobalization>
     <PublishAot>true</PublishAot>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AgentBuildVersion Condition="'$(AgentBuildVersion)' == ''">$(Version)</AgentBuildVersion>
+    <AgentRuntimeIdentifier Condition="'$(AgentRuntimeIdentifier)' == ''">$(RuntimeIdentifier)</AgentRuntimeIdentifier>
+    <GeneratedBuildInfo>$(BaseIntermediateOutputPath)$(Configuration)/$(TargetFramework)/BuildInfo.g.cs</GeneratedBuildInfo>
   </PropertyGroup>
+
+  <Target Name="GenerateBuildInfo" BeforeTargets="CoreCompile">
+    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(GeneratedBuildInfo)'))" />
+    <WriteLinesToFile File="$(GeneratedBuildInfo)" Overwrite="true" Lines="namespace HyPanel.Agent%3B internal static class BuildInfo { public const string Version = &quot;$(AgentBuildVersion)&quot;%3B private const string PublishedRuntimeIdentifier = &quot;$(AgentRuntimeIdentifier)&quot;%3B public static string RuntimeIdentifier => string.IsNullOrEmpty(PublishedRuntimeIdentifier) ? System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier : PublishedRuntimeIdentifier%3B }" />
+    <ItemGroup><Compile Include="$(GeneratedBuildInfo)" /></ItemGroup>
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
@@ -16,5 +26,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\HyPanel.Shared\HyPanel.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>HyPanel.Agent.Tests</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 </Project>

@@ -2,6 +2,7 @@ namespace HyPanel.Agent;
 
 using System.Text.Json.Serialization;
 using HyPanel.Shared.Contracts;
+using HyPanel.Agent.Updates;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, UseStringEnumConverter = true)]
 [JsonSerializable(typeof(AgentLocalState))]
@@ -12,4 +13,5 @@ using HyPanel.Shared.Contracts;
 [JsonSerializable(typeof(AgentCommandResult[]))]
 [JsonSerializable(typeof(UsageBatch))]
 [JsonSerializable(typeof(UsageBatch[]))]
+[JsonSerializable(typeof(AgentUpdateLocalState))]
 internal sealed partial class AgentSyncJsonSerializerContext : JsonSerializerContext;

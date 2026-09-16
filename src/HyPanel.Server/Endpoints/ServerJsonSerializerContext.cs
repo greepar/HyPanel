@@ -39,4 +39,8 @@ using HyPanel.Shared.Contracts;
 [JsonSerializable(typeof(BatchServiceEnabledRequest))]
 [JsonSerializable(typeof(BatchServiceEnabledResponse))]
 [JsonSerializable(typeof(HealthSummaryResponse))]
+[JsonSerializable(typeof(SetAgentUpdatePolicyRequest))]
+[JsonSerializable(typeof(RequestAgentUpdateResponse))]
+[JsonSerializable(typeof(BatchAgentUpdateRequest))]
+[JsonSerializable(typeof(BatchAgentUpdateResponse))]
 internal sealed partial class ServerJsonSerializerContext : JsonSerializerContext;

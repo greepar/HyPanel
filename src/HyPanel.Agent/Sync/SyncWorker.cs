@@ -2,11 +2,11 @@ namespace HyPanel.Agent;
 
 using System.Net;
 using System.Net.Http.Headers;
-using System.Runtime.InteropServices;
 using System.Text.Json;
 using HyPanel.Shared.Contracts;
 using HyPanel.Shared.Serialization;
 using HyPanel.Agent.Reconciliation;
+using HyPanel.Agent.Updates;
 
 public sealed class SyncWorker(
     ILogger<SyncWorker> logger,
@@ -15,6 +15,8 @@ public sealed class SyncWorker(
     AgentStateStore stateStore,
     AgentCommandStateStore commandStateStore,
     AgentUsageStateStore usageStateStore,
+    AgentUpdateStateStore updateStateStore,
+    AgentUpdater updater,
     NodeMetricsCollector metricsCollector,
     ServiceLogCollector logCollector,
     ServiceReconciler reconciler,
@@ -29,6 +31,7 @@ public sealed class SyncWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await updater.RecoverAsync(stoppingToken);
         AgentCredentials credentials;
         try
         {
@@ -37,6 +40,11 @@ public sealed class SyncWorker(
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
             return;
+        }
+        catch
+        {
+            await updater.RollbackStartupFailureAsync(CancellationToken.None);
+            throw;
         }
 
         var state = await stateStore.LoadAsync(stoppingToken);
@@ -55,8 +63,10 @@ public sealed class SyncWorker(
                 var pendingResults = commandState.PendingResults.ToArray();
                 var pendingUsageBatches = usageStateStore.GetPendingBatchesSnapshot();
                 await reconciler.RefreshRuntimeStatesAsync(stoppingToken);
+                var updateReport = await updateStateStore.GetReportAsync(stoppingToken);
                 var response = await SyncAsync(credentials, state.AppliedRevision, reconciler.GetRuntimeStates(),
-                    pendingUsageBatches, pendingResults, stoppingToken);
+                    pendingUsageBatches, pendingResults, updateReport, stoppingToken);
+                await updater.MarkSyncSucceededAsync(stoppingToken);
                 await usageStateStore.AcknowledgeAsync(pendingUsageBatches, response.AcceptedUsageBatchIds, stoppingToken);
                 if (response.DesiredState is not null)
                 {
@@ -76,6 +86,10 @@ public sealed class SyncWorker(
                 }
 
                 commandState = await ProcessCommandsAsync(response.Commands, commandState, credentials, stoppingToken);
+                if (response.AgentUpdate is not null)
+                {
+                    await updater.ApplyOfferAsync(response.AgentUpdate, credentials, stoppingToken);
+                }
                 backoffSeconds = 0;
                 nextDelaySeconds = response.SyncIntervalSeconds is >= 1 and <= 300
                     ? response.SyncIntervalSeconds
@@ -115,10 +129,11 @@ public sealed class SyncWorker(
     private async Task<AgentSyncResponse> SyncAsync(AgentCredentials credentials, long appliedRevision,
         IReadOnlyList<ServiceRuntimeState> services, IReadOnlyList<UsageBatch> usageBatches,
         IReadOnlyList<AgentCommandResult> results,
+        AgentUpdateReport? updateReport,
         CancellationToken cancellationToken)
     {
-        var request = new AgentSyncRequest(GetAgentVersion(), GetPlatform(), appliedRevision,
-            metricsCollector.Collect(), services, usageBatches, results);
+        var request = new AgentSyncRequest(BuildInfo.Version, BuildInfo.RuntimeIdentifier, appliedRevision,
+            metricsCollector.Collect(), services, usageBatches, results, updateReport);
         using var message =
             new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(credentials.PanelBaseUrl), SyncPath));
         message.Headers.Add("X-HyPanel-Agent-Id", credentials.AgentId.ToString("D"));
@@ -267,16 +282,5 @@ public sealed class SyncWorker(
         new(commandId, AgentCommandStatus.Failed, startedAt, timeProvider.GetUtcNow(), code, message, null);
 
     private static bool IsTransient(Exception exception) => exception is HttpRequestException or TaskCanceledException;
-    private static string GetAgentVersion() => typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
-
-    private static string GetPlatform()
-    {
-        var operatingSystem = OperatingSystem.IsWindows() ? "win"
-            : OperatingSystem.IsMacOS() ? "osx"
-            : OperatingSystem.IsLinux() ? "linux"
-            : "unknown";
-        return $"{operatingSystem}-{RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant()}";
-    }
-
     private sealed class AgentCredentialException : Exception;
 }

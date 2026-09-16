@@ -82,7 +82,7 @@ try {
     $token = Required 'HYPANEL_ENROLLMENT_TOKEN' $env:HYPANEL_ENROLLMENT_TOKEN
     $rid = Target-Rid
     $frozenRids = @('win-x64', 'win-arm64', 'linux-x64', 'linux-arm64', 'linux-musl-x64', 'linux-musl-arm64', 'osx-x64', 'osx-arm64')
-    if ([string]::IsNullOrWhiteSpace($ManifestUrl)) { $ManifestUrl = [Uri]::new($panel, 'api/agent/manifest.json').AbsoluteUri }
+    if ([string]::IsNullOrWhiteSpace($ManifestUrl)) { $ManifestUrl = [Uri]::new($panel, 'api/releases/v1/manifest').AbsoluteUri }
     $manifestUri = $null
     if (-not [Uri]::TryCreate($ManifestUrl, [UriKind]::Absolute, [ref] $manifestUri) -or (Origin $manifestUri) -ne (Origin $panel)) { Fail 'Manifest URL must be same-origin.' }
     $manifest = Invoke-RestMethod -Uri $manifestUri.AbsoluteUri -Method Get -UseBasicParsing

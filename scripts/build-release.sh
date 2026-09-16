@@ -13,6 +13,15 @@ OUTPUT_DIR=$2
 case "$VERSION" in
     ''|*[!A-Za-z0-9._-]*) printf '%s\n' 'invalid version' >&2; exit 2 ;;
 esac
+python3 - "$VERSION" <<'PY'
+import re, sys
+if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?', sys.argv[1]):
+    raise SystemExit('invalid semantic version')
+PY
+case "$VERSION" in
+    *-*) ASSEMBLY_VERSION=${VERSION%%-*} ;;
+    *) ASSEMBLY_VERSION=$VERSION ;;
+esac
 
 REPO_ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 case "$OUTPUT_DIR" in
@@ -54,7 +63,11 @@ publish_and_package() {
 
     rm -rf "$publish_dir" "$package_dir"
     mkdir -p "$package_dir"
-    dotnet publish "$project" -c Release -r "$rid" --self-contained true -o "$publish_dir"
+    dotnet publish "$project" -c Release -r "$rid" --self-contained true -o "$publish_dir" \
+        -p:Version="$VERSION" -p:VersionPrefix="$ASSEMBLY_VERSION" \
+        -p:FileVersion="$ASSEMBLY_VERSION.0" -p:InformationalVersion="$VERSION" \
+        -p:IncludeSourceRevisionInInformationalVersion=false \
+        -p:AgentBuildVersion="$VERSION" -p:AgentRuntimeIdentifier="$rid"
     [ -f "$publish_dir/$binary_name" ] || {
         printf '%s\n' "missing published binary: $publish_dir/$binary_name" >&2
         exit 1

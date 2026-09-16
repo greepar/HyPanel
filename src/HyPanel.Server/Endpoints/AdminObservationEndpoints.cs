@@ -4,6 +4,7 @@ using System.Text.Json;
 using HyPanel.Server.Persistence;
 using HyPanel.Shared.Contracts;
 using HyPanel.Shared.Serialization;
+using HyPanel.Server.Releases;
 
 internal static class AdminObservationEndpoints
 {
@@ -20,6 +21,7 @@ internal static class AdminObservationEndpoints
         HttpRequest httpRequest,
         AdminAuthorization authorization,
         SqliteServerRepository repository,
+        ReleaseCatalog releaseCatalog,
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
@@ -29,6 +31,7 @@ internal static class AdminObservationEndpoints
         var nowUtc = timeProvider.GetUtcNow();
         var observations = await repository.GetNodeObservationsAsync(cancellationToken);
         var response = new AdminNodeObservationResponse[observations.Count];
+        var latest = releaseCatalog.Manifest?.Version;
         for (var index = 0; index < observations.Count; index++)
         {
             var observation = observations[index];
@@ -42,10 +45,30 @@ internal static class AdminObservationEndpoints
                 observation.ReportedPlatform,
                 observation.DesiredRevision,
                 observation.AppliedRevision,
-                TryReadMetrics(observation.LatestMetricSnapshotJson, nowUtc));
+                TryReadMetrics(observation.LatestMetricSnapshotJson, nowUtc),
+                observation.AgentUpdatePolicy,
+                latest,
+                observation.DesiredAgentVersion,
+                GetUpdateStatus(observation, latest, nowUtc),
+                observation.UpdateError);
         }
 
         return Results.Json(response, ServerJsonSerializerContext.Default.AdminNodeObservationResponseArray);
+    }
+
+    private static string GetUpdateStatus(NodeObservationRecord observation, string? latest, DateTimeOffset nowUtc)
+    {
+        if (observation.UpdateStatus == "Failed") return "Failed";
+        if (observation.DesiredAgentVersion is { } desired && observation.ReportedVersion != desired)
+            return observation.UpdateStatus is "Downloading" or "Staged" or "Applying" ? observation.UpdateStatus
+                : observation.LastSeenAtUtc is null || observation.LastSeenAtUtc < nowUtc - OnlineThreshold
+                    ? "WaitingForReconnect" : "Requested";
+        if (observation.DesiredAgentVersion is { } completed && observation.ReportedVersion == completed) return "Succeeded";
+        if (latest is not null && observation.ReportedVersion is { } current
+            && HyPanel.Shared.Versioning.SemanticVersion.TryParse(current, out var currentVersion)
+            && HyPanel.Shared.Versioning.SemanticVersion.TryParse(latest, out var latestVersion)
+            && currentVersion.CompareTo(latestVersion) < 0) return "Available";
+        return "UpToDate";
     }
 
     /// <summary>

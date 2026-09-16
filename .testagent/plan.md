@@ -14,3 +14,17 @@
 2. Add focused Agent `ServiceLogCollectorTests` for byte-tail bounds, secret extraction, redaction, unmanaged service and empty buffer.
 3. Extend SQLite tests for migration v7 columns, ownership, single active command, output persistence, forged-output rejection and retention.
 4. Run focused projects, then full Release build/test and representative Agent + Server NativeAOT publishes.
+
+---
+
+# Agent self-update test plan
+
+1. Add Shared SemVer tests and sync contract source-generation round trips.
+2. Add build script verification for Version/FileVersion/InformationalVersion and all eight generated RID constants.
+3. Extend ReleaseCatalog tests for refresh, cache fallback, exact RID selection and unsafe metadata.
+4. Extend SQLite tests for migration v8, manual/auto policy, desired update identity and sync-reported lifecycle.
+5. Add Agent updater tests for validation, streaming size/hash checks, tar/zip safety, staging, replacement rollback,
+   no-downgrade, duplicate offer idempotency and persisted-state recovery.
+6. Add endpoint tests for manual, retry, policy and batch update behavior.
+7. Run a Linux process-level E2E harness with two stamped Agent binaries and a local fake Panel.
+8. Run focused tests after each phase, then full build/test, Web build and representative Linux NativeAOT publish.

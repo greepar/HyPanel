@@ -36,6 +36,11 @@ export type Node = {
   desiredRevision: number
   appliedRevision: number | null
   metrics: NodeMetrics | null
+  agentUpdatePolicy: 'Manual' | 'Auto'
+  latestAgentVersion: string | null
+  desiredAgentVersion: string | null
+  agentUpdateStatus: 'UpToDate' | 'Available' | 'Requested' | 'Downloading' | 'Staged' | 'Applying' | 'WaitingForReconnect' | 'Succeeded' | 'Failed'
+  agentUpdateError: string | null
 }
 
 export type Runtime = {

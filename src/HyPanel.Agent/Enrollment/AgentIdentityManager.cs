@@ -1,6 +1,5 @@
 namespace HyPanel.Agent;
 
-using System.Runtime.InteropServices;
 using HyPanel.Shared.Contracts;
 
 public sealed class AgentIdentityManager(
@@ -29,8 +28,8 @@ public sealed class AgentIdentityManager(
         logger.LogInformation("Enrolling Agent with the configured panel.");
         var enrollmentRequest = new AgentEnrollmentRequest(
             options.EnrollmentToken,
-            GetAgentVersion(),
-            GetPlatform(),
+            BuildInfo.Version,
+            BuildInfo.RuntimeIdentifier,
             new AgentMachineInfo(Environment.MachineName));
         var enrollmentResponse = await enrollmentClient.EnrollAsync(
             panelBaseUri,
@@ -73,17 +72,4 @@ public sealed class AgentIdentityManager(
             "HYPANEL_PANEL_URL must use HTTPS; HTTP is allowed only for localhost in Development.");
     }
 
-    private static string GetAgentVersion() =>
-        typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
-
-    private static string GetPlatform()
-    {
-        var operatingSystem = OperatingSystem.IsWindows() ? "win"
-            : OperatingSystem.IsMacOS() ? "osx"
-            : OperatingSystem.IsLinux() ? "linux"
-            : RuntimeInformation.OSDescription.Trim().ToLowerInvariant().Replace(' ', '-');
-        var architecture = RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant();
-
-        return $"{operatingSystem}-{architecture}";
-    }
 }

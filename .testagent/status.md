@@ -102,6 +102,26 @@
   aliases protected by per-IP rate limiting; they resolve to the existing 256-bit enrollment token. Bootstrap
   responses remain platform-bound and no-store/no-referrer.
 - US Server linux-x64 NativeAOT publish/deployment: PASS. Public health and both bootstrap payloads: PASS. Browser
+
+---
+
+# Agent self-update test quality review
+
+- Scope: Shared SemVer/contracts, Server release cache/policy/persistence, Agent updater state/download/archive/
+  replacement/recovery, and Linux process E2E.
+- Assertions cover equality, negative/boolean decisions, exact exception/error codes, persisted state transitions,
+  filesystem side effects, collection/RID selection, credential byte preservation, and process-level version change.
+- No generated update test is assertion-free or null-only. Exception tests assert exact safe error codes rather than
+  accepting any failure.
+- Pseudo-mutation review added explicit survivors for same-version/downgrade decisions, duplicate offer idempotency,
+  restart-pending recovery, stable-only Auto policy, manual same/downgrade rejection, all eight RID selection, zip/tar
+  traversal/duplicates/links, and Windows helper sibling paths.
+- Linux x64 NativeAOT process E2E ran OLD `1.2.0` to NEW `1.3.0` through a loopback Panel and real archive. It verified
+  download, size/SHA, extraction, staged self-test, executable replacement, `execv`, new-version sync, unchanged
+  credentials, `Succeeded` persisted state, and post-sync deletion of `.previous`.
+- Residual platform risk: Windows locked-executable replacement cannot execute on Linux CI. Its path, parent-process,
+  update identity/state and rollback planning are isolated and tested; production Windows integration remains a
+  platform-specific acceptance item when a Windows node is available.
   console: 0 errors / 0 warnings. Server warning log: empty.
 - Agent release 0.2.1: PASS; all eight frozen NativeAOT RID assets and SHA256SUMS deployed. UK linux-x64 Agent matches
   the release hash, is online, and sustained at least ten successful syncs in 90 seconds with no Agent/Server warnings.

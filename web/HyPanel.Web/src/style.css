@@ -93,6 +93,7 @@ input,select { width:100%; min-height:42px; border:1px solid var(--border); bord
 .diagnostic-list article { border:0; background:var(--surface-container-low) }
 .empty-icon { border:0; background:var(--surface-container-high) }
 .telemetry-row,.telemetry-empty { border:0; background:var(--surface-container) }
+.update-controls { margin:18px 0 0 }
 .segmented,.modal,.qr-panel { border:0 }
 .notice { border-color:transparent }
 .notice-error { border-color:color-mix(in srgb,var(--danger) 35%,var(--border)) }

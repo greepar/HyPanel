@@ -106,13 +106,59 @@ public sealed class ReleaseCatalogTests
         Assert.AreEqual(string.Empty, unlistedPath);
     }
 
+    [TestMethod]
+    public void Reload_WhenNewManifestAppears_UpdatesLatestAndRetainsOlderAssetSelection()
+    {
+        using var fixture = ReleaseFixture.Create();
+        fixture.WriteManifest(fixture.Manifest);
+        var catalog = fixture.CreateCatalog();
+        var newer = CreateManifest() with
+        {
+            Version = "1.3.0",
+            Assets = SupportedRids.Select(rid => new AgentReleaseAsset(rid,
+                $"hypanel-agent-1.3.0-{rid}.{(rid.StartsWith("win-", StringComparison.Ordinal) ? "zip" : "tar.gz")}",
+                new string('b', 64), 2)).ToArray()
+        };
+        fixture.WriteVersionedManifest(fixture.Manifest);
+        fixture.WriteManifest(newer);
+
+        catalog.Reload();
+
+        Assert.AreEqual("1.3.0", catalog.Manifest!.Version);
+        Assert.AreEqual("hypanel-agent-1.2.3-linux-musl-arm64.tar.gz",
+            catalog.FindAsset("1.2.3", "linux-musl-arm64")!.FileName);
+        Assert.AreEqual("hypanel-agent-1.3.0-win-arm64.zip",
+            catalog.FindAsset("1.3.0", "win-arm64")!.FileName);
+    }
+
+    [DataTestMethod]
+    [DataRow("linux-x64")]
+    [DataRow("linux-arm64")]
+    [DataRow("linux-musl-x64")]
+    [DataRow("linux-musl-arm64")]
+    [DataRow("osx-x64")]
+    [DataRow("osx-arm64")]
+    [DataRow("win-x64")]
+    [DataRow("win-arm64")]
+    public void FindAsset_SelectsExactlyOneFrozenRid(string rid)
+    {
+        using var fixture = ReleaseFixture.Create();
+        fixture.WriteManifest(fixture.Manifest);
+
+        var asset = fixture.CreateCatalog().FindAsset("1.2.3", rid);
+
+        Assert.IsNotNull(asset);
+        Assert.AreEqual(rid, asset.Rid);
+        StringAssert.Contains(asset.FileName, $"-{rid}.");
+    }
+
     private static AgentReleaseManifest CreateManifest() => new(
         1,
         "1.2.3",
         new DateTimeOffset(2026, 9, 9, 12, 0, 0, TimeSpan.Zero),
         SupportedRids.Select((rid, index) => new AgentReleaseAsset(
             rid,
-            $"agent-{rid}.tar.gz",
+            $"hypanel-agent-1.2.3-{rid}.{(rid.StartsWith("win-", StringComparison.Ordinal) ? "zip" : "tar.gz")}",
             string.Create(64, index, static (span, value) => span.Fill("0123456789abcdef"[value % 16])),
             1)).ToArray());
 
@@ -136,6 +182,12 @@ public sealed class ReleaseCatalogTests
         {
             var json = JsonSerializer.Serialize(manifest, HyPanelJsonSerializerContext.Default.AgentReleaseManifest);
             File.WriteAllText(Path.Combine(DirectoryPath, "manifest.json"), json);
+        }
+
+        public void WriteVersionedManifest(AgentReleaseManifest manifest)
+        {
+            var json = JsonSerializer.Serialize(manifest, HyPanelJsonSerializerContext.Default.AgentReleaseManifest);
+            File.WriteAllText(Path.Combine(DirectoryPath, $"manifest-{manifest.Version}.json"), json);
         }
 
         public ReleaseCatalog CreateCatalog() => new(new ConfigurationBuilder()

@@ -132,8 +132,7 @@ public sealed class BackendProcessSupervisor(ILogger<BackendProcessSupervisor> l
 
     public async ValueTask DisposeAsync()
     {
-        foreach (var serviceId in processes.Keys)
-            await StopAsync(serviceId, TimeSpan.FromSeconds(5), CancellationToken.None);
+        await StopAllAsync(CancellationToken.None);
         foreach (var managed in processes.Values)
         {
             managed.Process?.Dispose();
@@ -141,6 +140,12 @@ public sealed class BackendProcessSupervisor(ILogger<BackendProcessSupervisor> l
         }
 
         processes.Clear();
+    }
+
+    public async Task StopAllAsync(CancellationToken cancellationToken)
+    {
+        foreach (var serviceId in processes.Keys)
+            await StopAsync(serviceId, TimeSpan.FromSeconds(5), cancellationToken);
     }
 
     private static void ValidateSpec(BackendProcessSpec spec)

@@ -6,6 +6,7 @@ using HyPanel.Server.Persistence;
 using HyPanel.Server.Releases;
 using HyPanel.Shared.Contracts;
 using HyPanel.Shared.Serialization;
+using HyPanel.Shared.Versioning;
 
 internal static class AgentSyncEndpoints
 {
@@ -29,6 +30,7 @@ internal static class AgentSyncEndpoints
         AgentAuthentication authentication,
         SqliteServerRepository repository,
         BackendArtifactCatalog backendArtifactCatalog,
+        ReleaseCatalog releaseCatalog,
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
@@ -59,6 +61,8 @@ internal static class AgentSyncEndpoints
             return Results.Unauthorized();
         }
 
+        await repository.RecordAgentUpdateReportAsync(agent.AgentId, request.AgentUpdate, cancellationToken);
+
         var desired = await repository.GetDesiredStateForAgentAsync(agent.AgentId, cancellationToken);
         if (desired is null)
         {
@@ -78,19 +82,45 @@ internal static class AgentSyncEndpoints
                 command.TargetServiceId);
         }
 
+        var update = await GetAgentUpdateAsync(agent.AgentId, request, repository, releaseCatalog, cancellationToken);
         var response = new AgentSyncResponse(
             desired.Value.Revision,
             request.AppliedRevision == desired.Value.Revision ? null : new NodeDesiredState(desired.Value.Revision, desired.Value.Services.Select(service => new ServiceDesiredState(service.Id, service.Name, service.BackendType, service.BackendVersion, service.Enabled, service.ConfigSchemaVersion, service.ConfigJson)).ToArray(), backendArtifactCatalog.GetArtifacts(request.Platform.Trim())),
             responseCommands,
             request.UsageBatches.Select(batch => batch.BatchId).ToArray(),
-            SyncIntervalSeconds);
+            SyncIntervalSeconds,
+            update);
         return Results.Json(response, HyPanelJsonSerializerContext.Default.AgentSyncResponse);
+    }
+
+    internal static async Task<AgentUpdateDescriptor?> GetAgentUpdateAsync(Guid agentId, AgentSyncRequest request,
+        SqliteServerRepository repository, ReleaseCatalog catalog, CancellationToken cancellationToken)
+    {
+        var target = await repository.GetAgentUpdateTargetAsync(agentId, cancellationToken);
+        var manifest = catalog.Manifest;
+        if (target is null || manifest is null
+            || !SemanticVersion.TryParse(request.AgentVersion, out var current)) return null;
+        var desired = target.DesiredVersion;
+        var updateId = target.UpdateId;
+        if (AgentUpdatePlanner.ShouldRequestAutoUpdate(target.Policy, request.AgentVersion, manifest.Version, desired))
+        {
+            desired = manifest.Version;
+            updateId = Guid.NewGuid();
+            await repository.RequestAgentUpdateAsync(target.NodeId, desired, updateId.Value, cancellationToken);
+        }
+        if (desired is null || updateId is null || request.AgentVersion == desired
+            || !SemanticVersion.TryParse(desired, out var desiredVersion) || current.CompareTo(desiredVersion) >= 0) return null;
+        var asset = catalog.FindAsset(desired, request.Platform);
+        return asset is null ? null : new AgentUpdateDescriptor(updateId.Value, desired, asset.Rid, asset.FileName,
+            asset.Sha256, asset.Size);
     }
 
     private static bool IsValidRequest(AgentSyncRequest request, DateTimeOffset nowUtc)
     {
         if (!AdminNodesEndpoints.TryNormalize(request.AgentVersion, MaximumAgentVersionLength, out _)
+            || !SemanticVersion.TryParse(request.AgentVersion, out _)
             || !AdminNodesEndpoints.TryNormalize(request.Platform, MaximumPlatformLength, out _)
+            || !ReleaseCatalog.SupportedRids.Contains(request.Platform, StringComparer.Ordinal)
             || request.AppliedRevision < 0
             || request.Metrics is null
             || request.Services is null
@@ -99,7 +129,8 @@ internal static class AgentSyncEndpoints
             || request.CommandResults.Count > MaximumCommandResults
             || request.UsageBatches is null
             || request.UsageBatches.Count > 32
-            || !IsValidMetrics(request.Metrics, nowUtc))
+            || !IsValidMetrics(request.Metrics, nowUtc)
+            || !IsValidUpdateReport(request.AgentUpdate, request.Platform, nowUtc))
         {
             return false;
         }
@@ -133,6 +164,14 @@ internal static class AgentSyncEndpoints
 
         return true;
     }
+
+    private static bool IsValidUpdateReport(AgentUpdateReport? report, string reportedRid, DateTimeOffset nowUtc) => report is null
+        || report.UpdateId != Guid.Empty && Enum.IsDefined(report.Status)
+        && SemanticVersion.TryParse(report.TargetVersion, out _)
+        && report.Rid == reportedRid
+        && report.StartedAt <= nowUtc + MaximumFutureClockSkew
+        && (report.PreviousVersion is null || SemanticVersion.TryParse(report.PreviousVersion, out _))
+        && HasMaximumLength(report.LastError, MaximumErrorMessageLength);
 
     private static bool IsValidServiceRuntimeState(ServiceRuntimeState state, DateTimeOffset nowUtc) =>
         state.ServiceId != Guid.Empty && Enum.IsDefined(state.Status) && state.ObservedAt <= nowUtc + MaximumFutureClockSkew

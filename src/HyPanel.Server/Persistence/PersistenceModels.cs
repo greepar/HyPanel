@@ -49,7 +49,23 @@ internal sealed record NodeObservationRecord(
     string? ReportedVersion,
     string? ReportedPlatform,
     long? AppliedRevision,
-    string? LatestMetricSnapshotJson = null);
+    string? LatestMetricSnapshotJson = null,
+    string AgentUpdatePolicy = "Manual",
+    string? DesiredAgentVersion = null,
+    Guid? AgentUpdateId = null,
+    string? UpdateStatus = null,
+    string? UpdateTargetVersion = null,
+    DateTimeOffset? UpdateStartedAtUtc = null,
+    string? UpdateError = null);
+
+internal sealed record AgentUpdateTargetRecord(
+    Guid NodeId,
+    Guid AgentId,
+    string ReportedVersion,
+    string ReportedRid,
+    string Policy,
+    string? DesiredVersion,
+    Guid? UpdateId);
 
 internal sealed record ServiceInstanceRecord(
     Guid Id,

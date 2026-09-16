@@ -281,17 +281,36 @@ Protect Agent credential at rest using restrictive file permissions on Unix and 
 
 ### Agent
 
+`AgentUpdate` is a dedicated desired-state offer, not an `AgentCommand`. Nodes persist `Manual` or `Auto` policy,
+`DesiredAgentVersion`, and an update identity independently from service desired revision. Sync reports current version,
+the exact publish RID, and the persisted update lifecycle.
+
+Release discovery is asynchronous. `ReleaseSyncWorker` periodically downloads the configured HTTPS manifest (GitHub
+latest release by default), validates the frozen eight-RID set, streams and verifies every asset, then atomically
+publishes it into the Server release cache. Agent sync never waits on GitHub; the last valid cache remains usable when
+the source is unavailable. Versioned manifests remain indexed so an already-requested version is not silently changed
+when a newer release appears.
+
 Update flow:
 
-1. Server advertises desired Agent release.
-2. Agent downloads to staging.
-3. Verify SHA256; later support a cryptographic release signature.
-4. Launch/update through a replacement mode/helper copy.
-5. Replace executable atomically where possible.
-6. Restart service.
-7. Report running version.
+1. Server offers validated `Version`, exact `Rid`, basename `FileName`, `Size`, and SHA256. It never supplies a URL.
+2. Agent builds the same-origin Panel asset URL, streams to staging, rejects redirects/origin changes, and verifies
+   exact size and SHA256.
+3. Tar/zip extraction rejects traversal, links, duplicate entries, and files outside the documented Agent archive.
+4. The staged binary must pass `--self-test`, reporting the offered version and RID, before any running service changes.
+5. Agent persists `Downloading`, `Staged`, `Applying`, `RestartPending`, `Verifying`, `Succeeded`, or `Failed` in its
+   DataDir. Credentials, reconciliation/usage/command state, backend assets, configs, logs, and appsettings are untouched.
+6. Managed backend processes are stopped only at apply time and restored from persisted desired state after restart;
+   a pre-replacement failure does not touch them, and replacement failure restores both the prior Agent and services.
+7. Unix renames the running image aside, installs the verified image, and uses `execv` so systemd, OpenRC, procd, and
+   launchd keep supervising the same process. Windows launches a short-lived copy of the same Agent in restricted
+   `--update-helper` mode, waits for the exact parent executable to exit, replaces the locked exe, and starts the fixed
+   `HyPanelAgent` service.
+8. `.previous` remains until the new Agent loads its existing credentials/state and completes an authenticated Panel
+   sync. Only then is the update verified and the backup removed. Interrupted states recover deterministically.
 
-Windows must account for locked executable replacement.
+Auto update applies stable releases only and never downgrades. Manual update currently targets latest; the data model
+keeps current/latest/desired separate for future version/channel selection.
 
 ### Server
 

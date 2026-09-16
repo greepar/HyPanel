@@ -7,11 +7,18 @@ using HyPanel.Agent.Backends.Mihomo;
 using HyPanel.Agent.Backends.SingBox;
 using HyPanel.Agent.Backends.Xray;
 using HyPanel.Agent.Reconciliation;
+using HyPanel.Agent.Updates;
 
 public static class Program
 {
     public static async Task Main(string[] args)
     {
+        if (AgentUpdateEntrypoint.TryRun(args, out var exitCode))
+        {
+            Environment.ExitCode = await exitCode;
+            return;
+        }
+
         var builder = Host.CreateApplicationBuilder(args);
 
         var enrollmentOptions = AgentEnrollmentOptions.FromConfiguration(builder.Configuration);
@@ -29,6 +36,8 @@ public static class Program
         builder.Services.AddSingleton<AgentStateStore>();
         builder.Services.AddSingleton<AgentCommandStateStore>();
         builder.Services.AddSingleton<AgentUsageStateStore>();
+        builder.Services.AddSingleton<AgentUpdateStateStore>();
+        builder.Services.AddSingleton<AgentUpdater>();
         builder.Services.AddSingleton<NodeMetricsCollector>();
         builder.Services.AddSingleton<IBackendProvider, Hysteria2Provider>();
         builder.Services.AddSingleton<IBackendProvider, XrayProvider>();

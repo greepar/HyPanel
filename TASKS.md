@@ -708,3 +708,20 @@ Planned slices:
   Agent identity instead of violating the node uniqueness constraint. UK is online and has sustained successful syncs
   without warnings. The Services page suppresses cached runtime state for offline nodes; public verification shows the
   old `uk-agent` service as `未知` rather than `运行中`. Release build is warning-free and 206/206 tests pass.
+
+### OP-005 — Complete Agent self-update lifecycle
+- Owner: architect (Sol)
+- Depends on: OP-004
+- Status: IN PROGRESS
+- Scope: complete the GitHub Release → Server cache → desired update offer → Agent verified staged replacement →
+  post-restart sync verification lifecycle for all eight frozen RIDs, with Manual/Auto policy, batch requests, rollback,
+  NativeAOT-safe platform handling, UI status, tests, and production US/UK proof.
+- Acceptance: release version and exact publish RID are embedded and reported; no arbitrary URL or shell execution;
+  size/SHA/archive checks precede replacement; identity/DataDir/service state survive; update is independent from command
+  interruption; new releases are discovered without Server restart/manual SCP; Linux process E2E and production Panel-led
+  update pass without SSH/re-enrollment/manual Agent restart for the update hop.
+- Result so far: Shared update contracts, strict SemVer, build-time version/RID stamping, persistent Agent state machine,
+  same-origin streaming download, strict tar/zip extraction, staged self-test, Unix re-exec, Windows helper, rollback,
+  Server GitHub release synchronization/cache, Manual/Auto desired version persistence, admin APIs and update UI are
+  implemented. Focused tests pass and an isolated Linux x64 NativeAOT process E2E passed `1.2.0 → 1.3.0`, preserving
+  credentials and deleting `.previous` only after verified sync. Final full validation and production rollout remain.

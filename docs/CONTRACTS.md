@@ -79,6 +79,7 @@ NodeMetrics
 ServiceRuntimeStates
 UsageBatches
 CommandResults
+AgentUpdateReport?
 ```
 
 Response should eventually include:
@@ -92,6 +93,50 @@ Optional sync interval/config
 ```
 
 Do not resend a large desired-state blob if the Agent is already on the current revision unless there is a concrete reason.
+
+### 4.1 Agent update
+
+Agent update is not an ordinary command because a successful apply intentionally restarts/re-executes the Agent.
+
+```text
+AgentUpdateDescriptor
+- UpdateId
+- Version
+- Rid
+- FileName
+- Sha256
+- Size
+```
+
+`FileName` is a validated basename from the cached release manifest. The Agent constructs
+`/api/releases/v1/assets/{fileName}` against its persisted Panel origin; the Server cannot provide an arbitrary URL.
+`Rid` must equal the exact build-time RID reported by the Agent and must be one of the frozen eight RIDs.
+
+```text
+AgentUpdateReport
+- UpdateId
+- Status: Downloading | Staged | Applying | RestartPending | Verifying | Succeeded | Failed
+- TargetVersion
+- Rid
+- StartedAt
+- PreviousVersion?
+- LastError?
+```
+
+The Agent persists this report independently from command state. Repeated offers with the same `UpdateId` are
+idempotent. `FinalizeInterruptedCommands` does not process Agent updates. `Succeeded` means the replacement Agent has
+loaded existing identity/state and completed a Panel sync, not merely that files were copied.
+
+Node update state keeps these values separate:
+
+```text
+ReportedAgentVersion (current)
+LatestAgentVersion (release cache)
+DesiredAgentVersion (requested)
+AgentUpdatePolicy: Manual | Auto
+```
+
+Auto update considers stable releases only. Current >= latest never triggers a downgrade.
 
 ## 5. Desired state
 

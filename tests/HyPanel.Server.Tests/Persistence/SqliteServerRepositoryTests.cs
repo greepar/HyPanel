@@ -34,7 +34,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -123,6 +123,53 @@ public sealed class SqliteServerRepositoryTests
             (await fixture.Repository.GetServiceTemplateAsync(template.Id, CancellationToken.None))!.Name);
         Assert.IsTrue(await fixture.Repository.DeleteServiceTemplateAsync(template.Id, CancellationToken.None));
         Assert.IsNull(await fixture.Repository.GetServiceTemplateAsync(template.Id, CancellationToken.None));
+    }
+
+    [TestMethod]
+    public async Task AgentUpdatePolicyAndRequest_PersistIndependentlyFromServiceRevision()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        await fixture.Repository.CreateNodeAsync(nodeId, "update node", CancellationToken.None);
+        await fixture.Repository.CreateEnrollmentTokenAsync(Guid.NewGuid(), nodeId, "update-token",
+            fixture.Time.GetUtcNow().AddMinutes(15), CancellationToken.None);
+        var enrolled = await fixture.Repository.TryConsumeEnrollmentTokenAndCreateAgentAsync("update-token",
+            Guid.NewGuid(), "agent-secret", "1.1.0", "linux-x64", CancellationToken.None);
+        Assert.IsNotNull(enrolled);
+
+        Assert.IsTrue(await fixture.Repository.SetAgentUpdatePolicyAsync(nodeId, "Auto", CancellationToken.None));
+        var updateId = Guid.NewGuid();
+        Assert.IsTrue(await fixture.Repository.RequestAgentUpdateAsync(nodeId, "1.3.0", updateId,
+            CancellationToken.None));
+
+        var observation = (await fixture.Repository.GetNodeObservationsAsync(CancellationToken.None)).Single();
+        Assert.AreEqual("Auto", observation.AgentUpdatePolicy);
+        Assert.AreEqual("1.3.0", observation.DesiredAgentVersion);
+        Assert.AreEqual(updateId, observation.AgentUpdateId);
+        Assert.AreEqual(0L, observation.DesiredRevision);
+    }
+
+    [TestMethod]
+    public async Task AgentUpdateReport_WithMatchingUpdateId_PersistsFailureForPanelObservation()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        await fixture.Repository.CreateNodeAsync(nodeId, "failed update", CancellationToken.None);
+        await fixture.Repository.CreateEnrollmentTokenAsync(Guid.NewGuid(), nodeId, "failure-token",
+            fixture.Time.GetUtcNow().AddMinutes(15), CancellationToken.None);
+        var enrolled = await fixture.Repository.TryConsumeEnrollmentTokenAndCreateAgentAsync("failure-token",
+            Guid.NewGuid(), "agent-secret", "1.1.0", "linux-x64", CancellationToken.None);
+        var updateId = Guid.NewGuid();
+        await fixture.Repository.RequestAgentUpdateAsync(nodeId, "1.3.0", updateId, CancellationToken.None);
+
+        await fixture.Repository.RecordAgentUpdateReportAsync(enrolled!.AgentId,
+            new AgentUpdateReport(updateId, AgentUpdateStatus.Failed, "1.3.0", "linux-x64",
+                fixture.Time.GetUtcNow(), "1.1.0", "sha256_mismatch"), CancellationToken.None);
+
+        var observation = (await fixture.Repository.GetNodeObservationsAsync(CancellationToken.None)).Single();
+        Assert.AreEqual("Failed", observation.UpdateStatus);
+        Assert.AreEqual("1.3.0", observation.UpdateTargetVersion);
+        Assert.AreEqual("sha256_mismatch", observation.UpdateError);
     }
 
     [TestMethod]
