@@ -122,6 +122,9 @@
 - Residual platform risk: Windows locked-executable replacement cannot execute on Linux CI. Its path, parent-process,
   update identity/state and rollback planning are isolated and tested; production Windows integration remains a
   platform-specific acceptance item when a Windows node is available.
+- Production acceptance: US Server cached `v0.3.1` from GitHub without restart; the Admin API requested UK Agent
+  `0.3.0 → 0.3.1`. The Agent retained its systemd PID, reported zero restarts, matched the released binary SHA,
+  preserved credentials, completed a verified sync, persisted `Succeeded`, and removed `.previous`.
   console: 0 errors / 0 warnings. Server warning log: empty.
 - Agent release 0.2.1: PASS; all eight frozen NativeAOT RID assets and SHA256SUMS deployed. UK linux-x64 Agent matches
   the release hash, is online, and sustained at least ten successful syncs in 90 seconds with no Agent/Server warnings.

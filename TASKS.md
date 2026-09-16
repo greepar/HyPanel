@@ -712,7 +712,7 @@ Planned slices:
 ### OP-005 — Complete Agent self-update lifecycle
 - Owner: architect (Sol)
 - Depends on: OP-004
-- Status: IN PROGRESS
+- Status: DONE
 - Scope: complete the GitHub Release → Server cache → desired update offer → Agent verified staged replacement →
   post-restart sync verification lifecycle for all eight frozen RIDs, with Manual/Auto policy, batch requests, rollback,
   NativeAOT-safe platform handling, UI status, tests, and production US/UK proof.
@@ -720,8 +720,13 @@ Planned slices:
   size/SHA/archive checks precede replacement; identity/DataDir/service state survive; update is independent from command
   interruption; new releases are discovered without Server restart/manual SCP; Linux process E2E and production Panel-led
   update pass without SSH/re-enrollment/manual Agent restart for the update hop.
-- Result so far: Shared update contracts, strict SemVer, build-time version/RID stamping, persistent Agent state machine,
+- Result: Shared update contracts, strict SemVer, build-time version/RID stamping, persistent Agent state machine,
   same-origin streaming download, strict tar/zip extraction, staged self-test, Unix re-exec, Windows helper, rollback,
   Server GitHub release synchronization/cache, Manual/Auto desired version persistence, admin APIs and update UI are
-  implemented. Focused tests pass and an isolated Linux x64 NativeAOT process E2E passed `1.2.0 → 1.3.0`, preserving
-  credentials and deleting `.previous` only after verified sync. Final full validation and production rollout remain.
+  implemented. Release build passed with zero warnings; Shared 21/21, Server 100/100, and Agent 143/143 tests passed.
+  An isolated Linux x64 NativeAOT process E2E passed `1.2.0 → 1.3.0`, preserving credentials and deleting `.previous`
+  only after verified sync. GitHub Actions produced all eight Agent RIDs for `v0.3.0` and `v0.3.1`. The running US
+  Server discovered and verified `v0.3.1` without restart or manual release copying. From the Admin API, UK Agent was
+  requested to update `0.3.0 → 0.3.1`; it downloaded the Panel-cached linux-x64 asset, verified/staged/replaced and
+  re-execed under the same PID with zero systemd restarts, retained Agent credentials, re-synced as `0.3.1`, reached
+  `Succeeded`, and removed `.previous`. US Server was then deployed at `v0.3.1` and remained healthy.
