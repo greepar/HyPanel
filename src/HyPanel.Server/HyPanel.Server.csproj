@@ -19,12 +19,22 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <PublishAot>true</PublishAot>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <PublishTrimmed>true</PublishTrimmed>
     <IsAotCompatible>true</IsAotCompatible>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
     <EnableAotAnalyzer>true</EnableAotAnalyzer>
     <WebProjectDirectory>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../../web/HyPanel.Web'))</WebProjectDirectory>
+    <ServerBuildVersion Condition="'$(ServerBuildVersion)' == ''">$(Version)</ServerBuildVersion>
+    <ServerRuntimeIdentifier Condition="'$(ServerRuntimeIdentifier)' == ''">$(RuntimeIdentifier)</ServerRuntimeIdentifier>
+    <GeneratedBuildInfo>$(BaseIntermediateOutputPath)$(Configuration)/$(TargetFramework)/ServerBuildInfo.g.cs</GeneratedBuildInfo>
   </PropertyGroup>
+
+  <Target Name="GenerateServerBuildInfo" BeforeTargets="CoreCompile">
+    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(GeneratedBuildInfo)'))" />
+    <WriteLinesToFile File="$(GeneratedBuildInfo)" Overwrite="true" Lines="namespace HyPanel.Server%3B internal static class ServerBuildInfo { public const string Version = &quot;$(ServerBuildVersion)&quot;%3B private const string PublishedRuntimeIdentifier = &quot;$(ServerRuntimeIdentifier)&quot;%3B public static string RuntimeIdentifier => string.IsNullOrEmpty(PublishedRuntimeIdentifier) ? System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier : PublishedRuntimeIdentifier%3B }" />
+    <ItemGroup><Compile Include="$(GeneratedBuildInfo)" /></ItemGroup>
+  </Target>
 
   <Target Name="BuildAndEmbedWebAssets" BeforeTargets="BeforeBuild">
     <Exec Command="npm run build" WorkingDirectory="$(WebProjectDirectory)" />

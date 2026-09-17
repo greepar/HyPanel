@@ -871,17 +871,48 @@ Planned slices:
 ### HP-1301 — Publish multi-architecture GHCR images
 - Owner: architect (Sol)
 - Depends on: HP-1300
-- Status: IMPLEMENTED — RELEASE RUN PENDING
+- Status: DONE
 - Scope: release workflow manifest list and `latest`, version and `sha-*` tags.
 - Result: Native amd64 and `ubuntu-24.04-arm` jobs publish architecture tags, followed by a manifest job producing
   version, latest and sha tags. No QEMU compiler execution is used in CI. actionlint 1.7.7 passes.
+- Acceptance: `v0.4.0` run 35169185811 succeeded. `ghcr.io/greepar/hypanel:0.4.0`, `latest` and `sha-165ad1e`
+  resolve to OCI index `sha256:f9cc3901526f...` with linux/amd64 and linux/arm64 manifests.
 
 ### HP-1302 — Container runtime acceptance
 - Owner: architect (Sol)
 - Depends on: HP-1300, HP-1301
-- Status: BLOCKED — ARM RUNNER / GHCR RELEASE REQUIRED
+- Status: DONE
 - Scope: actionlint, local image build, non-root/runtime-content inspection, health and volume persistence restart.
 - Evidence: amd64 build/runtime/content/health/persistence and Compose validation pass. Local arm64 AOT cannot be
   accepted on this x86_64 host: QEMU `ilc` crashed and host clang lacks an aarch64 linker. The workflow intentionally
   uses a native arm64 runner; multi-arch manifest and GHCR pull must be verified by the next pushed release before
   Phase 13 is DONE. No production verification is claimed yet.
+- Final evidence: GitHub native arm64 and amd64 jobs both succeeded. Both platform images were pulled from GHCR and
+  started; internal `/health` returned `{"status":"ok"}`, HEALTHCHECK was healthy and runtime user was 10001:10001.
+  The final image is approximately 19.7 MB and contains no dotnet executable, SDK or compiler.
+
+## Phase 14 — Server self update
+
+### HP-1400 — Freeze Server deployment/update model
+- Owner: architect (Sol)
+- Depends on: HP-1302
+- Status: IN PROGRESS
+- Scope: separate bare-metal Server updater contract/state from Agent updates and Docker image availability.
+
+### HP-1401 — Implement bare-metal Server update
+- Owner: architect (Sol)
+- Depends on: HP-1400
+- Status: TODO
+- Scope: release discovery, RID selection, size/SHA, stage/self-test, replacement, service restart and rollback.
+
+### HP-1402 — Implement Docker image update status
+- Owner: architect (Sol)
+- Depends on: HP-1400
+- Status: TODO
+- Scope: detect container deployment and show pull/recreate guidance without Docker socket access.
+
+### HP-1403 — Server update UI and acceptance
+- Owner: architect (Sol)
+- Depends on: HP-1401, HP-1402
+- Status: TODO
+- Scope: Admin update surface, tests, NativeAOT and bare-metal/Docker lifecycle verification.

@@ -1,6 +1,6 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef } from 'preact/hooks'
-import { Check, ChevronDown, LayoutDashboard, LayoutTemplate, LogOut, Monitor, Moon, Server, Sun, Users } from 'lucide-preact'
+import { Check, ChevronDown, LayoutDashboard, LayoutTemplate, LogOut, Monitor, Moon, Server, Settings, Sun, Users } from 'lucide-preact'
 import type { AppRoute, Role, Theme } from './domain'
 
 export const themes: Theme[] = ['light', 'dark', 'system']
@@ -10,6 +10,7 @@ const navigation: { route: AppRoute; label: string; admin: boolean; icon: typeof
   { route: 'nodes', label: '节点', admin: true, icon: Server },
   { route: 'templates', label: '模板', admin: true, icon: LayoutTemplate },
   { route: 'users', label: '用户', admin: true, icon: Users },
+  { route: 'settings', label: '设置', admin: true, icon: Settings },
   { route: 'subscription', label: '我的订阅', admin: false, icon: LayoutDashboard },
 ]
 

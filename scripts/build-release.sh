@@ -67,7 +67,8 @@ publish_and_package() {
         -p:Version="$VERSION" -p:VersionPrefix="$ASSEMBLY_VERSION" \
         -p:FileVersion="$ASSEMBLY_VERSION.0" -p:InformationalVersion="$VERSION" \
         -p:IncludeSourceRevisionInInformationalVersion=false \
-        -p:AgentBuildVersion="$VERSION" -p:AgentRuntimeIdentifier="$rid"
+        -p:AgentBuildVersion="$VERSION" -p:AgentRuntimeIdentifier="$rid" \
+        -p:ServerBuildVersion="$VERSION" -p:ServerRuntimeIdentifier="$rid"
     [ -f "$publish_dir/$binary_name" ] || {
         printf '%s\n' "missing published binary: $publish_dir/$binary_name" >&2
         exit 1

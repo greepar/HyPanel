@@ -329,6 +329,11 @@ Bare-metal Server can use a similar staged self-update design.
 
 Docker deployment must not mount the Docker socket into HyPanel merely to self-update. The panel may advertise that an image update exists; operators update the container externally.
 
+Bare-metal Server self-update requires the dedicated `hypanel` account to own `/opt/hypanel/server` and the hardened
+systemd unit to grant `ReadWritePaths=/opt/hypanel/server` in addition to the data directory. The updater never gains
+general root or shell access: it can replace only its own fixed executable sibling paths. Docker mode disables in-place
+replacement and only reports image availability.
+
 The official container is `ghcr.io/greepar/hypanel`. Native amd64 and arm64 release jobs compile with the official .NET
 10 Alpine AOT SDK on matching native runners, then combine architecture tags into one multi-platform manifest. The final Alpine runtime-deps image contains no .NET
 runtime, SDK or compiler, runs as UID/GID 10001, listens on `0.0.0.0:8080`, exposes a `/health` HEALTHCHECK and persists

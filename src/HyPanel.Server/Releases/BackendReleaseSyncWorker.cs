@@ -204,7 +204,7 @@ internal sealed class BackendReleaseSyncWorker(ILogger<BackendReleaseSyncWorker>
 }
 
 internal sealed record GitHubRelease(string TagName, DateTimeOffset PublishedAt, IReadOnlyList<GitHubReleaseAsset> Assets);
-internal sealed record GitHubReleaseAsset(string Name, string BrowserDownloadUrl);
+internal sealed record GitHubReleaseAsset(string Name, string BrowserDownloadUrl, long Size = 0, string? Digest = null);
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower)]
 [JsonSerializable(typeof(GitHubRelease))]
 internal sealed partial class BackendReleaseJsonContext : JsonSerializerContext;

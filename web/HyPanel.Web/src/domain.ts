@@ -1,8 +1,9 @@
 export type Theme = 'light' | 'dark' | 'system'
 export type NodeTab = 'overview' | 'services' | 'network' | 'logs' | 'settings'
-export type AdminRoute = 'overview' | 'nodes' | 'templates' | 'users' | `nodes/${string}/${NodeTab}`
+export type AdminRoute = 'overview' | 'nodes' | 'templates' | 'users' | 'settings' | `nodes/${string}/${NodeTab}`
 export type AppRoute = AdminRoute | 'subscription'
 export type Role = 'Admin' | 'User'
+export type ServerUpdate = { currentVersion: string; latestVersion: string | null; deploymentMode: 'BareMetal' | 'Docker'; updateAvailable: boolean; status: string; error: string | null }
 
 export type User = {
   id: string

@@ -66,6 +66,7 @@ internal sealed record UpdateServiceRequest(
 internal sealed record SetServiceEnabledRequest(bool Enabled);
 internal sealed record SetBackendUpdatePolicyRequest(string Policy);
 internal sealed record RequestBackendUpdateResponse(string Version, long Revision);
+internal sealed record ServerUpdateRequestResponse(string Version);
 
 internal sealed record ServiceMutationResponse(Guid Id, long Revision);
 

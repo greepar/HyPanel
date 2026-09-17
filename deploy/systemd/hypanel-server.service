@@ -1,0 +1,26 @@
+[Unit]
+Description=HyPanel Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hypanel
+Group=hypanel
+WorkingDirectory=/var/lib/hypanel
+EnvironmentFile=/etc/hypanel/server.env
+Environment=ASPNETCORE_URLS=http://127.0.0.1:5291
+ExecStart=/opt/hypanel/server/HyPanel.Server
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/hypanel /opt/hypanel/server
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

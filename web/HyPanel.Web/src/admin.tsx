@@ -17,6 +17,7 @@ import type {
   NodeIdentity,
   NodeTab,
   PublicEndpoint,
+  ServerUpdate,
   Service,
   ServiceDiagnostic,
   ServiceForm,
@@ -72,7 +73,40 @@ export function AdminApp({
   if (route === "templates")
     return <TemplatesPage api={api} setError={setError} />;
   if (route === "users") return <UsersPage api={api} setError={setError} />;
+  if (route === "settings") return <SettingsPage api={api} setError={setError} />;
   return <OverviewPage api={api} setError={setError} />;
+}
+
+function SettingsPage({ api, setError }: PageProps) {
+  const [server, setServer] = useState<ServerUpdate | null>(null);
+  const [loading, setLoading] = useState(true);
+  const load = async () => {
+    setLoading(true);
+    try { setServer(await api.serverUpdate()); }
+    catch (reason) { setError(messageFor(reason, "无法加载设置")); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { void load(); }, []);
+  const update = async () => {
+    if (!server?.latestVersion || !confirm(`更新 Server 到 ${server.latestVersion}？服务会短暂重启。`)) return;
+    try { const result = await api.updateServer(); setError(`Server ${result.version} 更新已开始。`); }
+    catch (reason) { setError(messageFor(reason, "无法更新 Server")); }
+  };
+  if (loading || !server)
+    return <Page title="设置" description="控制面更新、Release 来源和数据目录。"><Loading /></Page>;
+  return (
+    <Page title="设置" description="控制面更新、Release 来源和数据目录。">
+      <div className="detail-grid">
+        <section className="card panel">
+          <SectionTitle title="Server 版本" description={server.deploymentMode === "Docker" ? "容器由外部编排更新，HyPanel 不访问 Docker daemon。" : "Bare-metal Server 使用 size、SHA256 和 self-test 校验。"} />
+          <dl className="facts-list"><div><dt>当前版本</dt><dd>{server.currentVersion}</dd></div><div><dt>最新版本</dt><dd>{server.latestVersion ?? "暂不可用"}</dd></div><div><dt>部署方式</dt><dd>{server.deploymentMode}</dd></div><div><dt>状态</dt><dd>{server.status}</dd></div></dl>
+          {server.error && <Notice kind="error">{server.error}</Notice>}
+          {server.deploymentMode === "Docker" ? <Notice>发现新镜像时运行 <code>docker compose pull &amp;&amp; docker compose up -d</code>。</Notice> : <div className="section-toolbar"><button className="button button-primary" type="button" disabled={!server.updateAvailable || server.status === "Downloading" || server.status === "Applying"} onClick={() => void update()}>更新 Server</button></div>}
+        </section>
+        <section className="card panel"><SectionTitle title="Release 来源" description="受控的官方发布来源" /><dl className="facts-list"><div><dt>HyPanel</dt><dd>github.com/greepar/HyPanel</dd></div><div><dt>Backend</dt><dd>官方 upstream GitHub Releases</dd></div><div><dt>数据</dt><dd>SQLite 与 release cache 持久化目录</dd></div></dl></section>
+      </div>
+    </Page>
+  );
 }
 
 function OverviewPage({ api, setError }: PageProps) {
