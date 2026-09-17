@@ -84,25 +84,30 @@ internal static class AgentSyncEndpoints
         }
 
         var update = await GetAgentUpdateAsync(agent.AgentId, request, repository, releaseCatalog, cancellationToken);
-        var desiredServices = new List<ServiceDesiredState>(desired.Value.Services.Count);
-        var controlPort = 20_000;
-        foreach (var service in desired.Value.Services)
+        NodeDesiredState? desiredState = null;
+        if (request.AppliedRevision != desired.Value.Revision)
         {
-            var users = service.BackendType == "xray"
-                ? (await repository.GetServiceCredentialsAsync(service.Id, true, cancellationToken))
-                    .Select(item => new BackendUser(item.UserId, item.Credential)).ToArray()
-                : Array.Empty<BackendUser>();
-            desiredServices.Add(new ServiceDesiredState(service.Id, service.Name, service.BackendType,
-                service.BackendVersion, service.Enabled, service.ConfigSchemaVersion, service.ConfigJson, users,
-                service.BackendType == "xray" ? controlPort++ : null));
+            var desiredServices = new List<ServiceDesiredState>(desired.Value.Services.Count);
+            var controlPort = 20_000;
+            foreach (var service in desired.Value.Services)
+            {
+                var users = service.BackendType == "xray"
+                    ? (await repository.GetServiceCredentialsAsync(service.Id, true, cancellationToken))
+                        .Select(item => new BackendUser(item.UserId, item.Credential)).ToArray()
+                    : Array.Empty<BackendUser>();
+                desiredServices.Add(new ServiceDesiredState(service.Id, service.Name, service.BackendType,
+                    service.BackendVersion, service.Enabled, service.ConfigSchemaVersion, service.ConfigJson, users,
+                    service.BackendType == "xray" ? controlPort++ : null));
+            }
+            desiredState = new NodeDesiredState(desired.Value.Revision, desiredServices,
+                desired.Value.Services.Where(service => service.Enabled).Select(service =>
+                        backendArtifactCatalog.FindArtifact(service.BackendType, service.BackendVersion,
+                            request.Platform.Trim()))
+                    .Where(static artifact => artifact is not null).Cast<BackendArtifact>().ToArray());
         }
         var response = new AgentSyncResponse(
             desired.Value.Revision,
-            request.AppliedRevision == desired.Value.Revision ? null : new NodeDesiredState(desired.Value.Revision,
-                desiredServices, desired.Value.Services.Where(service => service.Enabled).Select(service =>
-                        backendArtifactCatalog.FindArtifact(service.BackendType, service.BackendVersion,
-                            request.Platform.Trim()))
-                    .Where(static artifact => artifact is not null).Cast<BackendArtifact>().ToArray()),
+            desiredState,
             responseCommands,
             request.UsageBatches.Select(batch => batch.BatchId).ToArray(),
             SyncIntervalSeconds,

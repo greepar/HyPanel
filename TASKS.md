@@ -948,3 +948,27 @@ Planned slices:
 - Result: API/UI expose Agent release, four Backend releases, Server current/latest/deployment/status, data directory and
   database size. Production schema v11 read/write/restore passed; desktop/390px UI had no overflow or console messages.
   Release build, 272 tests and Web build pass. Temporary acceptance account was removed.
+
+## Phase 16 — Cross-platform acceptance
+
+### HP-1600 — Execute available real platform lifecycles
+- Owner: architect (Sol)
+- Depends on: HP-1501
+- Status: PARTIAL — DEVICE GAPS RECORDED
+- Result: Linux x64 systemd Agent/Server and amd64/arm64 Docker are real verified. macOS x64 and Alpine musl x64
+  performed official release selection, size/SHA verification, safe extraction and exact self-test. Windows Service,
+  macOS LaunchDaemon, Alpine OpenRC and OpenWrt procd remain explicitly pending because no reachable real device/init
+  environment exists. `docs/CROSS_PLATFORM_ACCEPTANCE.md` contains executable acceptance checklists; none are falsely
+  marked production verified.
+
+## Phase 17 — Final architecture cleanup
+
+### HP-1700 — Review core boundaries and operational risks
+- Owner: architect (Sol)
+- Depends on: HP-1600
+- Status: DONE
+- Result: Backend-specific behavior remains in providers, subscription projection, controlled release metadata and the
+  Xray desired-user projection; reconciliation stays provider-driven. NativeAOT JSON paths use generated contexts,
+  artifact downloads are bounded and verified, secret logging search is clean, SQLite uses explicit columns and sync
+  sends only desired artifacts. One evidence-based optimization was applied: when revisions already match, sync no
+  longer decrypts credentials or constructs a discarded desired payload. No cosmetic broad refactor was performed.

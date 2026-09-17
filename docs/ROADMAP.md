@@ -228,3 +228,13 @@ Deliver:
 - Server deployment/update status and SQLite/data-directory information.
 
 The page remains intentionally small; it is not an advanced-settings dump.
+
+## Phase 16 — Cross-platform acceptance
+
+Real lifecycle status and remaining device-specific work are maintained in `docs/CROSS_PLATFORM_ACCEPTANCE.md`.
+Static tests never substitute for Windows Service, LaunchDaemon, OpenRC or procd acceptance.
+
+## Phase 17 — Final architecture cleanup
+
+Review Backend boundaries, NativeAOT, memory/startup, SQLite access, sync payload size, secret logging and retry
+behavior. Refactor only demonstrated complexity or correctness problems; stable code is not reorganized cosmetically.
