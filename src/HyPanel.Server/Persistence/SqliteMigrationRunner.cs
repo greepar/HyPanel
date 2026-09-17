@@ -14,6 +14,7 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
     private const long AgentUpdateSchemaVersion = 8;
     private const long UserServiceCredentialsSchemaVersion = 9;
     private const long BackendUpdateSchemaVersion = 10;
+    private const long GlobalSettingsSchemaVersion = 11;
 
     public async Task MigrateAsync(CancellationToken cancellationToken)
     {
@@ -303,6 +304,27 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             insertMigration.Transaction = transaction;
             insertMigration.CommandText = "INSERT INTO schema_migrations (version, applied_at_utc) VALUES (@version, @appliedAtUtc);";
             insertMigration.Parameters.AddWithValue("@version", BackendUpdateSchemaVersion);
+            insertMigration.Parameters.AddWithValue("@appliedAtUtc", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+            await insertMigration.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, GlobalSettingsSchemaVersion, cancellationToken))
+        {
+            await ExecuteAsync(connection, transaction, """
+                CREATE TABLE global_settings (
+                    singleton INTEGER NOT NULL PRIMARY KEY CHECK (singleton = 1),
+                    agent_update_default_policy TEXT NOT NULL CHECK (agent_update_default_policy IN ('Manual','Auto')),
+                    backend_update_default_policy TEXT NOT NULL CHECK (backend_update_default_policy IN ('Manual','Auto')),
+                    github_mirror_base_url TEXT NULL,
+                    updated_at_utc TEXT NOT NULL
+                );
+                INSERT INTO global_settings (singleton,agent_update_default_policy,backend_update_default_policy,github_mirror_base_url,updated_at_utc)
+                VALUES (1,'Manual','Manual',NULL,@now);
+                """.Replace("@now", "'" + SqliteValue.ToUtcText(timeProvider.GetUtcNow()) + "'", StringComparison.Ordinal), cancellationToken);
+            await using var insertMigration = connection.CreateCommand();
+            insertMigration.Transaction = transaction;
+            insertMigration.CommandText = "INSERT INTO schema_migrations (version, applied_at_utc) VALUES (@version, @appliedAtUtc);";
+            insertMigration.Parameters.AddWithValue("@version", GlobalSettingsSchemaVersion);
             insertMigration.Parameters.AddWithValue("@appliedAtUtc", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
             await insertMigration.ExecuteNonQueryAsync(cancellationToken);
         }

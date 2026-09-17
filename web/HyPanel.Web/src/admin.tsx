@@ -13,6 +13,7 @@ import {
 import type {
   AppRoute,
   HealthSummary,
+  GlobalSettings,
   Node,
   NodeIdentity,
   NodeTab,
@@ -78,21 +79,23 @@ export function AdminApp({
 }
 
 function SettingsPage({ api, setError }: PageProps) {
-  const [server, setServer] = useState<ServerUpdate | null>(null);
+  const [settings, setSettings] = useState<GlobalSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const load = async () => {
     setLoading(true);
-    try { setServer(await api.serverUpdate()); }
+    try { setSettings(await api.settings()); }
     catch (reason) { setError(messageFor(reason, "无法加载设置")); }
     finally { setLoading(false); }
   };
   useEffect(() => { void load(); }, []);
+  const server = settings?.server;
   const update = async () => {
     if (!server?.latestVersion || !confirm(`更新 Server 到 ${server.latestVersion}？服务会短暂重启。`)) return;
     try { const result = await api.updateServer(); setError(`Server ${result.version} 更新已开始。`); }
     catch (reason) { setError(messageFor(reason, "无法更新 Server")); }
   };
-  if (loading || !server)
+  const save = async () => { if (!settings) return; try { await api.updateSettings(settings); setError("全局设置已保存。"); await load(); } catch (reason) { setError(messageFor(reason, "无法保存设置")); } };
+  if (loading || !server || !settings)
     return <Page title="设置" description="控制面更新、Release 来源和数据目录。"><Loading /></Page>;
   return (
     <Page title="设置" description="控制面更新、Release 来源和数据目录。">
@@ -103,7 +106,8 @@ function SettingsPage({ api, setError }: PageProps) {
           {server.error && <Notice kind="error">{server.error}</Notice>}
           {server.deploymentMode === "Docker" ? <Notice>发现新镜像时运行 <code>docker compose pull &amp;&amp; docker compose up -d</code>。</Notice> : <div className="section-toolbar"><button className="button button-primary" type="button" disabled={!server.updateAvailable || server.status === "Downloading" || server.status === "Applying"} onClick={() => void update()}>更新 Server</button></div>}
         </section>
-        <section className="card panel"><SectionTitle title="Release 来源" description="受控的官方发布来源" /><dl className="facts-list"><div><dt>HyPanel</dt><dd>github.com/greepar/HyPanel</dd></div><div><dt>Backend</dt><dd>官方 upstream GitHub Releases</dd></div><div><dt>数据</dt><dd>SQLite 与 release cache 持久化目录</dd></div></dl></section>
+        <section className="card panel"><SectionTitle title="更新默认值" description="仅应用于之后创建的 Node 和 Service" /><div className="modal-form"><label>Agent 默认策略<select value={settings.agentUpdateDefaultPolicy} onChange={event => setSettings({ ...settings, agentUpdateDefaultPolicy: event.currentTarget.value as "Manual" | "Auto" })}><option value="Manual">Manual</option><option value="Auto">Auto</option></select></label><label>Backend 默认策略<select value={settings.backendUpdateDefaultPolicy} onChange={event => setSettings({ ...settings, backendUpdateDefaultPolicy: event.currentTarget.value as "Manual" | "Auto" })}><option value="Manual">Manual</option><option value="Auto">Auto</option></select></label><label>GitHub Mirror Base URL<input placeholder="留空使用 GitHub 官方源" value={settings.githubMirrorBaseUrl ?? ""} onInput={event => setSettings({ ...settings, githubMirrorBaseUrl: event.currentTarget.value || null })} /></label><button className="button button-primary" type="button" onClick={() => void save()}>保存设置</button></div></section>
+        <section className="card panel"><SectionTitle title="Release 与数据" description="受控的官方发布来源" /><dl className="facts-list"><div><dt>Agent Release</dt><dd>{settings.agentReleaseVersion ?? "Unavailable"}</dd></div>{Object.entries(settings.backendReleases).map(([name, version]) => <div key={name}><dt>{name}</dt><dd>{version}</dd></div>)}<div><dt>数据目录</dt><dd>{settings.dataDirectory}</dd></div><div><dt>数据库</dt><dd>{formatBytes(settings.databaseSizeBytes)}</dd></div></dl></section>
       </div>
     </Page>
   );

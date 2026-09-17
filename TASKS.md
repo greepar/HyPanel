@@ -928,3 +928,23 @@ Planned slices:
   identical, health remained OK, state reached Succeeded and `.previous` was removed after stability verification.
   GHCR 0.4.1 Docker reported Docker mode, refused POST with 409 and remained healthy. Settings passed desktop/390px
   browser checks with zero overflow or console messages. Temporary acceptance resources were removed.
+
+## Phase 15 — Global settings
+
+### HP-1500 — Persist operational defaults and mirror
+- Owner: architect (Sol)
+- Depends on: HP-1403
+- Status: DONE
+- Scope: Agent/Backend default update policy and optional controlled HTTPS GitHub mirror.
+- Result: SQLite v11 singleton settings default to Manual/Manual. New Nodes and Services inherit current defaults while
+  existing rows remain unchanged. Mirror validation accepts only HTTPS base URLs without credentials/query/fragment;
+  release clients rewrite only their fixed official GitHub URLs and validate final mirror/GitHub hosts.
+
+### HP-1501 — Settings API and UI
+- Owner: architect (Sol)
+- Depends on: HP-1500
+- Status: DONE
+- Scope: top-level Settings navigation with operational defaults, release status, Server update and data information.
+- Result: API/UI expose Agent release, four Backend releases, Server current/latest/deployment/status, data directory and
+  database size. Production schema v11 read/write/restore passed; desktop/390px UI had no overflow or console messages.
+  Release build, 272 tests and Web build pass. Temporary acceptance account was removed.

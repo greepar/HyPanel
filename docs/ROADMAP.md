@@ -216,3 +216,15 @@ Exit criteria:
 - Bare-metal Server updates itself without SSH replacement or Docker access.
 - Database and release caches survive unchanged.
 - Docker mode cannot trigger executable replacement.
+
+## Phase 15 — Global settings
+
+Deliver:
+
+- Top-level Settings navigation.
+- Manual/Auto defaults for newly created Agents and Backend services.
+- Optional validated HTTPS GitHub mirror base.
+- Agent, Backend and Server release-source status.
+- Server deployment/update status and SQLite/data-directory information.
+
+The page remains intentionally small; it is not an advanced-settings dump.

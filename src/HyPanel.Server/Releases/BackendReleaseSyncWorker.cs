@@ -30,12 +30,13 @@ internal sealed class BackendReleaseSyncWorker(ILogger<BackendReleaseSyncWorker>
     {
         Directory.CreateDirectory(catalog.ReleasesDirectory);
         var client = clients.CreateClient("backend-release-sync");
+        var mirror = (await repository.GetGlobalSettingsAsync(cancellationToken)).GithubMirrorBaseUrl;
         foreach (var source in BackendReleaseSources.All)
         {
             try
             {
-                using var request = new HttpRequestMessage(HttpMethod.Get,
-                    $"https://api.github.com/repos/{source.Repository}/releases/latest");
+                using var request = new HttpRequestMessage(HttpMethod.Get, GitHubMirror.Apply(mirror,
+                    new Uri($"https://api.github.com/repos/{source.Repository}/releases/latest")));
                 request.Headers.UserAgent.ParseAdd("HyPanel/1.0");
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 response.EnsureSuccessStatusCode();
@@ -105,7 +106,9 @@ internal sealed class BackendReleaseSyncWorker(ILogger<BackendReleaseSyncWorker>
         try
         {
             var archive = Path.Combine(temporary, sourceAsset.AssetName);
-            await DownloadAsync(client, new Uri(sourceAsset.DownloadUrl), archive, cancellationToken);
+            var mirror = (await repository.GetGlobalSettingsAsync(cancellationToken)).GithubMirrorBaseUrl;
+            await DownloadAsync(client, GitHubMirror.Apply(mirror, new Uri(sourceAsset.DownloadUrl)), archive,
+                mirror is null ? null : new Uri(mirror).Host, cancellationToken);
             var fileName = $"{backendType}-{version}-{rid}{(rid.StartsWith("win-", StringComparison.Ordinal) ? ".exe" : string.Empty)}";
             var extracted = Path.Combine(temporary, fileName);
             await ExtractAsync(archive, sourceAsset.AssetName, source.ExecutablePath(rid), extracted, cancellationToken);
@@ -140,12 +143,14 @@ internal sealed class BackendReleaseSyncWorker(ILogger<BackendReleaseSyncWorker>
             : throw new InvalidDataException("Latest backend release tag is not stable SemVer.");
     }
 
-    private static async Task DownloadAsync(HttpClient client, Uri uri, string path, CancellationToken cancellationToken)
+    private static async Task DownloadAsync(HttpClient client, Uri uri, string path, string? mirrorHost,
+        CancellationToken cancellationToken)
     {
         using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
         var finalUri = response.RequestMessage?.RequestUri;
-        if (finalUri is null || finalUri.Scheme != Uri.UriSchemeHttps || !IsAllowedDownloadHost(finalUri.Host))
+        if (finalUri is null || finalUri.Scheme != Uri.UriSchemeHttps
+            || !IsAllowedDownloadHost(finalUri.Host) && !string.Equals(finalUri.Host, mirrorHost, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Backend release redirected to an untrusted host.");
         if (response.Content.Headers.ContentLength is > MaximumDownloadBytes) throw new InvalidDataException("Backend release is too large.");
         await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);

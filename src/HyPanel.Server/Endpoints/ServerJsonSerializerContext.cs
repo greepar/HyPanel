@@ -1,5 +1,6 @@
 namespace HyPanel.Server.Endpoints;
 using HyPanel.Server.Updates;
+using HyPanel.Server.Persistence;
 
 using System.Text.Json.Serialization;
 using HyPanel.Shared.Contracts;
@@ -22,6 +23,9 @@ using HyPanel.Shared.Contracts;
 [JsonSerializable(typeof(RequestBackendUpdateResponse))]
 [JsonSerializable(typeof(ServerUpdateRequestResponse))]
 [JsonSerializable(typeof(ServerUpdateStatus))]
+[JsonSerializable(typeof(UpdateGlobalSettingsRequest))]
+[JsonSerializable(typeof(GlobalSettingsResponse))]
+[JsonSerializable(typeof(GlobalSettingsRecord))]
 [JsonSerializable(typeof(ServiceMutationResponse))]
 [JsonSerializable(typeof(AdminServiceResponse[]))]
 [JsonSerializable(typeof(LoginRequest))]

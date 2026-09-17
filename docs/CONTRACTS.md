@@ -273,6 +273,10 @@ safe error code. `POST /api/admin/v1/server-update` is accepted only for a newer
 It returns `202` before the controlled replacement begins. Docker deployments return `409` and expose operator guidance
 only; Server update state and contracts are separate from Agent update offers/reports.
 
+`GET /api/admin/v1/settings` projects update defaults, optional mirror, Agent/Backend release versions, Server update
+status and basic data information. `PUT /api/admin/v1/settings` accepts only `Manual | Auto` defaults and a validated
+HTTPS mirror base (or null). Settings never expose secrets or accept direct artifact URLs.
+
 `TrafficStats` means the provider returns real aggregate counters. `PerUserTraffic` means counters are reliably
 attributable to desired users. A provider whose collector always returns no data must advertise neither flag.
 

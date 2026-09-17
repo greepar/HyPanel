@@ -18,8 +18,9 @@ internal sealed partial class SqliteServerRepository(
         await using var connection = await connectionFactory.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-                              INSERT INTO nodes (id, display_name, desired_revision, created_at_utc)
-                              VALUES (@id, @displayName, @desiredRevision, @createdAtUtc);
+                               INSERT INTO nodes (id, display_name, desired_revision, created_at_utc, agent_update_policy)
+                               VALUES (@id, @displayName, @desiredRevision, @createdAtUtc,
+                                 (SELECT agent_update_default_policy FROM global_settings WHERE singleton=1));
                               """;
         command.Parameters.AddWithValue("@id", id.ToString("D"));
         command.Parameters.AddWithValue("@displayName", displayName);
@@ -774,8 +775,9 @@ internal sealed partial class SqliteServerRepository(
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
-                                  INSERT INTO service_instances (id, node_id, name, backend_type, backend_version, enabled, config_schema_version, config_json, created_at_utc, updated_at_utc)
-                                  SELECT @id, @nodeId, @name, @backendType, @backendVersion, @enabled, @configSchemaVersion, @configJson, @createdAtUtc, @updatedAtUtc
+                                   INSERT INTO service_instances (id, node_id, name, backend_type, backend_version, enabled, config_schema_version, config_json, created_at_utc, updated_at_utc, backend_update_policy)
+                                   SELECT @id, @nodeId, @name, @backendType, @backendVersion, @enabled, @configSchemaVersion, @configJson, @createdAtUtc, @updatedAtUtc,
+                                     (SELECT backend_update_default_policy FROM global_settings WHERE singleton=1)
                                   WHERE EXISTS (SELECT 1 FROM nodes WHERE id = @nodeId);
                                   """;
             AddServiceParameters(command, service);
@@ -921,6 +923,31 @@ internal sealed partial class SqliteServerRepository(
         command.Parameters.AddWithValue("@service", serviceId.ToString("D"));
         command.Parameters.AddWithValue("@node", nodeId.ToString("D"));
         return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+    }
+
+    public async Task<GlobalSettingsRecord> GetGlobalSettingsAsync(CancellationToken cancellationToken)
+    {
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT agent_update_default_policy,backend_update_default_policy,github_mirror_base_url,updated_at_utc FROM global_settings WHERE singleton=1;";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) throw new InvalidOperationException("Global settings are missing.");
+        return new GlobalSettingsRecord(reader.GetString(0), reader.GetString(1),
+            reader.IsDBNull(2) ? null : reader.GetString(2), SqliteValue.ToDateTimeOffset(reader.GetString(3)));
+    }
+
+    public async Task<GlobalSettingsRecord> UpdateGlobalSettingsAsync(string agentPolicy, string backendPolicy,
+        string? mirror, CancellationToken cancellationToken)
+    {
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE global_settings SET agent_update_default_policy=@agent,backend_update_default_policy=@backend,github_mirror_base_url=@mirror,updated_at_utc=@now WHERE singleton=1;";
+        command.Parameters.AddWithValue("@agent", agentPolicy);
+        command.Parameters.AddWithValue("@backend", backendPolicy);
+        command.Parameters.AddWithValue("@mirror", mirror is null ? DBNull.Value : mirror);
+        command.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        return await GetGlobalSettingsAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<BackendUpdateTargetRecord>> GetAutomaticBackendUpdateTargetsAsync(

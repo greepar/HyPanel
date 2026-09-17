@@ -1,4 +1,4 @@
-import type { HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Template, Usage, User, UserForm } from './domain'
+import type { GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Template, Usage, User, UserForm } from './domain'
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message) }
@@ -40,5 +40,7 @@ export class ApiClient {
   templates = () => this.request<Template[]>('/api/admin/v1/service-templates')
   serverUpdate = () => this.request<ServerUpdate>('/api/admin/v1/server-update')
   updateServer = () => this.request<{ version: string }>('/api/admin/v1/server-update', { method: 'POST' })
+  settings = () => this.request<GlobalSettings>('/api/admin/v1/settings')
+  updateSettings = (value: Pick<GlobalSettings, 'agentUpdateDefaultPolicy' | 'backendUpdateDefaultPolicy' | 'githubMirrorBaseUrl'>) => this.request('/api/admin/v1/settings', { method: 'PUT', body: JSON.stringify(value) })
   createUser = (form: UserForm) => this.request<{ user: User; subscriptionToken: string }>('/api/admin/v1/users', { method: 'POST', body: JSON.stringify({ ...form, trafficLimitBytes: form.trafficLimitBytes ? Number(form.trafficLimitBytes) : null, expiresAtUtc: form.expiresAtUtc || null }) })
 }

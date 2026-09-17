@@ -93,6 +93,7 @@ public static class Program
         SubscriptionEndpoints.Map(app);
         ReleaseEndpoints.Map(app);
         ServerUpdateEndpoints.Map(app);
+        GlobalSettingsEndpoints.Map(app);
         EmbeddedWebEndpoints.Map(app);
 
         await app.RunAsync();

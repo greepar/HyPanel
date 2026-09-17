@@ -4,12 +4,14 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using HyPanel.Shared.Contracts;
 using HyPanel.Shared.Serialization;
+using HyPanel.Server.Persistence;
 
 internal sealed class ReleaseSyncWorker(
     ILogger<ReleaseSyncWorker> logger,
     IConfiguration configuration,
     IHttpClientFactory clients,
-    ReleaseCatalog catalog) : BackgroundService
+    ReleaseCatalog catalog,
+    SqliteServerRepository? repository = null) : BackgroundService
 {
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(5);
 
@@ -30,6 +32,8 @@ internal sealed class ReleaseSyncWorker(
                      ?? "https://github.com/greepar/HyPanel/releases/latest/download/manifest.json";
         if (!Uri.TryCreate(source, UriKind.Absolute, out var manifestUri) || manifestUri.Scheme != Uri.UriSchemeHttps)
             throw new InvalidOperationException("HyPanel:ReleaseManifestUrl must be HTTPS.");
+        manifestUri = GitHubMirror.Apply(repository is null ? null
+            : (await repository.GetGlobalSettingsAsync(cancellationToken)).GithubMirrorBaseUrl, manifestUri);
         var client = clients.CreateClient("release-sync");
         using var manifestResponse = await client.GetAsync(manifestUri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         manifestResponse.EnsureSuccessStatusCode();

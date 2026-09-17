@@ -353,6 +353,10 @@ arbitrary command: preflight download/validate, snapshot last-known-good, stop/r
 bounded health window, and restore prior desired metadata/config/binary on failure. One cached binary version is shared
 across service instances.
 
+Global settings are a SQLite singleton. Update defaults are copied only when a new Node or Service is created; changing
+the default does not silently rewrite existing resources. The optional GitHub mirror is an HTTPS base URL applied only
+to compile-time-controlled official GitHub URLs. It cannot turn release workers into arbitrary URL downloaders.
+
 ## 9. Usage accounting
 
 Providers normalize backend-specific counters into a shared usage representation.

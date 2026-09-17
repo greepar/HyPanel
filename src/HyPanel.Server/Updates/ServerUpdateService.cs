@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using HyPanel.Server.Releases;
 using HyPanel.Shared.Versioning;
+using HyPanel.Server.Persistence;
 
 internal sealed record ServerUpdateStatus(string CurrentVersion, string? LatestVersion, string DeploymentMode,
     bool UpdateAvailable, string Status, string? Error);
@@ -16,7 +17,7 @@ internal sealed record ServerUpdateState(string TargetVersion, string PreviousVe
     string InstallPath, string? Error);
 
 internal sealed partial class ServerUpdateService(IConfiguration configuration, IHttpClientFactory clients,
-    IHostApplicationLifetime lifetime, ILogger<ServerUpdateService> logger) : BackgroundService
+    IHostApplicationLifetime lifetime, ILogger<ServerUpdateService> logger, SqliteServerRepository? repository = null) : BackgroundService
 {
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(15);
     private readonly SemaphoreSlim gate = new(1, 1);
@@ -51,7 +52,9 @@ internal sealed partial class ServerUpdateService(IConfiguration configuration, 
     public async Task RefreshAsync(CancellationToken cancellationToken)
     {
         var client = clients.CreateClient("server-update");
-        using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.github.com/repos/greepar/HyPanel/releases/latest");
+        var mirror = repository is null ? null : (await repository.GetGlobalSettingsAsync(cancellationToken)).GithubMirrorBaseUrl;
+        using var request = new HttpRequestMessage(HttpMethod.Get, GitHubMirror.Apply(mirror,
+            new Uri("https://api.github.com/repos/greepar/HyPanel/releases/latest")));
         request.Headers.UserAgent.ParseAdd("HyPanel/1.0");
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -161,9 +164,12 @@ internal sealed partial class ServerUpdateService(IConfiguration configuration, 
     private async Task DownloadAsync(GitHubReleaseAsset asset, string path, CancellationToken cancellationToken)
     {
         var client = clients.CreateClient("server-update");
-        using var response = await client.GetAsync(asset.BrowserDownloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        var mirror = repository is null ? null : (await repository.GetGlobalSettingsAsync(cancellationToken)).GithubMirrorBaseUrl;
+        using var response = await client.GetAsync(GitHubMirror.Apply(mirror, new Uri(asset.BrowserDownloadUrl)), HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
-        if (response.RequestMessage?.RequestUri is not { Scheme: "https" } final || final.Host is not ("github.com" or "release-assets.githubusercontent.com" or "objects.githubusercontent.com"))
+        if (response.RequestMessage?.RequestUri is not { Scheme: "https" } final
+            || final.Host is not ("github.com" or "release-assets.githubusercontent.com" or "objects.githubusercontent.com")
+            && !string.Equals(final.Host, mirror is null ? null : new Uri(mirror).Host, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("server_asset_redirect_rejected");
         await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
         await using var output = File.Create(path);

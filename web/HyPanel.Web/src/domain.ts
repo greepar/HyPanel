@@ -4,6 +4,7 @@ export type AdminRoute = 'overview' | 'nodes' | 'templates' | 'users' | 'setting
 export type AppRoute = AdminRoute | 'subscription'
 export type Role = 'Admin' | 'User'
 export type ServerUpdate = { currentVersion: string; latestVersion: string | null; deploymentMode: 'BareMetal' | 'Docker'; updateAvailable: boolean; status: string; error: string | null }
+export type GlobalSettings = { agentUpdateDefaultPolicy: 'Manual' | 'Auto'; backendUpdateDefaultPolicy: 'Manual' | 'Auto'; githubMirrorBaseUrl: string | null; agentReleaseVersion: string | null; backendReleases: Record<string, string>; server: ServerUpdate; dataDirectory: string; databaseSizeBytes: number }
 
 export type User = {
   id: string
