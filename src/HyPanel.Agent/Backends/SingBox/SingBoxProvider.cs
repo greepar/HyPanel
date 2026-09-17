@@ -89,12 +89,12 @@ public sealed class SingBoxProvider : IBackendProvider
         return ValueTask.FromResult(new BackendHealthResult(true, null, null));
     }
 
-    public ValueTask<BackendTrafficSnapshot?> CollectTrafficAsync(
+    public ValueTask<IReadOnlyList<BackendUserTraffic>> CollectUserTrafficAsync(
         BackendInstanceContext instance,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult<BackendTrafficSnapshot?>(null);
+        return ValueTask.FromResult<IReadOnlyList<BackendUserTraffic>>([]);
     }
 
     private static BackendValidationResult Invalid(string errorCode, string errorMessage) =>

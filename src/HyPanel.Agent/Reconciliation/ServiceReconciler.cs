@@ -15,10 +15,12 @@ public sealed class ServiceReconciler(
     BackendInstanceStore instanceStore,
     BackendProcessSupervisor processSupervisor,
     AgentStateStore stateStore,
+    AgentUsageStateStore usageStateStore,
     TimeProvider timeProvider,
     ILogger<ServiceReconciler> logger)
 {
     private static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan StartHealthDelay = TimeSpan.FromMilliseconds(750);
     private readonly ConcurrentDictionary<Guid, ServiceRuntimeState> runtimeStates = new();
     private readonly SemaphoreSlim applyGate = new(1, 1);
 
@@ -95,7 +97,8 @@ public sealed class ServiceReconciler(
                 logger.LogWarning("Service reconciliation failed with error code {ErrorCode}.", "apply_failed");
                 await RollbackAsync(changed, desiredState, cancellationToken);
                 var failedService = changed.Count == 0 ? Guid.Empty : changed[^1];
-                SetFailed(failedService, "apply_failed");
+                if (!await SetRolledBackAsync(failedService, desiredState, cancellationToken))
+                    SetFailed(failedService, "apply_failed");
                 return new ApplyResult(false, "apply_failed", SafeMessage("apply_failed"));
             }
         }
@@ -127,7 +130,7 @@ public sealed class ServiceReconciler(
                 }
 
                 var process = processSupervisor.GetStatus(item.Key);
-                BackendTrafficSnapshot? traffic = item.Value.Traffic;
+                    BackendTrafficSnapshot? traffic = item.Value.Traffic;
                 var state = await stateStore.LoadAsync(cancellationToken);
                 var artifact = FindArtifact(state.DesiredState, metadata.DesiredState);
                 if (artifact is not null)
@@ -135,15 +138,23 @@ public sealed class ServiceReconciler(
                     var binaryPath = await binaryManager.EnsureAsync(artifact, cancellationToken);
                     var context = CreateContext(metadata.DesiredState, metadata.ConfigFileName, binaryPath);
                     var health = await provider.CheckHealthAsync(context, cancellationToken);
-                    traffic = await provider.CollectTrafficAsync(context, cancellationToken) ?? traffic;
+                    var userTraffic = await provider.CollectUserTrafficAsync(context, cancellationToken);
+                    if (userTraffic.Count > 0)
+                    {
+                        await usageStateStore.RecordCumulativeAsync(item.Key, userTraffic, cancellationToken);
+                        traffic = new BackendTrafficSnapshot(userTraffic.Sum(value => value.UploadBytes),
+                            userTraffic.Sum(value => value.DownloadBytes), userTraffic.Max(value => value.ObservedAt));
+                    }
                     var status = process.Status == ServiceRuntimeStatus.Running && health.IsHealthy
                         ? ServiceRuntimeStatus.Running
                         : process.Status == ServiceRuntimeStatus.Running
                             ? ServiceRuntimeStatus.Failed
                             : process.Status;
+                    var errorCode = item.Value.ErrorCode == "backend_update_rolled_back"
+                        ? item.Value.ErrorCode
+                        : status == ServiceRuntimeStatus.Failed ? "health_check_failed" : null;
                     runtimeStates[item.Key] = State(item.Key, status, metadata.DesiredState.BackendVersion,
-                        metadata.ConfigSha256, traffic,
-                        status == ServiceRuntimeStatus.Failed ? "health_check_failed" : null);
+                        metadata.ConfigSha256, traffic, errorCode);
                 }
                 else
                 {
@@ -166,6 +177,7 @@ public sealed class ServiceReconciler(
 
     private async Task ApplyServiceAsync(ServicePlan plan, List<Guid> changed, CancellationToken cancellationToken)
     {
+        await usageStateStore.EnsureBaselinesAsync(plan.Desired.ServiceId, plan.Desired.Users, cancellationToken);
         var prior = await instanceStore.TryLoadAsync(plan.Desired.ServiceId, cancellationToken);
         var isChanged = prior is null || prior.ConfigSha256 != plan.Config.Sha256 ||
                         !string.Equals(prior.DesiredState.BackendVersion, plan.Desired.BackendVersion,
@@ -204,6 +216,14 @@ public sealed class ServiceReconciler(
         {
             throw new InvalidOperationException("Backend process could not be started.");
         }
+
+        await Task.Delay(StartHealthDelay, timeProvider, cancellationToken);
+        process = processSupervisor.GetStatus(plan.Desired.ServiceId);
+        var health = await plan.Provider.CheckHealthAsync(
+            new BackendInstanceContext(plan.Desired, instanceStore.GetInstanceDirectory(plan.Desired.ServiceId),
+                binaryPath, configPath), cancellationToken);
+        if (process.Status != ServiceRuntimeStatus.Running || !health.IsHealthy)
+            throw new InvalidOperationException("Backend process did not pass the post-start health window.");
 
         runtimeStates[plan.Desired.ServiceId] = State(plan.Desired.ServiceId, ServiceRuntimeStatus.Running,
             plan.Desired.BackendVersion, plan.Config.Sha256, null, null);
@@ -324,6 +344,23 @@ public sealed class ServiceReconciler(
                 current?.AppliedConfigSha256, current?.Traffic, code);
     }
 
+    private async Task<bool> SetRolledBackAsync(Guid serviceId, NodeDesiredState attempted,
+        CancellationToken cancellationToken)
+    {
+        if (serviceId == Guid.Empty) return false;
+        var target = attempted.Services.SingleOrDefault(item => item.ServiceId == serviceId);
+        var restored = await instanceStore.TryLoadAsync(serviceId, cancellationToken);
+        if (target is null || restored is null || target.BackendVersion == restored.DesiredState.BackendVersion)
+            return false;
+        var process = processSupervisor.GetStatus(serviceId);
+        runtimeStates[serviceId] = State(serviceId,
+            process.Status == ServiceRuntimeStatus.Running ? ServiceRuntimeStatus.Running : ServiceRuntimeStatus.Failed,
+            restored.DesiredState.BackendVersion, restored.ConfigSha256,
+            runtimeStates.TryGetValue(serviceId, out var current) ? current.Traffic : null,
+            "backend_update_rolled_back");
+        return true;
+    }
+
     private ServiceRuntimeState State(Guid id, ServiceRuntimeStatus status, string? version, string? configSha,
         BackendTrafficSnapshot? traffic, string? errorCode) => new(id, status, version, configSha, traffic,
         timeProvider.GetUtcNow(), errorCode, errorCode is null ? null : SafeMessage(errorCode));
@@ -336,7 +373,9 @@ public sealed class ServiceReconciler(
         "invalid_config" or "invalid_rendered_config" => "Service configuration validation failed.",
         "runtime_refresh_failed" => "Runtime status could not be refreshed.",
         "health_check_failed" => "Service health check failed.",
-        "process_failed" => "Backend process is not running.", _ => "Service reconciliation failed."
+        "process_failed" => "Backend process is not running.",
+        "backend_update_rolled_back" => "Backend update failed and the previous version was restored.",
+        _ => "Service reconciliation failed."
     };
 
     private sealed record ServicePlan(

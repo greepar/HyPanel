@@ -132,7 +132,8 @@ Do not freeze exact signatures until Phase 1/3 design confirms the minimal data 
 
 Potential capabilities:
 
-- Users
+- MultiUser
+- PerUserTraffic
 - TrafficStats
 - HotReload
 - Logs
@@ -227,10 +228,20 @@ Expected initial entities:
 - Usage
 - EnrollmentTokens
 - Release/update metadata if persisted
+- Per-binding encrypted proxy credentials
 
 Protocol-specific service configuration may be stored as versioned JSON rather than creating many protocol tables.
 
 Secrets must not be accidentally exposed through generic DTO serialization.
+
+Each supported `UserServiceBinding` owns one `UserServiceCredential`. The credential is separate from login and
+subscription tokens and is encrypted with authenticated encryption under an explicitly configured Server master key.
+Only the Server decrypts it, while constructing the intended Agent desired state or that user's subscription. A
+missing key must never cause the Server to invent a replacement key for an existing production database.
+
+The key is a persistent 32-byte value encoded as Base64 and supplied through `HYPANEL_MASTER_KEY` or
+`HyPanel__Security__MasterKey`. AES-256-GCM authenticates both the ciphertext and binding identity
+`(UserId, ServiceId, BackendType)`. Rotated/revoked plaintext is never returned by Admin APIs or written to logs.
 
 ## 6. Agent storage
 
@@ -318,6 +329,25 @@ Bare-metal Server can use a similar staged self-update design.
 
 Docker deployment must not mount the Docker socket into HyPanel merely to self-update. The panel may advertise that an image update exists; operators update the container externally.
 
+The official container is `ghcr.io/greepar/hypanel`. Native amd64 and arm64 release jobs compile with the official .NET
+10 Alpine AOT SDK on matching native runners, then combine architecture tags into one multi-platform manifest. The final Alpine runtime-deps image contains no .NET
+runtime, SDK or compiler, runs as UID/GID 10001, listens on `0.0.0.0:8080`, exposes a `/health` HEALTHCHECK and persists
+the SQLite database plus both release caches under `/data`. `HYPANEL_DATA_DIR=/data` is the default container layout.
+
+### Backend binaries
+
+Backend release sources are compile-time controlled metadata for the four official GitHub repositories. The Server
+periodically resolves stable releases, selects only exact known asset names for the frozen Agent RIDs, downloads with
+fixed limits, safely extracts exactly the expected executable, computes its own size/SHA256, and atomically publishes
+raw binaries into the local cache. Agents receive only basename/version/RID/size/SHA metadata and download exclusively
+from their persisted Panel origin.
+
+`ServiceInstance.BackendVersion` is the desired version. `ServiceRuntimeState.BackendVersion` is the running version,
+and the Server catalog independently exposes latest. A backend update is ordinary durable reconciliation, not an
+arbitrary command: preflight download/validate, snapshot last-known-good, stop/restart only the target service, check a
+bounded health window, and restore prior desired metadata/config/binary on failure. One cached binary version is shared
+across service instances.
+
 ## 9. Usage accounting
 
 Providers normalize backend-specific counters into a shared usage representation.
@@ -333,6 +363,16 @@ Required views:
 Retry-safe ingestion is mandatory. Prefer a simple explicit idempotency key/window/sequence scheme over complicated event infrastructure.
 
 The exact chosen strategy is an architect-owned decision and must be documented before implementation.
+
+For cumulative per-user backend counters, the Agent persists the last observation per `(ServiceId, UserId,
+direction)` alongside pending retry-safe batches. A larger observation emits only the delta. A lower observation is a
+backend counter reset and establishes a new baseline without emitting historical bytes again. Baseline advancement and
+pending batch persistence are one atomic Agent state-file update, so Agent restart and sync retry cannot double count.
+
+Xray v1 uses its official simplified local API configuration with loopback-only `StatsService`, an empty `stats`
+object, and level-0 `statsUserUplink`/`statsUserDownlink`. Desired users render as distinct VLESS clients whose email is
+the stable non-secret `hypanel-{UserId:N}` accounting key. The Agent invokes only the managed Xray binary's fixed
+`api statsquery` command, bounds output/time, and never derives usage from access logs.
 
 ## 10. Security boundaries
 

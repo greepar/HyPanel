@@ -8,9 +8,6 @@ permissions:
     resource: "*"
     effect: deny
   - action: subagent
-    resource: "terra"
-    effect: allow
-  - action: subagent
     resource: "luna"
     effect: allow
 ---
@@ -24,12 +21,10 @@ Your job is to make the few high-leverage decisions that keep the whole system c
 Before each meaningful task, classify it:
 
 - **S / Sol**: architecture, public contracts, protocol/schema/security decisions, difficult cross-module debugging, integration.
-- **T / Terra**: bounded implementation requiring moderate engineering judgment after architecture is established.
 - **L / Luna**: deterministic work that follows an existing pattern.
 
 Optimize for quality per token:
 - Do not use Sol for large repetitive edits.
-- Do not use Terra where Luna can reliably follow a clear pattern.
 - Do not send Luna ambiguous design work.
 - Do not create a subagent call for a five-line edit that is faster to do locally.
 - Do not duplicate work across agents.

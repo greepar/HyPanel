@@ -14,6 +14,8 @@ using HyPanel.Shared.Contracts;
 [JsonSerializable(typeof(NodeMetrics))]
 [JsonSerializable(typeof(ServiceDesiredState))]
 [JsonSerializable(typeof(ServiceDesiredState[]))]
+[JsonSerializable(typeof(BackendUser))]
+[JsonSerializable(typeof(BackendUser[]))]
 [JsonSerializable(typeof(BackendArtifact))]
 [JsonSerializable(typeof(BackendArtifact[]))]
 [JsonSerializable(typeof(ServiceRuntimeState))]

@@ -4,6 +4,8 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using HyPanel.Server.Persistence;
+using HyPanel.Server.Releases;
+using HyPanel.Shared.Versioning;
 
 internal static class AdminServicesEndpoints
 {
@@ -17,6 +19,8 @@ internal static class AdminServicesEndpoints
         endpoints.MapPost("/api/admin/v1/nodes/{nodeId:guid}/services", CreateAsync);
         endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}", UpdateAsync);
         endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}/enabled", SetEnabledAsync);
+        endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}/backend-update-policy", SetBackendUpdatePolicyAsync);
+        endpoints.MapPost("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}/backend-update", RequestBackendUpdateAsync);
         endpoints.MapGet("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}/public-endpoint",
             GetPublicEndpointAsync);
         endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}/public-endpoint",
@@ -25,13 +29,14 @@ internal static class AdminServicesEndpoints
     }
 
     private static async Task<IResult> ListAsync(Guid nodeId, HttpRequest request,
-        AdminAuthorization authorization, SqliteServerRepository repository, CancellationToken cancellationToken)
+        AdminAuthorization authorization, SqliteServerRepository repository, BackendArtifactCatalog releaseCatalog,
+        CancellationToken cancellationToken)
     {
         var access = await authorization.AuthorizeAsync(request, cancellationToken);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
         if (await repository.GetNodeAsync(nodeId, cancellationToken) is null) return Results.NotFound();
         var services = await repository.GetServicesForNodeAsync(nodeId, cancellationToken);
-        var response = services.Select(Map).ToArray();
+        var response = services.Select(item => Map(item, releaseCatalog)).ToArray();
         return Results.Json(response, ServerJsonSerializerContext.Default.AdminServiceResponseArray);
     }
 
@@ -98,6 +103,36 @@ internal static class AdminServicesEndpoints
             ? Results.NotFound()
             : Results.Json(new ServiceMutationResponse(serviceId, revision.Value),
                 ServerJsonSerializerContext.Default.ServiceMutationResponse);
+    }
+
+    private static async Task<IResult> RequestBackendUpdateAsync(Guid nodeId, Guid serviceId, HttpRequest request,
+        AdminAuthorization authorization, SqliteServerRepository repository, BackendArtifactCatalog catalog,
+        BackendReleaseSyncWorker sync, CancellationToken ct)
+    {
+        var access = await authorization.AuthorizeAsync(request, ct);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        var target = await repository.GetBackendUpdateTargetAsync(nodeId, serviceId, ct);
+        if (target is null) return Results.NotFound();
+        var latest = catalog.GetLatestVersion(target.BackendType);
+        if (latest is null) return Results.Conflict();
+        if (!SemanticVersion.TryParse(target.DesiredVersion, out var current)
+            || !SemanticVersion.TryParse(latest, out var available) || current.CompareTo(available) >= 0)
+            return Results.Conflict();
+        await sync.EnsureCachedAsync(target.BackendType, latest, target.ReportedRid, ct);
+        var revision = await repository.RequestBackendUpdateAsync(nodeId, serviceId, latest, ct);
+        return revision is null ? Results.NotFound() : Results.Json(new RequestBackendUpdateResponse(latest, revision.Value),
+            ServerJsonSerializerContext.Default.RequestBackendUpdateResponse);
+    }
+
+    private static async Task<IResult> SetBackendUpdatePolicyAsync(Guid nodeId, Guid serviceId,
+        SetBackendUpdatePolicyRequest body, HttpRequest request, AdminAuthorization authorization,
+        SqliteServerRepository repository, CancellationToken ct)
+    {
+        var access = await authorization.AuthorizeAsync(request, ct);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        if (body.Policy is not ("Manual" or "Auto")) return Results.BadRequest();
+        return await repository.SetBackendUpdatePolicyAsync(nodeId, serviceId, body.Policy, ct)
+            ? Results.NoContent() : Results.NotFound();
     }
 
     private static async Task<IResult> GetPublicEndpointAsync(Guid nodeId, Guid serviceId, HttpRequest request,
@@ -198,7 +233,7 @@ internal static class AdminServicesEndpoints
         }
     }
 
-    private static AdminServiceResponse Map(ServiceInstanceWithRuntimeRecord item)
+    private static AdminServiceResponse Map(ServiceInstanceWithRuntimeRecord item, BackendArtifactCatalog catalog)
     {
         var service = item.Service;
         var runtime = item.Runtime;
@@ -209,7 +244,8 @@ internal static class AdminServicesEndpoints
                 ? null
                 : new ServiceRuntimeResponse(runtime.Status, runtime.BackendVersion, runtime.AppliedConfigSha256,
                     runtime.TrafficUploadBytes, runtime.TrafficDownloadBytes, runtime.TrafficObservedAtUtc,
-                    runtime.ObservedAtUtc, runtime.ErrorCode, runtime.ErrorMessage));
+                    runtime.ObservedAtUtc, runtime.ErrorCode, runtime.ErrorMessage), service.BackendUpdatePolicy,
+            catalog.GetLatestVersion(service.BackendType));
     }
 
     internal static string RedactPasswords(string configJson)

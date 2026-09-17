@@ -33,6 +33,8 @@ export class ApiClient {
   endpoint = (nodeId: string, serviceId: string) => this.request<PublicEndpoint | undefined>(`/api/admin/v1/nodes/${nodeId}/services/${serviceId}/public-endpoint`)
   diagnostics = (nodeId: string, serviceId: string) => this.request<ServiceDiagnostic[]>(`/api/admin/v1/nodes/${nodeId}/services/${serviceId}/diagnostics`)
   collectLogs = (nodeId: string, serviceId: string) => this.request<{ commandId: string }>(`/api/admin/v1/nodes/${nodeId}/services/${serviceId}/diagnostics/logs`, { method: 'POST' })
+  updateBackend = (nodeId: string, serviceId: string) => this.request<{ version: string; revision: number }>(`/api/admin/v1/nodes/${nodeId}/services/${serviceId}/backend-update`, { method: 'POST' })
+  setBackendUpdatePolicy = (nodeId: string, serviceId: string, policy: 'Manual' | 'Auto') => this.request<void>(`/api/admin/v1/nodes/${nodeId}/services/${serviceId}/backend-update-policy`, { method: 'PUT', body: JSON.stringify({ policy }) })
   users = () => this.request<User[]>('/api/admin/v1/users')
   usage = () => this.request<Usage[]>('/api/admin/v1/usage')
   templates = () => this.request<Template[]>('/api/admin/v1/service-templates')

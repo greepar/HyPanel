@@ -133,11 +133,11 @@ public sealed class Hysteria2ProviderTests
     }
 
     [TestMethod]
-    public async Task CollectTrafficAsync_ReturnsNull()
+    public async Task CollectUserTrafficAsync_ReturnsEmpty()
     {
-        var result = await provider.CollectTrafficAsync(CreateInstanceContext("/tmp", "/tmp/hysteria", "/tmp/config.yaml"), CancellationToken.None);
+        var result = await provider.CollectUserTrafficAsync(CreateInstanceContext("/tmp", "/tmp/hysteria", "/tmp/config.yaml"), CancellationToken.None);
 
-        Assert.IsNull(result);
+        Assert.AreEqual(0, result.Count);
     }
 
     [TestMethod]

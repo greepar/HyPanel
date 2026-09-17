@@ -4,3 +4,5 @@ internal sealed record UserRecord(Guid Id, string Username, string NormalizedUse
 internal sealed record UserIssue(UserRecord User, string SubscriptionToken);
 internal sealed record SessionIssue(UserRecord User, string Token, DateTimeOffset ExpiresAtUtc);
 internal sealed record UsageTotalRecord(Guid UserId, Guid ServiceId, long UploadBytes, long DownloadBytes, DateTimeOffset UpdatedAtUtc);
+internal sealed record UserServiceCredentialRecord(Guid UserId, Guid ServiceId, string BackendType, string Credential,
+    string Status, DateTimeOffset CreatedAtUtc, DateTimeOffset UpdatedAtUtc);

@@ -134,7 +134,7 @@ Deliver as demand justifies:
 
 - Service templates.
 - Batch desired-state deployment.
-- Batch Agent updates.
+- Batch Agent updates. (completed by OP-005)
 - Backend update policies/channels.
 - Better logs/health views.
 - Optional update signing.
@@ -151,3 +151,51 @@ Until real need appears:
 - Arbitrary remote shell.
 - Redis/message queues.
 - Runtime plugin marketplace.
+
+## Phase 11 — Per-user proxy identity
+
+Deliver:
+
+- A distinct recoverable proxy credential for every supported User and Service binding.
+- Authenticated encryption under an explicitly configured Server master key.
+- Xray VLESS multi-user desired state and runtime configuration.
+- Xray API-based cumulative per-user counters with restart-safe delta accounting.
+- Credential create, revoke and rotate lifecycle.
+- Subscription projection from the authenticated user's credential rather than shared service config.
+- Desired-state removal of disabled, expired and traffic-limited users without stopping the service.
+- Truthful `MultiUser`, `PerUserTraffic` and aggregate `TrafficStats` capabilities.
+
+Exit criteria:
+
+- Two users bound to one Xray service receive different UUIDs and can connect concurrently.
+- Their traffic is accounted independently without retry or restart double counting.
+- Disable, expiry, limit and rotation remove only the affected user's old access.
+- Server restart preserves decryptable credentials; missing key fails explicitly when encrypted credentials exist.
+
+## Phase 12 — Backend release management
+
+Deliver:
+
+- Fixed official GitHub release sources for Hysteria2, Xray, Mihomo and sing-box.
+- Periodic metadata refresh with cache fallback and exact RID asset mapping.
+- On-demand bounded download plus safe raw/gzip/zip/tar.gz executable extraction.
+- Panel-origin raw artifact delivery with computed size and SHA256.
+- Separate Current, Latest and Desired backend versions.
+- Manual-by-default and optional per-service automatic updates.
+- Per-service post-start health verification and complete desired-version rollback reporting.
+
+Exit criteria:
+
+- A real backend updates through Server cache and Agent reconciliation without direct upstream Agent access.
+- Failure after process replacement restores the prior binary/config and Server desired version.
+- Other service instances remain unaffected.
+
+## Phase 13 — GHCR container publication
+
+Deliver:
+
+- Multi-platform `ghcr.io/greepar/hypanel` for linux/amd64 and linux/arm64.
+- NativeAOT musl Server binaries with no .NET runtime, SDK or compiler in the final image.
+- Non-root runtime, `/data` persistence, port 8080 and image HEALTHCHECK.
+- Release-version, `latest` and `sha-*` tags from the release workflow.
+- No Docker socket and no in-container self-replacement.

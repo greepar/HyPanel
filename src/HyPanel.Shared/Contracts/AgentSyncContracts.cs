@@ -70,7 +70,13 @@ public sealed record ServiceDesiredState(
     string BackendVersion,
     bool Enabled,
     int ConfigSchemaVersion,
-    string ConfigJson);
+    string ConfigJson,
+    IReadOnlyList<BackendUser>? Users = null,
+    int? ControlPort = null);
+
+public sealed record BackendUser(
+    Guid UserId,
+    string Credential);
 
 public sealed record BackendArtifact(
     string BackendType,

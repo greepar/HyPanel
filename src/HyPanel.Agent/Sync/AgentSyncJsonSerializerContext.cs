@@ -13,5 +13,7 @@ using HyPanel.Agent.Updates;
 [JsonSerializable(typeof(AgentCommandResult[]))]
 [JsonSerializable(typeof(UsageBatch))]
 [JsonSerializable(typeof(UsageBatch[]))]
+[JsonSerializable(typeof(UserTrafficCounter))]
+[JsonSerializable(typeof(UserTrafficCounter[]))]
 [JsonSerializable(typeof(AgentUpdateLocalState))]
 internal sealed partial class AgentSyncJsonSerializerContext : JsonSerializerContext;

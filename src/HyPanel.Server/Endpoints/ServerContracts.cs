@@ -64,6 +64,8 @@ internal sealed record UpdateServiceRequest(
     string ConfigJson);
 
 internal sealed record SetServiceEnabledRequest(bool Enabled);
+internal sealed record SetBackendUpdatePolicyRequest(string Policy);
+internal sealed record RequestBackendUpdateResponse(string Version, long Revision);
 
 internal sealed record ServiceMutationResponse(Guid Id, long Revision);
 
@@ -88,7 +90,9 @@ internal sealed record AdminServiceResponse(
     string ConfigJson,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc,
-    ServiceRuntimeResponse? Runtime);
+    ServiceRuntimeResponse? Runtime,
+    string BackendUpdatePolicy,
+    string? LatestBackendVersion);
 
 internal sealed record LoginRequest(string Username, string Password);
 
@@ -121,6 +125,8 @@ internal sealed record UpdateUserRequest(
 internal sealed record CreateUserResponse(UserResponse User, string SubscriptionToken);
 
 internal sealed record RotateSubscriptionTokenResponse(string SubscriptionToken);
+internal sealed record UserServiceAccessResponse(Guid ServiceId, string CredentialStatus, bool MultiUser,
+    bool PerUserTraffic, bool TrafficStats);
 
 internal sealed record UsageTotalResponse(
     Guid UserId,

@@ -2,6 +2,7 @@ namespace HyPanel.Agent.Backends.Xray;
 
 using System.Net;
 using System.Net.Sockets;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -11,11 +12,17 @@ using HyPanel.Shared.Contracts;
 public sealed class XrayProvider : IBackendProvider
 {
     private const string VisionFlow = "xtls-rprx-vision";
+    private const int MaximumStatsOutputBytes = 1024 * 1024;
+    private readonly TimeProvider timeProvider;
+
+    public XrayProvider(TimeProvider timeProvider) => this.timeProvider = timeProvider;
 
     public string BackendType => "xray";
 
     public BackendCapabilities Capabilities =>
-        BackendCapabilities.Users |
+        BackendCapabilities.MultiUser |
+        BackendCapabilities.PerUserTraffic |
+        BackendCapabilities.TrafficStats |
         BackendCapabilities.Logs |
         BackendCapabilities.VersionQuery |
         BackendCapabilities.ConfigValidation;
@@ -35,7 +42,12 @@ public sealed class XrayProvider : IBackendProvider
             return ValueTask.FromResult(Invalid("invalid_config", "Invalid Xray configuration."));
         }
 
-        return ValueTask.FromResult(new BackendValidationResult(true, [config.ListenPort], Array.Empty<int>(), null,
+        if (!TryGetUsers(desiredState, out _))
+            return ValueTask.FromResult(Invalid("invalid_users", "Invalid Xray users."));
+
+        if (desiredState.ControlPort is not (>= 1024 and <= 65_535) || desiredState.ControlPort == config.ListenPort)
+            return ValueTask.FromResult(Invalid("invalid_control_port", "Invalid Xray control port."));
+        return ValueTask.FromResult(new BackendValidationResult(true, [config.ListenPort, desiredState.ControlPort.Value], Array.Empty<int>(), null,
             null));
     }
 
@@ -50,7 +62,9 @@ public sealed class XrayProvider : IBackendProvider
             throw new InvalidOperationException("Xray configuration is invalid.");
         }
 
-        var content = JsonSerializer.SerializeToUtf8Bytes(CreateRuntimeConfig(config),
+        if (!TryGetUsers(desiredState, out var users))
+            throw new InvalidOperationException("Xray users are invalid.");
+        var content = JsonSerializer.SerializeToUtf8Bytes(CreateRuntimeConfig(desiredState.ControlPort!.Value, config, users),
             XrayRuntimeJsonSerializerContext.Default.XrayRuntimeConfig);
         var sha256 = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
         return ValueTask.FromResult(new RenderedBackendConfig("config.json", content, sha256));
@@ -77,11 +91,46 @@ public sealed class XrayProvider : IBackendProvider
         return ValueTask.FromResult(new BackendHealthResult(true, null, null));
     }
 
-    public ValueTask<BackendTrafficSnapshot?> CollectTrafficAsync(BackendInstanceContext instance,
+    public async ValueTask<IReadOnlyList<BackendUserTraffic>> CollectUserTrafficAsync(BackendInstanceContext instance,
         CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult<BackendTrafficSnapshot?>(null);
+        var start = new ProcessStartInfo(instance.BinaryPath)
+        {
+            WorkingDirectory = instance.InstanceDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        start.ArgumentList.Add("api");
+        start.ArgumentList.Add("statsquery");
+        if (instance.DesiredState.ControlPort is null) return [];
+        start.ArgumentList.Add($"--server=127.0.0.1:{instance.DesiredState.ControlPort.Value}");
+        start.ArgumentList.Add("--pattern=user>>>");
+        using var process = new Process { StartInfo = start };
+        if (!process.Start()) return [];
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        try
+        {
+            var outputTask = ReadBoundedAsync(process.StandardOutput, MaximumStatsOutputBytes, timeout.Token);
+            var errorTask = ReadBoundedAsync(process.StandardError, 4096, timeout.Token);
+            await process.WaitForExitAsync(timeout.Token);
+            var output = await outputTask;
+            _ = await errorTask;
+            if (process.ExitCode != 0 || output is null) return [];
+            return ParseStats(output, instance.DesiredState.Users, timeProvider.GetUtcNow());
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            TryKill(process);
+            return [];
+        }
+        catch
+        {
+            TryKill(process);
+            throw;
+        }
     }
 
     private static BackendValidationResult Invalid(string errorCode, string errorMessage) =>
@@ -106,8 +155,6 @@ public sealed class XrayProvider : IBackendProvider
     private static bool IsValidConfig(XrayConfig config) =>
         IsCanonicalIpAddress(config.ListenHost) &&
         config.ListenPort is >= 1 and <= 65_535 &&
-        IsCanonicalGuid(config.ClientId) &&
-        IsPrintableAscii(config.ClientEmail, 1, 128) &&
         config.Flow == VisionFlow &&
         IsBase64Url32Bytes(config.RealityPrivateKey) &&
         IsBase64Url32Bytes(config.RealityPublicKey) &&
@@ -217,9 +264,19 @@ public sealed class XrayProvider : IBackendProvider
         return int.TryParse(portText, out var port) && port is >= 1 and <= 65_535 && portText == port.ToString();
     }
 
-    private static XrayRuntimeConfig CreateRuntimeConfig(XrayConfig config) => new()
+    private static XrayRuntimeConfig CreateRuntimeConfig(int controlPort, XrayConfig config,
+        IReadOnlyList<BackendUser> users) => new()
     {
         Log = new XrayLog { LogLevel = "warning" },
+        Api = new XrayApi { Tag = "api", Listen = $"127.0.0.1:{controlPort}", Services = ["StatsService"] },
+        Stats = new XrayStats(),
+        Policy = new XrayPolicy
+        {
+            Levels = new Dictionary<string, XrayLevelPolicy>
+            {
+                ["0"] = new XrayLevelPolicy { StatsUserUplink = true, StatsUserDownlink = true }
+            }
+        },
         Inbounds =
         [
             new XrayInbound
@@ -229,10 +286,13 @@ public sealed class XrayProvider : IBackendProvider
                 Protocol = "vless",
                 Settings = new XrayInboundSettings
                 {
-                    Clients =
-                    [
-                        new XrayClient { Id = config.ClientId!, Email = config.ClientEmail!, Flow = config.Flow! }
-                    ],
+                    Clients = users.Select(user => new XrayClient
+                    {
+                        Id = user.Credential,
+                        Email = UserEmail(user.UserId),
+                        Flow = config.Flow!,
+                        Level = 0
+                    }).ToArray(),
                     Decryption = "none"
                 },
                 StreamSettings = new XrayStreamSettings
@@ -257,4 +317,83 @@ public sealed class XrayProvider : IBackendProvider
             new XrayOutbound { Protocol = "blackhole", Tag = "blocked" }
         ]
     };
+
+    internal static IReadOnlyList<BackendUserTraffic> ParseStats(string json, IReadOnlyList<BackendUser>? desiredUsers,
+        DateTimeOffset observedAt)
+    {
+        if (desiredUsers is null) return [];
+        XrayStatsQueryResult? result;
+        try
+        {
+            result = JsonSerializer.Deserialize(json, XrayStatsJsonSerializerContext.Default.XrayStatsQueryResult);
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+        var allowed = desiredUsers.Select(user => user.UserId).ToHashSet();
+        var counters = new Dictionary<Guid, (long Upload, long Download)>();
+        foreach (var stat in result?.Stat ?? [])
+        {
+            if (stat.Value < 0 || !TryParseStatName(stat.Name, out var userId, out var upload) || !allowed.Contains(userId))
+                continue;
+            counters.TryGetValue(userId, out var current);
+            counters[userId] = upload ? (stat.Value, current.Download) : (current.Upload, stat.Value);
+        }
+        return counters.OrderBy(pair => pair.Key)
+            .Select(pair => new BackendUserTraffic(pair.Key, pair.Value.Upload, pair.Value.Download, observedAt)).ToArray();
+    }
+
+    private static bool TryGetUsers(ServiceDesiredState desired, out IReadOnlyList<BackendUser> users)
+    {
+        users = desired.Users ?? [];
+        var ids = new HashSet<Guid>();
+        var credentials = new HashSet<string>(StringComparer.Ordinal);
+        return users.Count <= 256 && users.All(user => user.UserId != Guid.Empty && ids.Add(user.UserId)
+            && IsCanonicalGuid(user.Credential) && credentials.Add(user.Credential));
+    }
+
+    private static string UserEmail(Guid userId) => $"hypanel-{userId:N}";
+
+    private static bool TryParseStatName(string? name, out Guid userId, out bool upload)
+    {
+        userId = Guid.Empty;
+        upload = false;
+        const string prefix = "user>>>hypanel-";
+        const string middle = ">>>traffic>>>";
+        if (name is null || !name.StartsWith(prefix, StringComparison.Ordinal)) return false;
+        var separator = name.IndexOf(middle, prefix.Length, StringComparison.Ordinal);
+        if (separator < 0 || !Guid.TryParseExact(name.AsSpan(prefix.Length, separator - prefix.Length), "N", out userId))
+            return false;
+        var direction = name[(separator + middle.Length)..];
+        upload = direction == "uplink";
+        return upload || direction == "downlink";
+    }
+
+    private static async Task<string?> ReadBoundedAsync(StreamReader reader, int maximumBytes,
+        CancellationToken cancellationToken)
+    {
+        var buffer = new char[4096];
+        var builder = new StringBuilder();
+        var bytes = 0;
+        while (true)
+        {
+            var read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken);
+            if (read == 0) return builder.ToString();
+            bytes += Encoding.UTF8.GetByteCount(buffer.AsSpan(0, read));
+            if (bytes > maximumBytes) return null;
+            builder.Append(buffer, 0, read);
+        }
+    }
+
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
 }

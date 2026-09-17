@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.IO.Compression;
+using System.Formats.Tar;
 using HyPanel.Server.Releases;
 using HyPanel.Shared.Contracts;
 using Microsoft.Extensions.Configuration;
@@ -145,6 +147,82 @@ public sealed class BackendArtifactCatalogTests
         var artifact = fixture.CreateCatalog().GetArtifacts("linux-x64").Single();
 
         Assert.AreEqual("sing-box", artifact.BackendType);
+    }
+
+    [TestMethod]
+    public void ReleaseSources_MapEveryFrozenRidWithoutCallerControlledUrls()
+    {
+        CollectionAssert.AreEquivalent(new[] { "hysteria2", "xray", "mihomo", "sing-box" },
+            BackendReleaseSources.All.Select(item => item.BackendType).ToArray());
+        foreach (var source in BackendReleaseSources.All)
+        foreach (var rid in ReleaseCatalog.SupportedRids)
+        {
+            var name = source.AssetName(rid, "1.2.3");
+            Assert.IsFalse(string.IsNullOrWhiteSpace(name), $"{source.BackendType} {rid}");
+            Assert.AreEqual(Path.GetFileName(name), name);
+        }
+    }
+
+    [TestMethod]
+    public async Task ExtractAsync_SupportsRawGzipZipAndTarGzipExecutables()
+    {
+        using var fixture = CatalogFixture.Create();
+        var payload = System.Text.Encoding.UTF8.GetBytes("backend-binary");
+        var raw = Path.Combine(fixture.DirectoryPath, "backend");
+        await File.WriteAllBytesAsync(raw, payload);
+        var rawOutput = Path.Combine(fixture.DirectoryPath, "raw-output");
+        await BackendReleaseSyncWorker.ExtractAsync(raw, "backend", string.Empty, rawOutput, CancellationToken.None);
+        CollectionAssert.AreEqual(payload, await File.ReadAllBytesAsync(rawOutput));
+
+        var gzipPath = Path.Combine(fixture.DirectoryPath, "backend.gz");
+        await using (var target = new GZipStream(File.Create(gzipPath), CompressionMode.Compress))
+            await target.WriteAsync(payload);
+        var gzipOutput = Path.Combine(fixture.DirectoryPath, "gzip-output");
+        await BackendReleaseSyncWorker.ExtractAsync(gzipPath, "backend.gz", string.Empty, gzipOutput,
+            CancellationToken.None);
+        CollectionAssert.AreEqual(payload, await File.ReadAllBytesAsync(gzipOutput));
+
+        var zipPath = Path.Combine(fixture.DirectoryPath, "backend.zip");
+        using (var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+        await using (var target = zip.CreateEntry("backend.exe").Open()) await target.WriteAsync(payload);
+        var zipOutput = Path.Combine(fixture.DirectoryPath, "zip-output");
+        await BackendReleaseSyncWorker.ExtractAsync(zipPath, "backend.zip", "backend.exe", zipOutput,
+            CancellationToken.None);
+        CollectionAssert.AreEqual(payload, await File.ReadAllBytesAsync(zipOutput));
+
+        var tarPath = Path.Combine(fixture.DirectoryPath, "backend.tar.gz");
+        await using (var file = File.Create(tarPath))
+        await using (var gzip = new GZipStream(file, CompressionMode.Compress))
+        await using (var writer = new TarWriter(gzip, leaveOpen: false))
+        {
+            var entry = new PaxTarEntry(TarEntryType.RegularFile, "backend-1.2.3/backend")
+                { DataStream = new MemoryStream(payload) };
+            await writer.WriteEntryAsync(entry);
+        }
+        var tarOutput = Path.Combine(fixture.DirectoryPath, "tar-output");
+        await BackendReleaseSyncWorker.ExtractAsync(tarPath, "backend.tar.gz", "backend", tarOutput,
+            CancellationToken.None);
+        CollectionAssert.AreEqual(payload, await File.ReadAllBytesAsync(tarOutput));
+    }
+
+    [TestMethod]
+    public void Reload_WhenVersionedIndexIsAdded_ExposesLatestAndCachedArtifact()
+    {
+        using var fixture = CatalogFixture.Create();
+        var catalog = fixture.CreateCatalog();
+        var artifact = new BackendArtifact("xray", "2.0.0", "linux-x64", "xray-2.0.0-linux-x64",
+            new string('a', 64), 3);
+        File.WriteAllBytes(Path.Combine(fixture.DirectoryPath, artifact.FileName), [1, 2, 3]);
+        var release = new BackendReleaseIndex(1, "xray", "2.0.0", DateTimeOffset.Parse("2026-09-16T00:00:00Z"),
+            [new BackendSourceAsset("linux-x64", "Xray-linux-64.zip",
+                "https://github.com/XTLS/Xray-core/releases/download/v2.0.0/Xray-linux-64.zip")], [artifact]);
+        File.WriteAllText(Path.Combine(fixture.DirectoryPath, "release-xray-2.0.0.json"),
+            JsonSerializer.Serialize(release, BackendArtifactManifestJsonContext.Default.BackendReleaseIndex));
+
+        catalog.Reload();
+
+        Assert.AreEqual("2.0.0", catalog.GetLatestVersion("xray"));
+        Assert.AreEqual(artifact, catalog.FindArtifact("xray", "2.0.0", "linux-x64"));
     }
 
     private static BackendArtifactManifest CreateManifest() => new(

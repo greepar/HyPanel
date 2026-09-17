@@ -4,14 +4,18 @@ using Microsoft.Data.Sqlite;
 
 internal sealed class SqliteConnectionFactory
 {
-    private const string DefaultConnectionString = "Data Source=hypanel.db";
     private readonly string _connectionString;
 
     public SqliteConnectionFactory(IConfiguration configuration)
     {
-        _connectionString = configuration.GetConnectionString("HyPanel")
-            ?? configuration["HyPanel:Database:ConnectionString"]
-            ?? DefaultConnectionString;
+        var configured = configuration.GetConnectionString("HyPanel")
+            ?? configuration["HyPanel:Database:ConnectionString"];
+        var dataDirectory = ServerDataDirectory.Resolve(configuration);
+        Directory.CreateDirectory(dataDirectory);
+        _connectionString = configured ?? new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.Combine(dataDirectory, "hypanel.db")
+        }.ToString();
     }
 
     public async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)

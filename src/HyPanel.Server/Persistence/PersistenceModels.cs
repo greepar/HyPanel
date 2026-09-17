@@ -77,7 +77,11 @@ internal sealed record ServiceInstanceRecord(
     int ConfigSchemaVersion,
     string ConfigJson,
     DateTimeOffset CreatedAtUtc,
-    DateTimeOffset UpdatedAtUtc);
+    DateTimeOffset UpdatedAtUtc,
+    string BackendUpdatePolicy = "Manual");
+
+internal sealed record BackendUpdateTargetRecord(Guid NodeId, Guid ServiceId, string BackendType,
+    string DesiredVersion, string ReportedRid, string Policy);
 
 internal sealed record ServiceRuntimeStateRecord(
     Guid ServiceId,
@@ -123,8 +127,10 @@ internal sealed record ServicePublicEndpointRecord(
     DateTimeOffset UpdatedAtUtc);
 
 internal sealed record SubscriptionServiceRecord(
+    Guid UserId,
     Guid ServiceId,
     string Name,
     string BackendType,
     string ConfigJson,
+    string Credential,
     ServicePublicEndpointRecord PublicEndpoint);

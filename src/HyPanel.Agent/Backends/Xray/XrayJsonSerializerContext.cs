@@ -16,6 +16,7 @@ internal sealed class XrayConfig
 
     public int ListenPort { get; init; }
 
+    // Legacy service fields remain parseable during migration; desired users own runtime identities.
     public string? ClientId { get; init; }
 
     public string? ClientEmail { get; init; }

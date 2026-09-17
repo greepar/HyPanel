@@ -2,6 +2,7 @@ namespace HyPanel.Server.Persistence;
 
 using System.Security.Cryptography;
 using System.Text;
+using HyPanel.Server.Security;
 using Microsoft.Data.Sqlite;
 
 internal sealed partial class SqliteServerRepository
@@ -143,7 +144,9 @@ internal sealed partial class SqliteServerRepository
         CancellationToken ct)
     {
         await using var c = await connectionFactory.OpenAsync(ct);
+        await using var tx = (SqliteTransaction)await c.BeginTransactionAsync(ct);
         await using var cmd = c.CreateCommand();
+        cmd.Transaction = tx;
         cmd.CommandText =
             "UPDATE users SET username=@username,normalized_username=@normalized,password_hash=COALESCE(@password,password_hash),role=@role,enabled=@enabled,traffic_limit_bytes=@limit,expires_at_utc=@expires,updated_at_utc=@now WHERE id=@id;";
         cmd.Parameters.AddWithValue("@id", id.ToString("D"));
@@ -156,7 +159,14 @@ internal sealed partial class SqliteServerRepository
         cmd.Parameters.AddWithValue("@expires",
             expiresAtUtc is null ? DBNull.Value : SqliteValue.ToUtcText(expiresAtUtc.Value));
         cmd.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
-        return await cmd.ExecuteNonQueryAsync(ct) == 1 ? await GetUserAsync(id, ct) : null;
+        if (await cmd.ExecuteNonQueryAsync(ct) != 1)
+        {
+            await tx.RollbackAsync(ct);
+            return null;
+        }
+        await IncrementBoundNodeRevisionsAsync(c, tx, id, ct);
+        await tx.CommitAsync(ct);
+        return await GetUserAsync(id, ct);
     }
 
     public async Task<bool> DeleteUserAsync(Guid id, CancellationToken ct)
@@ -165,7 +175,8 @@ internal sealed partial class SqliteServerRepository
         await using var tx = (SqliteTransaction)await c.BeginTransactionAsync(ct);
         try
         {
-            foreach (var table in new[] { "usage_totals", "user_service_bindings", "user_sessions" })
+            await IncrementBoundNodeRevisionsAsync(c, tx, id, ct);
+            foreach (var table in new[] { "usage_totals", "user_service_credentials", "user_service_bindings", "user_sessions" })
             {
                 await using var child = c.CreateCommand();
                 child.Transaction = tx;
@@ -198,24 +209,140 @@ internal sealed partial class SqliteServerRepository
     public async Task<bool> BindServiceAsync(Guid userId, Guid serviceId, CancellationToken ct)
     {
         await using var c = await connectionFactory.OpenAsync(ct);
+        await using var tx = (SqliteTransaction)await c.BeginTransactionAsync(ct);
+        var backend = await GetBindingBackendAsync(c, tx, userId, serviceId, requireBinding: false, ct);
+        if (backend != "xray")
+        {
+            await tx.RollbackAsync(ct);
+            return false;
+        }
+        var now = timeProvider.GetUtcNow();
         await using var cmd = c.CreateCommand();
-        cmd.CommandText =
-            "INSERT INTO user_service_bindings (user_id,service_id,created_at_utc) SELECT @user,@service,@now WHERE EXISTS (SELECT 1 FROM users WHERE id=@user) AND EXISTS (SELECT 1 FROM service_instances WHERE id=@service) ON CONFLICT(user_id,service_id) DO NOTHING;";
+        cmd.Transaction = tx;
+        cmd.CommandText = "INSERT INTO user_service_bindings (user_id,service_id,created_at_utc) VALUES (@user,@service,@now) ON CONFLICT(user_id,service_id) DO NOTHING;";
         cmd.Parameters.AddWithValue("@user", userId.ToString("D"));
         cmd.Parameters.AddWithValue("@service", serviceId.ToString("D"));
-        cmd.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
-        await cmd.ExecuteNonQueryAsync(ct);
-        return await IsBoundAsync(c, userId, serviceId, ct);
+        cmd.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(now));
+        var inserted = await cmd.ExecuteNonQueryAsync(ct) == 1;
+        if (inserted)
+        {
+            await UpsertCredentialAsync(c, tx, userId, serviceId, backend, Guid.NewGuid().ToString("D"), now, ct);
+            await IncrementServiceNodeRevisionAsync(c, tx, serviceId, ct);
+        }
+        await tx.CommitAsync(ct);
+        return true;
+    }
+
+    public async Task InitializeProxyCredentialsAsync(CancellationToken ct)
+    {
+        await using var c = await connectionFactory.OpenAsync(ct);
+        await using var tx = (SqliteTransaction)await c.BeginTransactionAsync(ct);
+        await using (var existing = c.CreateCommand())
+        {
+            existing.Transaction = tx;
+            existing.CommandText = "SELECT EXISTS(SELECT 1 FROM user_service_credentials);";
+            if ((long)(await existing.ExecuteScalarAsync(ct) ?? 0L) != 0 && !credentialProtector.IsConfigured)
+                throw new InvalidOperationException(
+                    "HyPanel:Security:MasterKey is required because encrypted proxy credentials already exist.");
+        }
+        var missing = new List<(Guid UserId, Guid ServiceId, Guid NodeId, string Backend)>();
+        await using (var select = c.CreateCommand())
+        {
+            select.Transaction = tx;
+            select.CommandText = """
+                SELECT b.user_id,b.service_id,s.node_id,s.backend_type
+                FROM user_service_bindings b
+                JOIN service_instances s ON s.id=b.service_id
+                LEFT JOIN user_service_credentials k ON k.user_id=b.user_id AND k.service_id=b.service_id
+                WHERE k.user_id IS NULL AND s.backend_type='xray'
+                ORDER BY b.user_id,b.service_id;
+                """;
+            await using var reader = await select.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                missing.Add((SqliteValue.ToGuid(reader.GetString(0)), SqliteValue.ToGuid(reader.GetString(1)),
+                    SqliteValue.ToGuid(reader.GetString(2)), reader.GetString(3)));
+        }
+        if (missing.Count == 0)
+        {
+            await tx.CommitAsync(ct);
+            return;
+        }
+        var now = timeProvider.GetUtcNow();
+        foreach (var item in missing)
+            await UpsertCredentialAsync(c, tx, item.UserId, item.ServiceId, item.Backend,
+                Guid.NewGuid().ToString("D"), now, ct);
+        foreach (var nodeId in missing.Select(item => item.NodeId).Distinct())
+        {
+            await using var revision = c.CreateCommand();
+            revision.Transaction = tx;
+            revision.CommandText = "UPDATE nodes SET desired_revision=desired_revision+1 WHERE id=@node;";
+            revision.Parameters.AddWithValue("@node", nodeId.ToString("D"));
+            await revision.ExecuteNonQueryAsync(ct);
+        }
+        await tx.CommitAsync(ct);
     }
 
     public async Task<bool> UnbindServiceAsync(Guid userId, Guid serviceId, CancellationToken ct)
     {
         await using var c = await connectionFactory.OpenAsync(ct);
+        await using var tx = (SqliteTransaction)await c.BeginTransactionAsync(ct);
+        await using (var credential = c.CreateCommand())
+        {
+            credential.Transaction = tx;
+            credential.CommandText = "UPDATE user_service_credentials SET status='Revoked',desired_eligible=0,updated_at_utc=@now WHERE user_id=@user AND service_id=@service;";
+            credential.Parameters.AddWithValue("@user", userId.ToString("D"));
+            credential.Parameters.AddWithValue("@service", serviceId.ToString("D"));
+            credential.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+            await credential.ExecuteNonQueryAsync(ct);
+        }
         await using var cmd = c.CreateCommand();
+        cmd.Transaction = tx;
         cmd.CommandText = "DELETE FROM user_service_bindings WHERE user_id=@user AND service_id=@service;";
         cmd.Parameters.AddWithValue("@user", userId.ToString("D"));
         cmd.Parameters.AddWithValue("@service", serviceId.ToString("D"));
-        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+        var deleted = await cmd.ExecuteNonQueryAsync(ct) == 1;
+        if (deleted) await IncrementServiceNodeRevisionAsync(c, tx, serviceId, ct);
+        await tx.CommitAsync(ct);
+        return deleted;
+    }
+
+    public async Task<UserServiceCredentialRecord?> RotateServiceCredentialAsync(Guid userId, Guid serviceId,
+        CancellationToken ct) => await ReplaceServiceCredentialAsync(userId, serviceId, "Active", ct);
+
+    public async Task<UserServiceCredentialRecord?> RevokeServiceCredentialAsync(Guid userId, Guid serviceId,
+        CancellationToken ct) => await ReplaceServiceCredentialAsync(userId, serviceId, "Revoked", ct);
+
+    public async Task<IReadOnlyList<UserServiceCredentialRecord>> GetServiceCredentialsAsync(Guid serviceId,
+        bool eligibleOnly, CancellationToken ct)
+    {
+        var records = new List<UserServiceCredentialRecord>();
+        await using var c = await connectionFactory.OpenAsync(ct);
+        await using var cmd = c.CreateCommand();
+        cmd.CommandText = """
+                          SELECT k.user_id,k.service_id,k.backend_type,k.nonce,k.ciphertext,k.tag,k.status,k.created_at_utc,k.updated_at_utc
+                          FROM user_service_credentials k
+                          JOIN users u ON u.id=k.user_id
+                          WHERE k.service_id=@service
+                            AND (@eligible=0 OR (k.status='Active' AND u.enabled=1
+                              AND (u.expires_at_utc IS NULL OR u.expires_at_utc>@now)
+                              AND (u.traffic_limit_bytes IS NULL OR COALESCE((SELECT SUM(t.upload_bytes+t.download_bytes) FROM usage_totals t WHERE t.user_id=u.id),0)<u.traffic_limit_bytes)))
+                          ORDER BY k.user_id;
+                          """;
+        cmd.Parameters.AddWithValue("@service", serviceId.ToString("D"));
+        cmd.Parameters.AddWithValue("@eligible", eligibleOnly ? 1 : 0);
+        cmd.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+        {
+            var userId = SqliteValue.ToGuid(r.GetString(0));
+            var id = SqliteValue.ToGuid(r.GetString(1));
+            var backend = r.GetString(2);
+            var credential = credentialProtector.Unprotect(userId, id, backend,
+                new ProtectedCredential((byte[])r[3], (byte[])r[4], (byte[])r[5]));
+            records.Add(new UserServiceCredentialRecord(userId, id, backend, credential, r.GetString(6),
+                SqliteValue.ToDateTimeOffset(r.GetString(7)), SqliteValue.ToDateTimeOffset(r.GetString(8))));
+        }
+        return records;
     }
 
     public async Task<IReadOnlyList<Guid>> GetBoundServicesAsync(Guid userId, CancellationToken ct)
@@ -305,11 +432,13 @@ internal sealed partial class SqliteServerRepository
         var services = new List<SubscriptionServiceRecord>();
         await using var cmd = c.CreateCommand();
         cmd.CommandText = """
-                          SELECT s.id,s.name,s.backend_type,s.config_json,p.host,p.port,p.tls_server_name,p.updated_at_utc
-                          FROM user_service_bindings b
-                          JOIN service_instances s ON s.id=b.service_id
-                          JOIN service_public_endpoints p ON p.service_id=s.id
-                          WHERE b.user_id=@user AND s.enabled=1
+                           SELECT s.id,s.name,s.backend_type,s.config_json,p.host,p.port,p.tls_server_name,p.updated_at_utc,
+                                  k.nonce,k.ciphertext,k.tag
+                           FROM user_service_bindings b
+                           JOIN service_instances s ON s.id=b.service_id
+                           JOIN service_public_endpoints p ON p.service_id=s.id
+                           JOIN user_service_credentials k ON k.user_id=b.user_id AND k.service_id=b.service_id
+                           WHERE b.user_id=@user AND s.enabled=1 AND k.status='Active'
                           ORDER BY s.name,s.id;
                           """;
         cmd.Parameters.AddWithValue("@user", userId);
@@ -317,7 +446,10 @@ internal sealed partial class SqliteServerRepository
         while (await r.ReadAsync(ct))
         {
             var serviceId = SqliteValue.ToGuid(r.GetString(0));
-            services.Add(new SubscriptionServiceRecord(serviceId, r.GetString(1), r.GetString(2), r.GetString(3),
+            var backend = r.GetString(2);
+            var credential = credentialProtector.Unprotect(SqliteValue.ToGuid(userId), serviceId, backend,
+                new ProtectedCredential((byte[])r[8], (byte[])r[9], (byte[])r[10]));
+            services.Add(new SubscriptionServiceRecord(SqliteValue.ToGuid(userId), serviceId, r.GetString(1), backend, r.GetString(3), credential,
                 new ServicePublicEndpointRecord(serviceId, r.GetString(4), r.GetInt32(5),
                     r.IsDBNull(6) ? null : r.GetString(6), SqliteValue.ToDateTimeOffset(r.GetString(7)))));
         }
@@ -332,6 +464,97 @@ internal sealed partial class SqliteServerRepository
         cmd.Parameters.AddWithValue("@user", user.ToString("D"));
         cmd.Parameters.AddWithValue("@service", service.ToString("D"));
         return await cmd.ExecuteScalarAsync(ct) is not null;
+    }
+
+    private async Task<UserServiceCredentialRecord?> ReplaceServiceCredentialAsync(Guid userId, Guid serviceId,
+        string status, CancellationToken ct)
+    {
+        await using var c = await connectionFactory.OpenAsync(ct);
+        await using var tx = (SqliteTransaction)await c.BeginTransactionAsync(ct);
+        var backend = await GetBindingBackendAsync(c, tx, userId, serviceId, requireBinding: true, ct);
+        if (backend != "xray")
+        {
+            await tx.RollbackAsync(ct);
+            return null;
+        }
+        var now = timeProvider.GetUtcNow();
+        var plaintext = Guid.NewGuid().ToString("D");
+        var protectedCredential = credentialProtector.Protect(userId, serviceId, backend, plaintext);
+        await using var cmd = c.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+                          UPDATE user_service_credentials SET nonce=@nonce,ciphertext=@ciphertext,tag=@tag,status=@status,updated_at_utc=@now
+                          WHERE user_id=@user AND service_id=@service;
+                          """;
+        cmd.Parameters.AddWithValue("@user", userId.ToString("D"));
+        cmd.Parameters.AddWithValue("@service", serviceId.ToString("D"));
+        cmd.Parameters.Add("@nonce", SqliteType.Blob).Value = protectedCredential.Nonce;
+        cmd.Parameters.Add("@ciphertext", SqliteType.Blob).Value = protectedCredential.Ciphertext;
+        cmd.Parameters.Add("@tag", SqliteType.Blob).Value = protectedCredential.Tag;
+        cmd.Parameters.AddWithValue("@status", status);
+        cmd.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(now));
+        if (await cmd.ExecuteNonQueryAsync(ct) != 1)
+        {
+            await tx.RollbackAsync(ct);
+            return null;
+        }
+        await IncrementServiceNodeRevisionAsync(c, tx, serviceId, ct);
+        await tx.CommitAsync(ct);
+        return new UserServiceCredentialRecord(userId, serviceId, backend, plaintext, status, now, now);
+    }
+
+    private async Task UpsertCredentialAsync(SqliteConnection c, SqliteTransaction tx, Guid userId, Guid serviceId,
+        string backend, string plaintext, DateTimeOffset now, CancellationToken ct)
+    {
+        var protectedCredential = credentialProtector.Protect(userId, serviceId, backend, plaintext);
+        await using var cmd = c.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            INSERT INTO user_service_credentials (user_id,service_id,backend_type,nonce,ciphertext,tag,status,desired_eligible,created_at_utc,updated_at_utc)
+            VALUES (@user,@service,@backend,@nonce,@ciphertext,@tag,'Active',1,@now,@now)
+            ON CONFLICT(user_id,service_id) DO UPDATE SET backend_type=excluded.backend_type,nonce=excluded.nonce,
+              ciphertext=excluded.ciphertext,tag=excluded.tag,status='Active',desired_eligible=1,updated_at_utc=excluded.updated_at_utc;
+            """;
+        cmd.Parameters.AddWithValue("@user", userId.ToString("D"));
+        cmd.Parameters.AddWithValue("@service", serviceId.ToString("D"));
+        cmd.Parameters.AddWithValue("@backend", backend);
+        cmd.Parameters.Add("@nonce", SqliteType.Blob).Value = protectedCredential.Nonce;
+        cmd.Parameters.Add("@ciphertext", SqliteType.Blob).Value = protectedCredential.Ciphertext;
+        cmd.Parameters.Add("@tag", SqliteType.Blob).Value = protectedCredential.Tag;
+        cmd.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(now));
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task<string?> GetBindingBackendAsync(SqliteConnection c, SqliteTransaction tx, Guid userId,
+        Guid serviceId, bool requireBinding, CancellationToken ct)
+    {
+        await using var cmd = c.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "SELECT s.backend_type FROM users u CROSS JOIN service_instances s WHERE u.id=@user AND s.id=@service AND (@requireBinding=0 OR EXISTS (SELECT 1 FROM user_service_bindings b WHERE b.user_id=u.id AND b.service_id=s.id));";
+        cmd.Parameters.AddWithValue("@user", userId.ToString("D"));
+        cmd.Parameters.AddWithValue("@service", serviceId.ToString("D"));
+        cmd.Parameters.AddWithValue("@requireBinding", requireBinding ? 1 : 0);
+        return await cmd.ExecuteScalarAsync(ct) as string;
+    }
+
+    private static async Task IncrementServiceNodeRevisionAsync(SqliteConnection c, SqliteTransaction tx,
+        Guid serviceId, CancellationToken ct)
+    {
+        await using var cmd = c.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "UPDATE nodes SET desired_revision=desired_revision+1 WHERE id=(SELECT node_id FROM service_instances WHERE id=@service);";
+        cmd.Parameters.AddWithValue("@service", serviceId.ToString("D"));
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task IncrementBoundNodeRevisionsAsync(SqliteConnection c, SqliteTransaction tx, Guid userId,
+        CancellationToken ct)
+    {
+        await using var cmd = c.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "UPDATE nodes SET desired_revision=desired_revision+1 WHERE id IN (SELECT DISTINCT s.node_id FROM user_service_bindings b JOIN service_instances s ON s.id=b.service_id WHERE b.user_id=@user);";
+        cmd.Parameters.AddWithValue("@user", userId.ToString("D"));
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 
     private static byte[] TokenHash(string token) => SHA256.HashData(Encoding.UTF8.GetBytes(token));

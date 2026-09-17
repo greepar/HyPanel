@@ -19,8 +19,11 @@ internal static class UserEndpoints
         endpoints.MapDelete("/api/admin/v1/users/{id:guid}", DeleteUserAsync);
         endpoints.MapPost("/api/admin/v1/users/{id:guid}/subscription-token/rotate", RotateAsync);
         endpoints.MapGet("/api/admin/v1/users/{id:guid}/services", GetServicesAsync);
+        endpoints.MapGet("/api/admin/v1/users/{id:guid}/service-access", GetServiceAccessAsync);
         endpoints.MapPut("/api/admin/v1/users/{id:guid}/services/{serviceId:guid}", BindAsync);
         endpoints.MapDelete("/api/admin/v1/users/{id:guid}/services/{serviceId:guid}", UnbindAsync);
+        endpoints.MapPost("/api/admin/v1/users/{id:guid}/services/{serviceId:guid}/credential/rotate", RotateCredentialAsync);
+        endpoints.MapPost("/api/admin/v1/users/{id:guid}/services/{serviceId:guid}/credential/revoke", RevokeCredentialAsync);
         endpoints.MapGet("/api/admin/v1/usage", GetAdminUsageAsync);
         endpoints.MapGet("/api/user/v1/usage", GetUserUsageAsync);
         endpoints.MapPost("/api/user/v1/subscription-token/rotate", RotateOwnSubscriptionTokenAsync);
@@ -148,12 +151,48 @@ internal static class UserEndpoints
         return await r.BindServiceAsync(id, serviceId, ct) ? Results.NoContent() : Results.NotFound();
     }
 
+    private static async Task<IResult> GetServiceAccessAsync(Guid id, HttpRequest request,
+        AdminAuthorization authorization, SqliteServerRepository repository, CancellationToken ct)
+    {
+        var access = await authorization.AuthorizeAsync(request, ct);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        var bound = await repository.GetBoundServicesAsync(id, ct);
+        var rows = new List<UserServiceAccessResponse>(bound.Count);
+        foreach (var serviceId in bound)
+        {
+            var credential = (await repository.GetServiceCredentialsAsync(serviceId, false, ct))
+                .SingleOrDefault(item => item.UserId == id);
+            rows.Add(credential is null
+                ? new UserServiceAccessResponse(serviceId, "Unsupported", false, false, false)
+                : new UserServiceAccessResponse(serviceId, credential.Status, true, true, true));
+        }
+        return Results.Json(rows.ToArray(), ServerJsonSerializerContext.Default.UserServiceAccessResponseArray);
+    }
+
     private static async Task<IResult> UnbindAsync(Guid id, Guid serviceId, HttpRequest request,
         AdminAuthorization authorization, SqliteServerRepository r, CancellationToken ct)
     {
         var access = await authorization.AuthorizeAsync(request, ct);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
         return await r.UnbindServiceAsync(id, serviceId, ct) ? Results.NoContent() : Results.NotFound();
+    }
+
+    private static async Task<IResult> RotateCredentialAsync(Guid id, Guid serviceId, HttpRequest request,
+        AdminAuthorization authorization, SqliteServerRepository repository, CancellationToken ct)
+    {
+        var access = await authorization.AuthorizeAsync(request, ct);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        var credential = await repository.RotateServiceCredentialAsync(id, serviceId, ct);
+        return credential is null ? Results.NotFound() : Results.NoContent();
+    }
+
+    private static async Task<IResult> RevokeCredentialAsync(Guid id, Guid serviceId, HttpRequest request,
+        AdminAuthorization authorization, SqliteServerRepository repository, CancellationToken ct)
+    {
+        var access = await authorization.AuthorizeAsync(request, ct);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        var credential = await repository.RevokeServiceCredentialAsync(id, serviceId, ct);
+        return credential is null ? Results.NotFound() : Results.NoContent();
     }
 
     private static async Task<IResult> GetAdminUsageAsync(Guid? userId, Guid? serviceId, HttpRequest request,

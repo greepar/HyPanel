@@ -1,9 +1,13 @@
 namespace HyPanel.Agent;
 
 using System.Text.Json;
+using HyPanel.Agent.Backends;
 using HyPanel.Shared.Contracts;
 
-public sealed record AgentUsageStoreState(IReadOnlyList<UsageBatch> PendingBatches);
+public sealed record UserTrafficCounter(Guid UserId, Guid ServiceId, long UploadBytes, long DownloadBytes);
+
+public sealed record AgentUsageStoreState(IReadOnlyList<UsageBatch> PendingBatches,
+    IReadOnlyList<UserTrafficCounter>? LastObserved = null);
 
 public sealed class AgentUsageStateStore(AgentEnrollmentOptions options)
 {
@@ -14,6 +18,7 @@ public sealed class AgentUsageStateStore(AgentEnrollmentOptions options)
     private readonly SemaphoreSlim stateGate = new(1, 1);
     private readonly object snapshotLock = new();
     private IReadOnlyList<UsageBatch> pendingBatches = [];
+    private IReadOnlyList<UserTrafficCounter> lastObserved = [];
     private bool loaded;
 
     private string StatePath => Path.Combine(options.DataDirectory, FileName);
@@ -30,11 +35,95 @@ public sealed class AgentUsageStateStore(AgentEnrollmentOptions options)
                 lock (snapshotLock)
                 {
                     pendingBatches = state.PendingBatches.ToArray();
+                    lastObserved = state.LastObserved?.ToArray() ?? [];
                     loaded = true;
                 }
             }
 
-            return new AgentUsageStoreState(GetPendingBatchesSnapshot());
+            return new AgentUsageStoreState(GetPendingBatchesSnapshot(), GetLastObservedSnapshot());
+        }
+        finally
+        {
+            stateGate.Release();
+        }
+    }
+
+    public async Task RecordCumulativeAsync(Guid serviceId, IReadOnlyList<BackendUserTraffic> observations,
+        CancellationToken cancellationToken)
+    {
+        if (serviceId == Guid.Empty || observations is null) throw new ArgumentException("Invalid traffic observations.");
+        await EnsureLoadedAsync(cancellationToken);
+        await stateGate.WaitAsync(cancellationToken);
+        try
+        {
+            var counters = lastObserved.ToDictionary(item => (item.ServiceId, item.UserId));
+            var deltas = new List<UserUsageDelta>();
+            foreach (var observation in observations)
+            {
+                if (observation.UserId == Guid.Empty || observation.UploadBytes < 0 || observation.DownloadBytes < 0)
+                    throw new InvalidOperationException("A backend returned invalid traffic counters.");
+                counters.TryGetValue((serviceId, observation.UserId), out var previous);
+                if (previous is not null)
+                {
+                    var upload = observation.UploadBytes >= previous.UploadBytes
+                        ? observation.UploadBytes - previous.UploadBytes
+                        : 0;
+                    var download = observation.DownloadBytes >= previous.DownloadBytes
+                        ? observation.DownloadBytes - previous.DownloadBytes
+                        : 0;
+                    if (upload > 0 || download > 0)
+                        deltas.Add(new UserUsageDelta(observation.UserId, serviceId, upload, download));
+                }
+                counters[(serviceId, observation.UserId)] = new UserTrafficCounter(observation.UserId, serviceId,
+                    observation.UploadBytes, observation.DownloadBytes);
+            }
+
+            var batches = pendingBatches;
+            if (deltas.Count > 0)
+            {
+                if (batches.Count >= MaxPendingBatches)
+                    throw new InvalidOperationException("The pending usage queue is full.");
+                batches = batches.Append(new UsageBatch(Guid.NewGuid(),
+                    observations.Max(item => item.ObservedAt), deltas)).ToArray();
+            }
+            var observed = counters.Values.OrderBy(item => item.ServiceId).ThenBy(item => item.UserId).ToArray();
+            var state = new AgentUsageStoreState(batches, observed);
+            ValidateState(state);
+            await PersistAsync(state, cancellationToken);
+            lock (snapshotLock)
+            {
+                pendingBatches = batches;
+                lastObserved = observed;
+            }
+        }
+        finally
+        {
+            stateGate.Release();
+        }
+    }
+
+    public async Task EnsureBaselinesAsync(Guid serviceId, IReadOnlyList<BackendUser>? users,
+        CancellationToken cancellationToken)
+    {
+        if (serviceId == Guid.Empty || users is null) return;
+        await EnsureLoadedAsync(cancellationToken);
+        await stateGate.WaitAsync(cancellationToken);
+        try
+        {
+            var counters = lastObserved.ToDictionary(item => (item.ServiceId, item.UserId));
+            var changed = false;
+            foreach (var user in users)
+            {
+                if (user.UserId == Guid.Empty) throw new InvalidOperationException("A desired backend user is invalid.");
+                changed |= counters.TryAdd((serviceId, user.UserId),
+                    new UserTrafficCounter(user.UserId, serviceId, 0, 0));
+            }
+            if (!changed) return;
+            var observed = counters.Values.OrderBy(item => item.ServiceId).ThenBy(item => item.UserId).ToArray();
+            var state = new AgentUsageStoreState(pendingBatches, observed);
+            ValidateState(state);
+            await PersistAsync(state, cancellationToken);
+            lock (snapshotLock) lastObserved = observed;
         }
         finally
         {
@@ -75,7 +164,7 @@ public sealed class AgentUsageStateStore(AgentEnrollmentOptions options)
             }
 
             ValidateState(new AgentUsageStoreState(updated));
-            await PersistAsync(updated, cancellationToken);
+            await PersistAsync(new AgentUsageStoreState(updated, lastObserved), cancellationToken);
             lock (snapshotLock)
             {
                 pendingBatches = updated;
@@ -111,7 +200,7 @@ public sealed class AgentUsageStateStore(AgentEnrollmentOptions options)
                 return;
             }
 
-            await PersistAsync(updated, cancellationToken);
+            await PersistAsync(new AgentUsageStoreState(updated, lastObserved), cancellationToken);
             lock (snapshotLock)
             {
                 pendingBatches = updated;
@@ -135,7 +224,7 @@ public sealed class AgentUsageStateStore(AgentEnrollmentOptions options)
     {
         if (!File.Exists(StatePath))
         {
-            return new AgentUsageStoreState([]);
+            return new AgentUsageStoreState([], []);
         }
 
         var bytes = await File.ReadAllBytesAsync(StatePath, cancellationToken);
@@ -143,11 +232,11 @@ public sealed class AgentUsageStateStore(AgentEnrollmentOptions options)
                ?? throw new InvalidOperationException("The Agent usage state file is invalid.");
     }
 
-    private Task PersistAsync(IReadOnlyList<UsageBatch> batches, CancellationToken cancellationToken) =>
+    private Task PersistAsync(AgentUsageStoreState state, CancellationToken cancellationToken) =>
         AtomicFile.WriteAsync(
             options.DataDirectory,
             FileName,
-            JsonSerializer.SerializeToUtf8Bytes(new AgentUsageStoreState(batches),
+            JsonSerializer.SerializeToUtf8Bytes(state,
                 AgentSyncJsonSerializerContext.Default.AgentUsageStoreState),
             cancellationToken);
 
@@ -156,6 +245,14 @@ public sealed class AgentUsageStateStore(AgentEnrollmentOptions options)
         if (state.PendingBatches is null || state.PendingBatches.Count > MaxPendingBatches)
         {
             throw new InvalidOperationException("The Agent usage state file exceeds the pending batch limit.");
+        }
+
+        var counterKeys = new HashSet<(Guid ServiceId, Guid UserId)>();
+        foreach (var counter in state.LastObserved ?? [])
+        {
+            if (counter.UserId == Guid.Empty || counter.ServiceId == Guid.Empty || counter.UploadBytes < 0 ||
+                counter.DownloadBytes < 0 || !counterKeys.Add((counter.ServiceId, counter.UserId)))
+                throw new InvalidOperationException("The Agent usage counter state is invalid.");
         }
 
         var batchIds = new HashSet<Guid>();
@@ -174,6 +271,11 @@ public sealed class AgentUsageStateStore(AgentEnrollmentOptions options)
                 throw new InvalidOperationException("The Agent usage state file contains an invalid record.");
             }
         }
+    }
+
+    private IReadOnlyList<UserTrafficCounter> GetLastObservedSnapshot()
+    {
+        lock (snapshotLock) return lastObserved.ToArray();
     }
 
     private static void ValidateAcknowledgements(IReadOnlyList<UsageBatch> sentSnapshot,

@@ -61,8 +61,8 @@ public sealed class SyncWorker(
             try
             {
                 var pendingResults = commandState.PendingResults.ToArray();
-                var pendingUsageBatches = usageStateStore.GetPendingBatchesSnapshot();
                 await reconciler.RefreshRuntimeStatesAsync(stoppingToken);
+                var pendingUsageBatches = usageStateStore.GetPendingBatchesSnapshot();
                 var updateReport = await updateStateStore.GetReportAsync(stoppingToken);
                 var response = await SyncAsync(credentials, state.AppliedRevision, reconciler.GetRuntimeStates(),
                     pendingUsageBatches, pendingResults, updateReport, stoppingToken);

@@ -17,7 +17,6 @@ public sealed class Hysteria2Provider : IBackendProvider
     public string BackendType => "hysteria2";
 
     public BackendCapabilities Capabilities =>
-        BackendCapabilities.TrafficStats |
         BackendCapabilities.Logs |
         BackendCapabilities.VersionQuery |
         BackendCapabilities.ConfigValidation;
@@ -97,14 +96,14 @@ public sealed class Hysteria2Provider : IBackendProvider
         return ValueTask.FromResult(new BackendHealthResult(true, null, null));
     }
 
-    public ValueTask<BackendTrafficSnapshot?> CollectTrafficAsync(
+    public ValueTask<IReadOnlyList<BackendUserTraffic>> CollectUserTrafficAsync(
         BackendInstanceContext instance,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
         // Hysteria2 does not expose a reliable, per-instance traffic API for this provider.
-        return ValueTask.FromResult<BackendTrafficSnapshot?>(null);
+        return ValueTask.FromResult<IReadOnlyList<BackendUserTraffic>>([]);
     }
 
     private static BackendValidationResult Invalid(string errorCode, string errorMessage) =>

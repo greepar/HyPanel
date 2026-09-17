@@ -12,6 +12,8 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
     private const long ServiceTemplatesSchemaVersion = 6;
     private const long ServiceDiagnosticsSchemaVersion = 7;
     private const long AgentUpdateSchemaVersion = 8;
+    private const long UserServiceCredentialsSchemaVersion = 9;
+    private const long BackendUpdateSchemaVersion = 10;
 
     public async Task MigrateAsync(CancellationToken cancellationToken)
     {
@@ -259,6 +261,48 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             insertMigration.Transaction = transaction;
             insertMigration.CommandText = "INSERT INTO schema_migrations (version, applied_at_utc) VALUES (@version, @appliedAtUtc);";
             insertMigration.Parameters.AddWithValue("@version", AgentUpdateSchemaVersion);
+            insertMigration.Parameters.AddWithValue("@appliedAtUtc", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+            await insertMigration.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, UserServiceCredentialsSchemaVersion, cancellationToken))
+        {
+            await ExecuteAsync(connection, transaction, """
+                CREATE TABLE user_service_credentials (
+                    user_id TEXT NOT NULL,
+                    service_id TEXT NOT NULL,
+                    backend_type TEXT NOT NULL,
+                    nonce BLOB NOT NULL CHECK (length(nonce) = 12),
+                    ciphertext BLOB NOT NULL,
+                    tag BLOB NOT NULL CHECK (length(tag) = 16),
+                    status TEXT NOT NULL CHECK (status IN ('Active', 'Revoked')),
+                    desired_eligible INTEGER NOT NULL CHECK (desired_eligible IN (0, 1)),
+                    created_at_utc TEXT NOT NULL,
+                    updated_at_utc TEXT NOT NULL,
+                    PRIMARY KEY (user_id, service_id),
+                    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE RESTRICT,
+                    FOREIGN KEY (service_id) REFERENCES service_instances (id) ON DELETE RESTRICT
+                );
+                CREATE INDEX ix_user_service_credentials_service ON user_service_credentials (service_id, status);
+                """, cancellationToken);
+            await using var insertMigration = connection.CreateCommand();
+            insertMigration.Transaction = transaction;
+            insertMigration.CommandText = "INSERT INTO schema_migrations (version, applied_at_utc) VALUES (@version, @appliedAtUtc);";
+            insertMigration.Parameters.AddWithValue("@version", UserServiceCredentialsSchemaVersion);
+            insertMigration.Parameters.AddWithValue("@appliedAtUtc", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+            await insertMigration.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, BackendUpdateSchemaVersion, cancellationToken))
+        {
+            await ExecuteAsync(connection, transaction, """
+                ALTER TABLE service_instances ADD COLUMN backend_update_policy TEXT NOT NULL DEFAULT 'Manual'
+                    CHECK (backend_update_policy IN ('Manual', 'Auto'));
+                """, cancellationToken);
+            await using var insertMigration = connection.CreateCommand();
+            insertMigration.Transaction = transaction;
+            insertMigration.CommandText = "INSERT INTO schema_migrations (version, applied_at_utc) VALUES (@version, @appliedAtUtc);";
+            insertMigration.Parameters.AddWithValue("@version", BackendUpdateSchemaVersion);
             insertMigration.Parameters.AddWithValue("@appliedAtUtc", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
             await insertMigration.ExecuteNonQueryAsync(cancellationToken);
         }

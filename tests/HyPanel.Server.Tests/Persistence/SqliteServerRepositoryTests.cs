@@ -1,5 +1,6 @@
 using HyPanel.Server.Persistence;
 using HyPanel.Server.Endpoints;
+using HyPanel.Server.Security;
 using HyPanel.Shared.Contracts;
 using System.Text;
 using System.Text.Json;
@@ -34,7 +35,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -57,6 +58,7 @@ public sealed class SqliteServerRepositoryTests
                 "config_json", "created_at_utc", "updated_at_utc"
             },
             await ReadColumnNamesAsync(connection, "service_templates"));
+        CollectionAssert.Contains(await ReadColumnNamesAsync(connection, "user_service_credentials"), "ciphertext");
     }
 
     [TestMethod]
@@ -295,7 +297,7 @@ public sealed class SqliteServerRepositoryTests
             new[]
             {
                 "id", "node_id", "name", "backend_type", "backend_version", "enabled", "config_schema_version",
-                "config_json", "created_at_utc", "updated_at_utc"
+                "config_json", "created_at_utc", "updated_at_utc", "backend_update_policy"
             },
             await ReadColumnNamesAsync(connection, "service_instances"));
         CollectionAssert.AreEquivalent(
@@ -335,7 +337,7 @@ public sealed class SqliteServerRepositoryTests
         await using var fixture = await TestDatabase.CreateAsync();
         var nodeId = Guid.NewGuid();
         var agentId = await CreateAgentAsync(fixture, nodeId, "token", "secret");
-        var service = CreateService(nodeId, Guid.NewGuid(), "initial");
+        var service = XrayService(CreateService(nodeId, Guid.NewGuid(), "initial"));
 
         var created = await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
         Assert.AreEqual(1L, created.Revision);
@@ -363,7 +365,7 @@ public sealed class SqliteServerRepositoryTests
             CancellationToken.None));
 
         var deleteRevision = await fixture.Repository.DeleteServiceAsync(nodeId, service.Id, CancellationToken.None);
-        Assert.AreEqual(3L, deleteRevision);
+        Assert.AreEqual(4L, deleteRevision);
         Assert.AreEqual(0, (await fixture.Repository.GetServicesForNodeAsync(nodeId, CancellationToken.None)).Count);
         Assert.AreEqual(0,
             (await fixture.Repository.GetBoundServicesAsync(user.User.Id, CancellationToken.None)).Count);
@@ -381,6 +383,59 @@ public sealed class SqliteServerRepositoryTests
         Assert.AreEqual(0L, (await fixture.Repository.UpdateServiceAsync(service, CancellationToken.None)).Revision);
         Assert.IsNull(await fixture.Repository.DeleteServiceAsync(nodeId, service.Id, CancellationToken.None));
         Assert.IsNull(await fixture.Repository.GetNodeAsync(nodeId, CancellationToken.None));
+    }
+
+    [TestMethod]
+    public async Task BackendUpdatePolicyAndRequest_KeepDesiredRunningAndPolicySeparate()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        var agentId = await CreateAgentAsync(fixture, nodeId, "backend-update-token", "backend-update-secret");
+        var service = XrayService(CreateService(nodeId, Guid.NewGuid(), "update-target"));
+        var created = await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
+        Assert.AreEqual(1L, created.Revision);
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "1.0.0", "linux-x64", 1, null,
+            [new ServiceRuntimeState(service.Id, ServiceRuntimeStatus.Running, service.BackendVersion, null, null,
+                fixture.Time.GetUtcNow(), null, null)], [], CancellationToken.None));
+
+        var target = await fixture.Repository.GetBackendUpdateTargetAsync(nodeId, service.Id, CancellationToken.None);
+        Assert.IsNotNull(target);
+        Assert.AreEqual("Manual", target.Policy);
+        Assert.AreEqual("linux-x64", target.ReportedRid);
+        Assert.IsTrue(await fixture.Repository.SetBackendUpdatePolicyAsync(nodeId, service.Id, "Auto",
+            CancellationToken.None));
+        var revision = await fixture.Repository.RequestBackendUpdateAsync(nodeId, service.Id, "26.9.8",
+            CancellationToken.None);
+
+        Assert.AreEqual(2L, revision);
+        var row = (await fixture.Repository.GetServicesForNodeAsync(nodeId, CancellationToken.None)).Single();
+        Assert.AreEqual("26.9.8", row.Service.BackendVersion);
+        Assert.AreEqual("Auto", row.Service.BackendUpdatePolicy);
+        Assert.AreEqual("26.3.27", row.Runtime!.BackendVersion);
+    }
+
+    [TestMethod]
+    public async Task AgentSync_BackendRollbackReport_RestoresDesiredVersionAndAdvancesRevisionOnce()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        var agentId = await CreateAgentAsync(fixture, nodeId, "rollback-token", "rollback-secret");
+        var service = XrayService(CreateService(nodeId, Guid.NewGuid(), "rollback"));
+        await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
+        Assert.AreEqual(2L, await fixture.Repository.RequestBackendUpdateAsync(nodeId, service.Id, "26.9.8",
+            CancellationToken.None));
+        var report = new ServiceRuntimeState(service.Id, ServiceRuntimeStatus.Running, "26.3.27", null, null,
+            fixture.Time.GetUtcNow(), "backend_update_rolled_back",
+            "Backend update failed and the previous version was restored.");
+
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "1.0.0", "linux-x64", 1, null,
+            [report], [], CancellationToken.None));
+        var desired = await fixture.Repository.GetDesiredStateForAgentAsync(agentId, CancellationToken.None);
+        Assert.AreEqual(3L, desired!.Value.Revision);
+        Assert.AreEqual("26.3.27", desired.Value.Services.Single().BackendVersion);
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "1.0.0", "linux-x64", 1, null,
+            [report], [], CancellationToken.None));
+        Assert.AreEqual(3L, (await fixture.Repository.GetNodeAsync(nodeId, CancellationToken.None))!.DesiredRevision);
     }
 
     [TestMethod]
@@ -580,7 +635,7 @@ public sealed class SqliteServerRepositoryTests
         var nodeId = Guid.NewGuid();
         var user = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Bob", "bob", "password-hash", "User", true,
             null, null, "subscription", CancellationToken.None);
-        var service = CreateService(nodeId, Guid.NewGuid(), "bound");
+        var service = XrayService(CreateService(nodeId, Guid.NewGuid(), "bound"));
         await fixture.Repository.CreateNodeAsync(nodeId, "node", CancellationToken.None);
         await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
 
@@ -593,20 +648,59 @@ public sealed class SqliteServerRepositoryTests
     }
 
     [TestMethod]
+    public async Task XrayBindings_CreateDistinctEncryptedCredentialsAndRotateOrRevokeIndependently()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        await fixture.Repository.CreateNodeAsync(nodeId, "node", CancellationToken.None);
+        var service = XrayService(CreateService(nodeId, Guid.NewGuid(), "xray"));
+        await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
+        var first = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "First", "first", "hash", "User", true,
+            null, null, "first-token", CancellationToken.None);
+        var second = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Second", "second", "hash", "User", true,
+            null, null, "second-token", CancellationToken.None);
+        Assert.IsTrue(await fixture.Repository.BindServiceAsync(first.User.Id, service.Id, CancellationToken.None));
+        Assert.IsTrue(await fixture.Repository.BindServiceAsync(second.User.Id, service.Id, CancellationToken.None));
+        var credentials = await fixture.Repository.GetServiceCredentialsAsync(service.Id, true, CancellationToken.None);
+        Assert.AreEqual(2, credentials.Count);
+        Assert.AreNotEqual(credentials[0].Credential, credentials[1].Credential);
+        var oldFirst = credentials.Single(item => item.UserId == first.User.Id).Credential;
+
+        var rotated = await fixture.Repository.RotateServiceCredentialAsync(first.User.Id, service.Id,
+            CancellationToken.None);
+        Assert.IsNotNull(rotated);
+        Assert.AreNotEqual(oldFirst, rotated.Credential);
+        Assert.AreEqual(credentials.Single(item => item.UserId == second.User.Id).Credential,
+            (await fixture.Repository.GetServiceCredentialsAsync(service.Id, true, CancellationToken.None))
+            .Single(item => item.UserId == second.User.Id).Credential);
+        Assert.IsNotNull(await fixture.Repository.RevokeServiceCredentialAsync(first.User.Id, service.Id,
+            CancellationToken.None));
+        Assert.AreEqual(1, (await fixture.Repository.GetServiceCredentialsAsync(service.Id, true,
+            CancellationToken.None)).Count);
+
+        await using var connection = await fixture.OpenConnectionAsync();
+        var text = await ReadAllTextValuesAsync(connection);
+        Assert.IsFalse(text.Any(value => value.Contains(oldFirst, StringComparison.Ordinal) ||
+                                        value.Contains(rotated.Credential, StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
     public async Task PublicSubscription_RequiresEligibleRotatedTokenAndProjectsOnlyClientFieldsInAllFormats()
     {
         await using var fixture = await TestDatabase.CreateAsync();
         var nodeId = Guid.NewGuid();
-        var service = CreateService(nodeId, Guid.NewGuid(), "My service") with
+        var service = XrayService(CreateService(nodeId, Guid.NewGuid(), "My service")) with
         {
             ConfigJson =
-            "{\"authPassword\":\"auth secret\",\"obfsPassword\":\"obfs secret\",\"certificatePath\":\"/private/cert\",\"masqueradeUrl\":\"https://private.example\",\"upMbps\":100}"
+            "{\"flow\":\"xtls-rprx-vision\",\"realityPublicKey\":\"public-key\",\"shortId\":\"a1b2\",\"serverName\":\"sni.example\",\"fingerprint\":\"chrome\",\"realityPrivateKey\":\"private-key\",\"destination\":\"private.example:443\"}"
         };
         await fixture.Repository.CreateNodeAsync(nodeId, "node", CancellationToken.None);
         await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
         var user = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Sub", "sub", "password-hash", "User", true,
             100, null, "old-token", CancellationToken.None);
         Assert.IsTrue(await fixture.Repository.BindServiceAsync(user.User.Id, service.Id, CancellationToken.None));
+        var credential = (await fixture.Repository.GetServiceCredentialsAsync(service.Id, true,
+            CancellationToken.None)).Single().Credential;
         var endpoint =
             new ServicePublicEndpointRecord(service.Id, "sub.example", 443, "sni.example", fixture.Time.GetUtcNow());
         Assert.IsTrue(await fixture.Repository.SetServicePublicEndpointAsync(nodeId, endpoint, CancellationToken.None));
@@ -628,8 +722,8 @@ public sealed class SqliteServerRepositoryTests
             context.Response.Body.Position = 0;
             var content = await new StreamReader(context.Response.Body).ReadToEndAsync();
             if (format == "base64") content = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(content));
-            StringAssert.Contains(content, format is "raw" or "base64" ? "auth%20secret" : "auth secret");
-            Assert.IsFalse(content.Contains("/private/cert", StringComparison.Ordinal));
+            StringAssert.Contains(content, credential);
+            Assert.IsFalse(content.Contains("private-key", StringComparison.Ordinal));
             Assert.IsFalse(content.Contains("private.example", StringComparison.Ordinal));
             Assert.IsFalse(content.Contains("upMbps", StringComparison.Ordinal));
         }
@@ -685,21 +779,22 @@ public sealed class SqliteServerRepositoryTests
         };
         const string privateKey = "private-secret-must-not-leak";
         const string publicKey = "public-key-value";
-        const string clientId = "01234567-89ab-cdef-0123-456789abcdef";
         var xray = CreateService(nodeId, Guid.NewGuid(), "xray # one") with
         {
             BackendType = "xray",
             BackendVersion = "26.3.27",
             ConfigSchemaVersion = 1,
             ConfigJson =
-            $$"""{"listenHost":"0.0.0.0","listenPort":24445,"clientId":"{{clientId}}","clientEmail":"client@example","flow":"xtls-rprx-vision","realityPrivateKey":"{{privateKey}}","realityPublicKey":"{{publicKey}}","shortId":"a1b2","serverName":"www.example.com","destination":"private-destination.example:443","fingerprint":"chrome"}"""
+            $$"""{"listenHost":"0.0.0.0","listenPort":24445,"flow":"xtls-rprx-vision","realityPrivateKey":"{{privateKey}}","realityPublicKey":"{{publicKey}}","shortId":"a1b2","serverName":"www.example.com","destination":"private-destination.example:443","fingerprint":"chrome"}"""
         };
         await fixture.Repository.CreateServiceAsync(hysteria, CancellationToken.None);
         await fixture.Repository.CreateServiceAsync(xray, CancellationToken.None);
         var user = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Mixed", "mixed", "hash", "User", true,
             null, null, "mixed-token", CancellationToken.None);
-        Assert.IsTrue(await fixture.Repository.BindServiceAsync(user.User.Id, hysteria.Id, CancellationToken.None));
+        Assert.IsFalse(await fixture.Repository.BindServiceAsync(user.User.Id, hysteria.Id, CancellationToken.None));
         Assert.IsTrue(await fixture.Repository.BindServiceAsync(user.User.Id, xray.Id, CancellationToken.None));
+        var clientId = (await fixture.Repository.GetServiceCredentialsAsync(xray.Id, true,
+            CancellationToken.None)).Single().Credential;
         Assert.IsTrue(await fixture.Repository.SetServicePublicEndpointAsync(nodeId,
             new ServicePublicEndpointRecord(hysteria.Id, "hy.example", 24444, "hy.example", fixture.Time.GetUtcNow()),
             CancellationToken.None));
@@ -710,20 +805,20 @@ public sealed class SqliteServerRepositoryTests
         var raw = await RenderSubscriptionAsync(fixture, "mixed-token", "raw");
         var expectedVless =
             $"vless://{clientId}@[2001:db8::10]:24445?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.example.com&fp=chrome&pbk=public-key-value&sid=a1b2&type=tcp#xray%20%23%20one";
-        StringAssert.Contains(raw, "hysteria2://hy-secret@hy.example:24444/");
+        Assert.IsFalse(raw.Contains("hysteria2://", StringComparison.Ordinal));
         StringAssert.Contains(raw, expectedVless);
         Assert.AreEqual(raw, Encoding.UTF8.GetString(Convert.FromBase64String(
             await RenderSubscriptionAsync(fixture, "mixed-token", "base64"))));
 
         var mihomo = await RenderSubscriptionAsync(fixture, "mixed-token", "mihomo");
-        StringAssert.Contains(mihomo, "type: hysteria2");
+        Assert.IsFalse(mihomo.Contains("type: hysteria2", StringComparison.Ordinal));
         StringAssert.Contains(mihomo, "type: vless");
         StringAssert.Contains(mihomo, "public-key: \"public-key-value\"");
         StringAssert.Contains(mihomo, "short-id: \"a1b2\"");
         var singbox = await RenderSubscriptionAsync(fixture, "mixed-token", "singbox");
         using var document = JsonDocument.Parse(singbox);
-        Assert.AreEqual(2, document.RootElement.GetProperty("outbounds").GetArrayLength());
-        Assert.AreEqual("public-key-value", document.RootElement.GetProperty("outbounds")[1]
+        Assert.AreEqual(1, document.RootElement.GetProperty("outbounds").GetArrayLength());
+        Assert.AreEqual("public-key-value", document.RootElement.GetProperty("outbounds")[0]
             .GetProperty("tls").GetProperty("reality").GetProperty("public_key").GetString());
 
         foreach (var output in new[] { raw, mihomo, singbox })
@@ -768,7 +863,7 @@ public sealed class SqliteServerRepositoryTests
             null, null, "ss-token", CancellationToken.None);
         foreach (var service in new[] { mihomo, singBox, malformed })
         {
-            Assert.IsTrue(await fixture.Repository.BindServiceAsync(user.User.Id, service.Id, CancellationToken.None));
+            Assert.IsFalse(await fixture.Repository.BindServiceAsync(user.User.Id, service.Id, CancellationToken.None));
             Assert.IsTrue(await fixture.Repository.SetServicePublicEndpointAsync(nodeId,
                 new ServicePublicEndpointRecord(service.Id, service == mihomo ? "mihomo.example" : "singbox.example",
                     service == mihomo ? 443 : 8443, null, fixture.Time.GetUtcNow()), CancellationToken.None));
@@ -779,34 +874,17 @@ public sealed class SqliteServerRepositoryTests
             $"ss://{Base64Url($"chacha20-ietf-poly1305:{mihomoPassword}")}@mihomo.example:443#mihomo%20ss";
         var expectedSingBox =
             $"ss://{Base64Url($"2022-blake3-aes-256-gcm:{singBoxPassword}")}@singbox.example:8443#sing-box%20ss";
-        StringAssert.Contains(raw, expectedMihomo);
-        StringAssert.Contains(raw, expectedSingBox);
-        Assert.AreEqual(2, raw.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length);
-        foreach (var uri in raw.Split('\n'))
-        {
-            var userInfo = uri[5..uri.IndexOf('@')];
-            var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(
-                userInfo.Replace('-', '+').Replace('_', '/') + new string('=', (4 - userInfo.Length % 4) % 4)));
-            StringAssert.Contains(decoded, ":");
-        }
+        Assert.AreEqual(string.Empty, raw);
 
         Assert.AreEqual(raw, Encoding.UTF8.GetString(Convert.FromBase64String(
             await RenderSubscriptionAsync(fixture, "ss-token", "base64"))));
 
         var mihomoOutput = await RenderSubscriptionAsync(fixture, "ss-token", "mihomo");
-        StringAssert.Contains(mihomoOutput, "type: ss");
-        StringAssert.Contains(mihomoOutput, "    cipher: \"chacha20-ietf-poly1305\"");
-        StringAssert.Contains(mihomoOutput, $"    password: \"{mihomoPassword}\"");
-        StringAssert.Contains(mihomoOutput, "    cipher: \"2022-blake3-aes-256-gcm\"");
-        StringAssert.Contains(mihomoOutput, $"    password: \"{singBoxPassword}\"");
-        Assert.AreEqual(2, mihomoOutput.Split("type: ss", StringSplitOptions.None).Length - 1);
-        Assert.AreEqual(2, mihomoOutput.Split("    udp: true", StringSplitOptions.None).Length - 1);
+        Assert.IsFalse(mihomoOutput.Contains("type: ss", StringComparison.Ordinal));
 
         using var singBoxDocument = JsonDocument.Parse(await RenderSubscriptionAsync(fixture, "ss-token", "singbox"));
         var outbounds = singBoxDocument.RootElement.GetProperty("outbounds");
-        Assert.AreEqual(2, outbounds.GetArrayLength());
-        AssertShadowboxOutbound(outbounds[0], "chacha20-ietf-poly1305", mihomoPassword, "mihomo.example", 443);
-        AssertShadowboxOutbound(outbounds[1], "2022-blake3-aes-256-gcm", singBoxPassword, "singbox.example", 8443);
+        Assert.AreEqual(0, outbounds.GetArrayLength());
 
         var redactedMihomo = AdminServicesEndpoints.RedactPasswords(mihomo.ConfigJson);
         var redactedSingBox = AdminServicesEndpoints.RedactPasswords(singBox.ConfigJson);
@@ -857,7 +935,7 @@ public sealed class SqliteServerRepositoryTests
         var agentId = await CreateAgentAsync(fixture, nodeId, "usage-token", "usage-secret");
         var user = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Carol", "carol", "password-hash", "User",
             true, null, null, "subscription", CancellationToken.None);
-        var service = CreateService(nodeId, Guid.NewGuid(), "usage");
+        var service = XrayService(CreateService(nodeId, Guid.NewGuid(), "usage"));
         await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
         Assert.IsTrue(await fixture.Repository.BindServiceAsync(user.User.Id, service.Id, CancellationToken.None));
         var batch = new UsageBatch(Guid.NewGuid(), fixture.Time.GetUtcNow(),
@@ -902,7 +980,7 @@ public sealed class SqliteServerRepositoryTests
         var agentId = await CreateAgentAsync(fixture, nodeId, "overflow-token", "overflow-secret");
         var user = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Eve", "eve", "password-hash", "User", true,
             null, null, "subscription-3", CancellationToken.None);
-        var service = CreateService(nodeId, Guid.NewGuid(), "overflow");
+        var service = XrayService(CreateService(nodeId, Guid.NewGuid(), "overflow"));
         await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
         Assert.IsTrue(await fixture.Repository.BindServiceAsync(user.User.Id, service.Id, CancellationToken.None));
         var first = new UsageBatch(Guid.NewGuid(), fixture.Time.GetUtcNow(),
@@ -1138,6 +1216,14 @@ public sealed class SqliteServerRepositoryTests
         id, nodeId, name, "hysteria2", "1.0", true, 2, "{\"port\":8443}",
         DateTimeOffset.Parse("2026-09-09T12:00:00+00:00"), DateTimeOffset.Parse("2026-09-09T12:00:00+00:00"));
 
+    private static ServiceInstanceRecord XrayService(ServiceInstanceRecord service) => service with
+    {
+        BackendType = "xray",
+        BackendVersion = "26.3.27",
+        ConfigSchemaVersion = 1,
+        ConfigJson = "{}"
+    };
+
     private static async Task<Guid> CreateAgentAsync(TestDatabase fixture, string token, string secret) =>
         await CreateAgentAsync(fixture, Guid.NewGuid(), token, secret);
 
@@ -1248,7 +1334,11 @@ public sealed class SqliteServerRepositoryTests
             _connectionFactory = connectionFactory;
             Time = time;
             Migrations = new SqliteMigrationRunner(connectionFactory, time);
-            Repository = new SqliteServerRepository(connectionFactory, time);
+            var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["HyPanel:Security:MasterKey"] = Convert.ToBase64String(Enumerable.Range(1, 32).Select(i => (byte)i).ToArray())
+            }).Build();
+            Repository = new SqliteServerRepository(connectionFactory, time, new ProxyCredentialProtector(configuration));
         }
 
         public FakeTimeProvider Time { get; }

@@ -1,0 +1,14 @@
+services:
+  hypanel:
+    image: ghcr.io/greepar/hypanel:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      HYPANEL_ADMIN_TOKEN: ${HYPANEL_ADMIN_TOKEN:?set HYPANEL_ADMIN_TOKEN}
+      HYPANEL_MASTER_KEY: ${HYPANEL_MASTER_KEY:?set HYPANEL_MASTER_KEY}
+    volumes:
+      - hypanel-data:/data
+
+volumes:
+  hypanel-data:

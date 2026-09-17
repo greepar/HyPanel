@@ -24,7 +24,7 @@ public interface IBackendProvider
         BackendInstanceContext instance,
         CancellationToken cancellationToken);
 
-    ValueTask<BackendTrafficSnapshot?> CollectTrafficAsync(
+    ValueTask<IReadOnlyList<BackendUserTraffic>> CollectUserTrafficAsync(
         BackendInstanceContext instance,
         CancellationToken cancellationToken);
 }
@@ -33,13 +33,14 @@ public interface IBackendProvider
 public enum BackendCapabilities
 {
     None = 0,
-    Users = 1 << 0,
+    MultiUser = 1 << 0,
     TrafficStats = 1 << 1,
     HotReload = 1 << 2,
     Logs = 1 << 3,
     VersionQuery = 1 << 4,
     MultiInbound = 1 << 5,
     ConfigValidation = 1 << 6,
+    PerUserTraffic = 1 << 7,
 }
 
 public sealed record BackendValidationResult(
@@ -70,3 +71,9 @@ public sealed record BackendHealthResult(
     bool IsHealthy,
     string? ErrorCode,
     string? ErrorMessage);
+
+public sealed record BackendUserTraffic(
+    Guid UserId,
+    long UploadBytes,
+    long DownloadBytes,
+    DateTimeOffset ObservedAt);

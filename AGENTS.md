@@ -50,9 +50,8 @@ Keep the architecture simple. HyPanel is not tied to one proxy core.
 
 The primary agent is `architect` on GPT-5.6 Sol.
 
-Two subagents exist:
+One subagent exists:
 
-- `terra` on GPT-5.6 Terra: bounded engineering that still requires meaningful reasoning.
 - `luna` on GPT-5.6 Luna: deterministic, repetitive, pattern-following work.
 
 Optimize for engineering quality per token, not the lowest possible cost.
@@ -69,18 +68,6 @@ Optimize for engineering quality per token, not the lowest possible cost.
 - Usage idempotency design.
 - Difficult multi-module debugging.
 - Architectural review, integration, and conflict resolution.
-
-### Delegate to Terra for
-
-- A bounded feature whose architecture is already decided.
-- Reconciliation logic.
-- Enrollment implementation.
-- Agent updater implementation.
-- Backend provider implementation.
-- Traffic accounting implementation.
-- Non-trivial NativeAOT/platform fixes.
-- Moderate debugging across several related files.
-- Server or Agent feature slices with clear acceptance criteria.
 
 ### Delegate to Luna for
 
@@ -101,9 +88,8 @@ Optimize for engineering quality per token, not the lowest possible cost.
 - Give a subagent only: goal, relevant paths, existing pattern, acceptance criteria, forbidden files.
 - Prefer one coherent task over many tiny calls.
 - Parallel editing is allowed only for disjoint files/modules.
-- Terra/Luna must not recursively delegate.
+- Luna must not recursively delegate.
 - If Luna finds ambiguity, it stops with a concise blocker.
-- If Terra finds an architectural issue, it reports the blocker rather than redesigning the system.
 - Review delegated work with targeted `git diff`, focused reads, build/tests; do not reread the whole repository.
 - Do not ask multiple models to solve the same task unless an earlier attempt failed.
 

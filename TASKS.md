@@ -730,3 +730,158 @@ Planned slices:
   requested to update `0.3.0 → 0.3.1`; it downloaded the Panel-cached linux-x64 asset, verified/staged/replaced and
   re-execed under the same PID with zero systemd restarts, retained Agent credentials, re-synced as `0.3.1`, reached
   `Succeeded`, and removed `.previous`. US Server was then deployed at `v0.3.1` and remained healthy.
+
+## Phase 11 — Per-user proxy identity
+
+> OP-005 remains complete and its update protocol is unchanged. Phase 11 corrects the earlier grant-only user model:
+> a binding must own a real backend identity, and capability/usage claims must reflect observable backend behavior.
+
+### HP-1100 — Clean routing and freeze per-user identity architecture
+- Owner: architect (Sol)
+- Depends on: OP-005
+- Status: DONE
+- Scope: remove Terra routing, reconcile completed update documentation, freeze credential encryption, desired-user,
+  capability and cumulative-counter semantics without changing Agent identity or update contracts.
+- Accept: only Sol owns non-mechanical implementation; Luna remains mechanical-only; docs and task state match OP-005.
+- Result: Removed `.opencode/agents/terra.md` and every active Terra routing permission; retained historical task owner
+  facts. Architect remains `home/gpt-5.6-sol`, Luna remains `home/gpt-5.6-luna`. ROADMAP no longer defers completed
+  batch Agent updates and records Phase 11 boundaries.
+
+### HP-1101 — Persist encrypted binding credentials and lifecycle
+- Owner: architect (Sol)
+- Depends on: HP-1100
+- Status: DONE
+- Scope: SQLite v9, explicit Server master-key configuration, authenticated encryption, create/revoke/rotate operations,
+  revision changes and secret-safe Admin projections.
+- Accept: no plaintext secret at rest or in logs; restart decrypts existing credentials; missing/wrong key fails safely.
+- Result: SQLite v9 stores one AES-256-GCM credential per binding with binding identity as authenticated data. A
+  persistent explicit master key is required; create, revoke, rotate, migration backfill and secret-free status APIs
+  increment desired revisions. Revoked tombstones preserve retry ownership without retaining usable access.
+
+### HP-1102 — Reconcile Xray multi-user desired state
+- Owner: architect (Sol)
+- Depends on: HP-1101
+- Status: DONE
+- Scope: additive shared desired users, eligibility filtering and deterministic Xray clients/stats/API configuration.
+- Accept: one service runs multiple distinct UUIDs; removal/rotation affects only one user.
+- Result: `ServiceDesiredState.Users` and reserved loopback `ControlPort` are additive. Xray deterministically renders
+  one VLESS/REALITY/Vision client per eligible HyPanel user and enables official StatsService policy. Disabled,
+  expired, limited, revoked and unbound users disappear without stopping the service.
+
+### HP-1103 — Collect restart-safe Xray per-user traffic
+- Owner: architect (Sol)
+- Depends on: HP-1102
+- Status: DONE
+- Scope: official Xray StatsService collection and atomic cumulative baseline plus pending-batch persistence.
+- Accept: per-user deltas survive Agent/backend restart and sync retries without double counting.
+- Result: Xray's bounded fixed `api statsquery` collector maps stable non-secret email IDs to users. Agent usage state
+  atomically persists cumulative baselines and pending batches; first traffic, sync retry, Agent restart and backend
+  counter reset are covered by regression tests and production evidence.
+
+### HP-1104 — Project per-user subscriptions and Admin UI
+- Owner: architect (Sol)
+- Depends on: HP-1101, HP-1102
+- Status: DONE
+- Scope: credential-based subscriptions, truthful support/status/usage projection and explicit rotate action.
+- Accept: two users on one Xray service receive distinct UUIDs and secrets are not shown by default.
+- Result: Subscription projection uses only the encrypted binding credential. User UI shows per-service Node/backend,
+  credential status, capability truth and user usage, supports confirmation-gated rotation, never reveals the secret,
+  and disables unsupported shared-secret grants.
+
+### HP-1105 — Phase 11 integration and production acceptance
+- Owner: architect (Sol)
+- Depends on: HP-1101 through HP-1104
+- Status: DONE
+- Scope: focused/full tests, NativeAOT Agent/Server, Web build, real Xray clients, limits, rotation and restart checks.
+- Accept: all Phase 11 ROADMAP exit criteria pass before Phase 12 Backend Release Management starts.
+- Result: Release build passed with zero warnings; Shared 21/21, Server 101/101 and Agent 142/142 tests passed (264).
+  Agent and Server NativeAOT publishes and Web build passed. On US Server + UK Agent, two users received different
+  UUIDs for one Xray 26.3.27 service and both connected concurrently through Reality. Usage increased independently;
+  limiting A removed only A while B stayed connected. Agent restart did not change totals. Rotating A invalidated its
+  old UUID, enabled its new UUID, left B unchanged, and Server restart preserved/decrypted the new credential. Browser
+  review passed at desktop/390px with truthful unsupported-backend states, no overflow and zero console messages.
+
+## Phase 12 — Backend release management
+
+### HP-1200 — Freeze controlled backend release sources and lifecycle
+- Owner: architect (Sol)
+- Depends on: HP-1105
+- Status: DONE
+- Scope: define official repositories, fixed RID asset mapping, archive extraction boundary, latest/desired/running model,
+  manual/auto policy and per-service rollback without arbitrary URLs.
+- Result: Official sources are fixed to HyNetwork/hysteria, XTLS/Xray-core, MetaCubeX/mihomo and SagerNet/sing-box.
+  Server alone accesses GitHub, extracts exactly one expected executable and republishes a raw size/SHA-verified asset.
+  `backend_version` remains desired; Agent runtime version remains running; catalog supplies latest. Updates reuse normal
+  desired-state reconciliation and last-known-good rollback, never Agent commands or remote shell.
+
+### HP-1201 — Implement upstream synchronization and runtime catalog
+- Owner: architect (Sol)
+- Depends on: HP-1200
+- Status: DONE
+- Scope: GitHub release metadata, controlled asset selection, bounded safe extraction, verified atomic cache and fallback.
+- Result: Added independent 15-minute refresh for all four official repositories, exact eight-RID mappings, stable
+  SemVer filtering, versioned runtime indexes and cache fallback. Raw/gzip/zip/tar.gz handling extracts exactly one
+  expected executable under 256 MiB, validates final redirect hosts, computes raw size/SHA256 and atomically publishes.
+  Artifact download is on demand, so routine metadata refresh does not consume hundreds of MB.
+
+### HP-1202 — Implement backend update policy and Admin API
+- Owner: architect (Sol)
+- Depends on: HP-1201
+- Status: DONE
+- Scope: SQLite policy, current/latest/desired projection and manual update-to-latest with revision-safe mutation.
+- Result: SQLite v10 adds per-service Manual/Auto policy. Existing `backend_version` is explicit Desired, runtime
+  report is Current, and catalog is Latest. Manual API caches before changing desired revision; Auto performs the same
+  preparation only after opt-in. Sync sends only desired artifacts actually used by enabled services.
+
+### HP-1203 — Harden Agent update rollback and health verification
+- Owner: architect (Sol)
+- Depends on: HP-1202
+- Status: DONE
+- Scope: validate staged binary/config, restart only target service, bounded health window and restore prior binary/config.
+- Result: Reconciliation now requires the new process to remain running and pass provider health after a bounded start
+  window. Failure restores last-known-good desired metadata/config/binary and restarts only that service. Agent reports
+  `backend_update_rolled_back`; Server transactionally restores desired version and increments revision once, preventing
+  a retry loop.
+
+### HP-1204 — Backend update UI and integration acceptance
+- Owner: architect (Sol)
+- Depends on: HP-1201 through HP-1203
+- Status: DONE
+- Scope: Service Detail versions/update action, full gates and real UK isolated update/rollback evidence.
+- Result: Service UI shows Current/Desired/Latest, confirmation-gated update and Auto toggle. Release build and Web
+  build passed; Shared 21/21, Server 106/106 and Agent 143/143 tests passed (270). Linux x64 and osx-x64 Agent/Server
+  NativeAOT passed. Live source discovery found Hysteria2 2.12.3, Xray 26.3.27, Mihomo 1.19.31 and sing-box 1.14.1.
+  On the online UK Agent, an isolated managed Hysteria2 service updated 2.12.2 → 2.12.3 from the Panel cache and
+  converged Current/Desired 2.12.3. A deliberately failing 2.12.4 binary restored 2.12.3 and Server desired revision
+  without affecting other services. Temporary acceptance resources were removed; desktop/390px UI had no overflow or
+  console warnings/errors.
+
+## Phase 13 — GHCR / Docker
+
+### HP-1300 — Containerize the NativeAOT Server
+- Owner: architect (Sol)
+- Depends on: HP-1204
+- Status: DONE
+- Scope: `/data` layout, non-root minimal runtime, 8080 listener, health check and amd64/arm64 image contexts.
+- Result: Official .NET 10 Alpine AOT SDK builds the Server in a throwaway stage; final runtime-deps image is 19.7 MB,
+  runs as 10001:10001, contains only `HyPanel.Server` and `libe_sqlite3.so` under `/app`, has no dotnet/SDK/compiler,
+  listens on 8080 and reports healthy. `/data` owns SQLite plus release caches and persisted an API-created Node across
+  container replacement. Cross-linked macOS musl output was explicitly rejected after real OpenSSL startup failure.
+
+### HP-1301 — Publish multi-architecture GHCR images
+- Owner: architect (Sol)
+- Depends on: HP-1300
+- Status: IMPLEMENTED — RELEASE RUN PENDING
+- Scope: release workflow manifest list and `latest`, version and `sha-*` tags.
+- Result: Native amd64 and `ubuntu-24.04-arm` jobs publish architecture tags, followed by a manifest job producing
+  version, latest and sha tags. No QEMU compiler execution is used in CI. actionlint 1.7.7 passes.
+
+### HP-1302 — Container runtime acceptance
+- Owner: architect (Sol)
+- Depends on: HP-1300, HP-1301
+- Status: BLOCKED — ARM RUNNER / GHCR RELEASE REQUIRED
+- Scope: actionlint, local image build, non-root/runtime-content inspection, health and volume persistence restart.
+- Evidence: amd64 build/runtime/content/health/persistence and Compose validation pass. Local arm64 AOT cannot be
+  accepted on this x86_64 host: QEMU `ilc` crashed and host clang lacks an aarch64 linker. The workflow intentionally
+  uses a native arm64 runner; multi-arch manifest and GHCR pull must be verified by the next pushed release before
+  Phase 13 is DONE. No production verification is claimed yet.

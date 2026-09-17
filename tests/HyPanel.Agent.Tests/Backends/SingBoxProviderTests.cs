@@ -126,8 +126,8 @@ public sealed class SingBoxProviderTests
     }
 
     [TestMethod]
-    public async Task CollectTrafficAsync_ReturnsNull() =>
-        Assert.IsNull(await provider.CollectTrafficAsync(CreateInstanceContext("/tmp", "/tmp/sing-box", "/tmp/config.json"), CancellationToken.None));
+    public async Task CollectUserTrafficAsync_ReturnsEmpty() =>
+        Assert.AreEqual(0, (await provider.CollectUserTrafficAsync(CreateInstanceContext("/tmp", "/tmp/sing-box", "/tmp/config.json"), CancellationToken.None)).Count);
 
     private static ServiceDesiredState CreateDesiredState(int schemaVersion = 1, string? configJson = null) =>
         new(Guid.NewGuid(), "test", "sing-box", "1.14.0", true, schemaVersion, configJson ?? CreateConfigJson());

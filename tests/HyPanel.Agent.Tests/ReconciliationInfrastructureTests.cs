@@ -182,6 +182,34 @@ public sealed class ReconciliationInfrastructureTests
     }
 
     [TestMethod]
+    public async Task ApplyAsync_UpdatedBackendExitsDuringHealthWindow_RestoresLastKnownGoodService()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("This process assertion uses Unix test binaries.");
+        await using var fixture = await ReconcilerFixture.CreateAsync(dataDirectory, new FakeProvider());
+        var service = Service("rollback", "tcp");
+        var initial = Desired(1, [service]);
+        Assert.IsTrue((await fixture.Reconciler.ApplyAsync(initial, fixture.Credentials, CancellationToken.None)).Succeeded);
+
+        var updatedService = service with { BackendVersion = "2.0.0", ConfigJson = "exit" };
+        var failed = new NodeDesiredState(2, [updatedService],
+        [
+            Artifact(ReconcilerFixture.ArtifactPayload),
+            Artifact(ReconcilerFixture.ArtifactPayload) with { Version = "2.0.0" }
+        ]);
+        var result = await fixture.Reconciler.ApplyAsync(failed, fixture.Credentials, CancellationToken.None);
+        var saved = await fixture.StateStore.LoadAsync(CancellationToken.None);
+        var metadata = await fixture.InstanceStore.TryLoadAsync(service.ServiceId, CancellationToken.None);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(1L, saved.AppliedRevision);
+        Assert.AreEqual("tcp", metadata!.DesiredState.ConfigJson);
+        Assert.AreEqual(ServiceRuntimeStatus.Running, fixture.Supervisor.GetStatus(service.ServiceId).Status);
+        var runtime = fixture.Reconciler.GetRuntimeStates().Single(item => item.ServiceId == service.ServiceId);
+        Assert.AreEqual("1.0.0", runtime.BackendVersion);
+        Assert.AreEqual("backend_update_rolled_back", runtime.ErrorCode);
+    }
+
+    [TestMethod]
     public async Task ApplyAsync_RemovedService_StopsProcessAndDeletesManagedDirectory()
     {
         if (OperatingSystem.IsWindows())
@@ -262,21 +290,24 @@ public sealed class ReconciliationInfrastructureTests
         public ValueTask<RenderedBackendConfig> RenderConfigAsync(ServiceDesiredState desiredState,
             CancellationToken cancellationToken)
         {
-            var content = Encoding.UTF8.GetBytes($"{{\"service\":\"{desiredState.Name}\"}}");
+            var content = Encoding.UTF8.GetBytes($"{{\"service\":\"{desiredState.Name}\",\"config\":\"{desiredState.ConfigJson}\"}}");
             return ValueTask.FromResult(new RenderedBackendConfig("config.json", content,
                 Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant()));
         }
 
         public ValueTask<BackendProcessSpec> CreateProcessSpecAsync(BackendInstanceContext instance,
             CancellationToken cancellationToken) =>
-            ValueTask.FromResult(new BackendProcessSpec("/bin/sleep", ["60"], instance.InstanceDirectory,
-                new Dictionary<string, string>()));
+            ValueTask.FromResult(instance.DesiredState.ConfigJson == "exit"
+                ? new BackendProcessSpec("/usr/bin/false", [], instance.InstanceDirectory,
+                    new Dictionary<string, string>())
+                : new BackendProcessSpec("/bin/sleep", ["60"], instance.InstanceDirectory,
+                    new Dictionary<string, string>()));
 
         public ValueTask<BackendHealthResult> CheckHealthAsync(BackendInstanceContext instance,
             CancellationToken cancellationToken) => ValueTask.FromResult(new BackendHealthResult(true, null, null));
 
-        public ValueTask<BackendTrafficSnapshot?> CollectTrafficAsync(BackendInstanceContext instance,
-            CancellationToken cancellationToken) => ValueTask.FromResult<BackendTrafficSnapshot?>(null);
+        public ValueTask<IReadOnlyList<BackendUserTraffic>> CollectUserTrafficAsync(BackendInstanceContext instance,
+            CancellationToken cancellationToken) => ValueTask.FromResult<IReadOnlyList<BackendUserTraffic>>([]);
     }
 
     private sealed class ReconcilerFixture : IAsyncDisposable
@@ -321,8 +352,10 @@ public sealed class ReconciliationInfrastructureTests
             var stateStore = new AgentStateStore(options);
             var instanceStore = new BackendInstanceStore(options);
             var supervisor = new BackendProcessSupervisor(NullLogger<BackendProcessSupervisor>.Instance);
+            var usageStore = new AgentUsageStateStore(options);
+            await usageStore.LoadAsync(CancellationToken.None);
             var reconciler = new ServiceReconciler(new BackendProviderRegistry([provider]), binaryManager,
-                instanceStore, supervisor, stateStore, TimeProvider.System, NullLogger<ServiceReconciler>.Instance);
+                instanceStore, supervisor, stateStore, usageStore, TimeProvider.System, NullLogger<ServiceReconciler>.Instance);
             return new ReconcilerFixture(client, handler, credentials, stateStore, instanceStore, supervisor,
                 reconciler);
         }

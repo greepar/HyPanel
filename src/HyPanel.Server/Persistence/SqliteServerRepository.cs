@@ -2,11 +2,13 @@ namespace HyPanel.Server.Persistence;
 
 using System.Security.Cryptography;
 using HyPanel.Shared.Contracts;
+using HyPanel.Server.Security;
 using Microsoft.Data.Sqlite;
 
 internal sealed partial class SqliteServerRepository(
     SqliteConnectionFactory connectionFactory,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    ProxyCredentialProtector credentialProtector)
 {
     public async Task<NodeRecord> CreateNodeAsync(Guid id, string displayName, CancellationToken cancellationToken)
     {
@@ -543,7 +545,7 @@ internal sealed partial class SqliteServerRepository(
         await using var connection = await connectionFactory.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-                              SELECT s.id, s.node_id, s.name, s.backend_type, s.backend_version, s.enabled, s.config_schema_version, s.config_json, s.created_at_utc, s.updated_at_utc,
+                               SELECT s.id, s.node_id, s.name, s.backend_type, s.backend_version, s.enabled, s.config_schema_version, s.config_json, s.created_at_utc, s.updated_at_utc, s.backend_update_policy,
                                      r.service_id, r.status, r.backend_version, r.applied_config_sha256, r.traffic_upload_bytes, r.traffic_download_bytes, r.traffic_observed_at_utc, r.observed_at_utc, r.error_code, r.error_message
                               FROM service_instances s
                               LEFT JOIN service_runtime_states r ON r.service_id = s.id
@@ -557,17 +559,18 @@ internal sealed partial class SqliteServerRepository(
             var service = new ServiceInstanceRecord(SqliteValue.ToGuid(reader.GetString(0)),
                 SqliteValue.ToGuid(reader.GetString(1)), reader.GetString(2), reader.GetString(3), reader.GetString(4),
                 reader.GetInt64(5) != 0, reader.GetInt32(6), reader.GetString(7),
-                SqliteValue.ToDateTimeOffset(reader.GetString(8)), SqliteValue.ToDateTimeOffset(reader.GetString(9)));
-            ServiceRuntimeStateRecord? runtime = reader.IsDBNull(10)
+                SqliteValue.ToDateTimeOffset(reader.GetString(8)), SqliteValue.ToDateTimeOffset(reader.GetString(9)),
+                reader.GetString(10));
+            ServiceRuntimeStateRecord? runtime = reader.IsDBNull(11)
                 ? null
-                : new ServiceRuntimeStateRecord(SqliteValue.ToGuid(reader.GetString(10)), reader.GetInt32(11),
-                    reader.IsDBNull(12) ? null : reader.GetString(12),
-                    reader.IsDBNull(13) ? null : reader.GetString(13), reader.IsDBNull(14) ? null : reader.GetInt64(14),
-                    reader.IsDBNull(15) ? null : reader.GetInt64(15),
-                    reader.IsDBNull(16) ? null : SqliteValue.ToDateTimeOffset(reader.GetString(16)),
-                    SqliteValue.ToDateTimeOffset(reader.GetString(17)),
-                    reader.IsDBNull(18) ? null : reader.GetString(18),
-                    reader.IsDBNull(19) ? null : reader.GetString(19));
+                : new ServiceRuntimeStateRecord(SqliteValue.ToGuid(reader.GetString(11)), reader.GetInt32(12),
+                    reader.IsDBNull(13) ? null : reader.GetString(13),
+                    reader.IsDBNull(14) ? null : reader.GetString(14), reader.IsDBNull(15) ? null : reader.GetInt64(15),
+                    reader.IsDBNull(16) ? null : reader.GetInt64(16),
+                    reader.IsDBNull(17) ? null : SqliteValue.ToDateTimeOffset(reader.GetString(17)),
+                    SqliteValue.ToDateTimeOffset(reader.GetString(18)),
+                    reader.IsDBNull(19) ? null : reader.GetString(19),
+                    reader.IsDBNull(20) ? null : reader.GetString(20));
             services.Add(new ServiceInstanceWithRuntimeRecord(service, runtime));
         }
 
@@ -803,7 +806,7 @@ internal sealed partial class SqliteServerRepository(
             foreach (var table in new[]
                      {
                          "agent_commands",
-                         "usage_totals", "user_service_bindings", "service_public_endpoints",
+                          "usage_totals", "user_service_credentials", "user_service_bindings", "service_public_endpoints",
                          "service_runtime_states"
                      })
             {
@@ -870,13 +873,82 @@ internal sealed partial class SqliteServerRepository(
         }
     }
 
+    public async Task<BackendUpdateTargetRecord?> GetBackendUpdateTargetAsync(Guid nodeId, Guid serviceId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT s.node_id,s.id,s.backend_type,s.backend_version,a.reported_platform,s.backend_update_policy
+            FROM service_instances s JOIN agents a ON a.node_id=s.node_id
+            WHERE s.node_id=@node AND s.id=@service;
+            """;
+        command.Parameters.AddWithValue("@node", nodeId.ToString("D"));
+        command.Parameters.AddWithValue("@service", serviceId.ToString("D"));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) && !reader.IsDBNull(4)
+            ? new BackendUpdateTargetRecord(SqliteValue.ToGuid(reader.GetString(0)),
+                SqliteValue.ToGuid(reader.GetString(1)), reader.GetString(2), reader.GetString(3), reader.GetString(4),
+                reader.GetString(5)) : null;
+    }
+
+    public async Task<long?> RequestBackendUpdateAsync(Guid nodeId, Guid serviceId, string version,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        await using var update = connection.CreateCommand();
+        update.Transaction = transaction;
+        update.CommandText = "UPDATE service_instances SET backend_version=@version,updated_at_utc=@now WHERE id=@service AND node_id=@node;";
+        update.Parameters.AddWithValue("@version", version);
+        update.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+        update.Parameters.AddWithValue("@service", serviceId.ToString("D"));
+        update.Parameters.AddWithValue("@node", nodeId.ToString("D"));
+        if (await update.ExecuteNonQueryAsync(cancellationToken) != 1) { await transaction.RollbackAsync(cancellationToken); return null; }
+        var revision = await IncrementRevisionAsync(connection, transaction, nodeId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return revision;
+    }
+
+    public async Task<bool> SetBackendUpdatePolicyAsync(Guid nodeId, Guid serviceId, string policy,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE service_instances SET backend_update_policy=@policy,updated_at_utc=@now WHERE id=@service AND node_id=@node;";
+        command.Parameters.AddWithValue("@policy", policy);
+        command.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+        command.Parameters.AddWithValue("@service", serviceId.ToString("D"));
+        command.Parameters.AddWithValue("@node", nodeId.ToString("D"));
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+    }
+
+    public async Task<IReadOnlyList<BackendUpdateTargetRecord>> GetAutomaticBackendUpdateTargetsAsync(
+        CancellationToken cancellationToken)
+    {
+        var targets = new List<BackendUpdateTargetRecord>();
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT s.node_id,s.id,s.backend_type,s.backend_version,a.reported_platform,s.backend_update_policy
+            FROM service_instances s JOIN agents a ON a.node_id=s.node_id
+            WHERE s.backend_update_policy='Auto' AND a.reported_platform IS NOT NULL;
+            """;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            targets.Add(new BackendUpdateTargetRecord(SqliteValue.ToGuid(reader.GetString(0)),
+                SqliteValue.ToGuid(reader.GetString(1)), reader.GetString(2), reader.GetString(3), reader.GetString(4),
+                reader.GetString(5)));
+        return targets;
+    }
+
     public async Task<(long Revision, IReadOnlyList<ServiceInstanceRecord> Services)?> GetDesiredStateForAgentAsync(
         Guid agentId, CancellationToken cancellationToken)
     {
         await using var connection = await connectionFactory.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-                              SELECT n.desired_revision, s.id, s.node_id, s.name, s.backend_type, s.backend_version, s.enabled, s.config_schema_version, s.config_json, s.created_at_utc, s.updated_at_utc
+                               SELECT n.desired_revision, s.id, s.node_id, s.name, s.backend_type, s.backend_version, s.enabled, s.config_schema_version, s.config_json, s.created_at_utc, s.updated_at_utc, s.backend_update_policy
                               FROM agents a INNER JOIN nodes n ON n.id = a.node_id LEFT JOIN service_instances s ON s.node_id = n.id
                               WHERE a.id = @agentId ORDER BY s.created_at_utc, s.id;
                               """;
@@ -892,10 +964,47 @@ internal sealed partial class SqliteServerRepository(
                     SqliteValue.ToGuid(reader.GetString(2)), reader.GetString(3), reader.GetString(4),
                     reader.GetString(5), reader.GetInt64(6) != 0, reader.GetInt32(7), reader.GetString(8),
                     SqliteValue.ToDateTimeOffset(reader.GetString(9)),
-                    SqliteValue.ToDateTimeOffset(reader.GetString(10))));
+                    SqliteValue.ToDateTimeOffset(reader.GetString(10)), reader.GetString(11)));
         } while (await reader.ReadAsync(cancellationToken));
 
         return (revision, services);
+    }
+
+    public async Task RefreshCredentialEligibilityAsync(Guid agentId, CancellationToken cancellationToken)
+    {
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        var now = SqliteValue.ToUtcText(timeProvider.GetUtcNow());
+        await using var update = connection.CreateCommand();
+        update.Transaction = transaction;
+        update.CommandText = """
+            UPDATE user_service_credentials
+            SET desired_eligible = CASE WHEN status='Active'
+              AND EXISTS (SELECT 1 FROM users u WHERE u.id=user_id AND u.enabled=1
+                AND (u.expires_at_utc IS NULL OR u.expires_at_utc>@now)
+                AND (u.traffic_limit_bytes IS NULL OR COALESCE((SELECT SUM(t.upload_bytes+t.download_bytes) FROM usage_totals t WHERE t.user_id=u.id),0)<u.traffic_limit_bytes))
+              THEN 1 ELSE 0 END,
+              updated_at_utc=@now
+            WHERE service_id IN (
+              SELECT s.id FROM service_instances s JOIN agents a ON a.node_id=s.node_id WHERE a.id=@agent)
+              AND desired_eligible <> CASE WHEN status='Active'
+                AND EXISTS (SELECT 1 FROM users u WHERE u.id=user_id AND u.enabled=1
+                  AND (u.expires_at_utc IS NULL OR u.expires_at_utc>@now)
+                  AND (u.traffic_limit_bytes IS NULL OR COALESCE((SELECT SUM(t.upload_bytes+t.download_bytes) FROM usage_totals t WHERE t.user_id=u.id),0)<u.traffic_limit_bytes))
+                THEN 1 ELSE 0 END;
+            """;
+        update.Parameters.AddWithValue("@agent", agentId.ToString("D"));
+        update.Parameters.AddWithValue("@now", now);
+        var changed = await update.ExecuteNonQueryAsync(cancellationToken);
+        if (changed > 0)
+        {
+            await using var revision = connection.CreateCommand();
+            revision.Transaction = transaction;
+            revision.CommandText = "UPDATE nodes SET desired_revision=desired_revision+1 WHERE id=(SELECT node_id FROM agents WHERE id=@agent);";
+            revision.Parameters.AddWithValue("@agent", agentId.ToString("D"));
+            await revision.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<AgentCommandRecord>> GetActiveCommandsAsync(Guid agentId,
@@ -1049,6 +1158,30 @@ internal sealed partial class SqliteServerRepository(
     private static async Task UpsertServiceRuntimeStateAsync(SqliteConnection connection, SqliteTransaction transaction,
         Guid agentId, ServiceRuntimeState state, CancellationToken cancellationToken)
     {
+        if (state.ErrorCode == "backend_update_rolled_back" && state.BackendVersion is not null)
+        {
+            await using var rollback = connection.CreateCommand();
+            rollback.Transaction = transaction;
+            rollback.CommandText = """
+                UPDATE service_instances SET backend_version=@version,updated_at_utc=@now
+                WHERE id=@serviceId AND backend_version<>@version
+                  AND node_id=(SELECT node_id FROM agents WHERE id=@agentId)
+                RETURNING node_id;
+                """;
+            rollback.Parameters.AddWithValue("@version", state.BackendVersion);
+            rollback.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(state.ObservedAt));
+            rollback.Parameters.AddWithValue("@serviceId", state.ServiceId.ToString("D"));
+            rollback.Parameters.AddWithValue("@agentId", agentId.ToString("D"));
+            var nodeId = await rollback.ExecuteScalarAsync(cancellationToken) as string;
+            if (nodeId is not null)
+            {
+                await using var revision = connection.CreateCommand();
+                revision.Transaction = transaction;
+                revision.CommandText = "UPDATE nodes SET desired_revision=desired_revision+1 WHERE id=@nodeId;";
+                revision.Parameters.AddWithValue("@nodeId", nodeId);
+                await revision.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
@@ -1085,8 +1218,9 @@ internal sealed partial class SqliteServerRepository(
             valid.CommandText = """
                                 SELECT 1 FROM service_instances s
                                 INNER JOIN agents a ON a.node_id = s.node_id
-                                INNER JOIN user_service_bindings b ON b.service_id = s.id
-                                WHERE a.id = @agentId AND s.id = @serviceId AND b.user_id = @userId;
+                                WHERE a.id = @agentId AND s.id = @serviceId
+                                  AND (EXISTS (SELECT 1 FROM user_service_bindings b WHERE b.service_id=s.id AND b.user_id=@userId)
+                                    OR EXISTS (SELECT 1 FROM user_service_credentials k WHERE k.service_id=s.id AND k.user_id=@userId));
                                 """;
             valid.Parameters.AddWithValue("@agentId", agentId.ToString("D"));
             valid.Parameters.AddWithValue("@serviceId", record.ServiceId.ToString("D"));

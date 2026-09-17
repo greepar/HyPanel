@@ -91,7 +91,6 @@ internal static class SubscriptionEndpoints
             using var document = JsonDocument.Parse(service.ConfigJson);
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object ||
-                !TryString(root, "clientId", out var clientId) ||
                 !TryString(root, "flow", out var flow) ||
                 !TryString(root, "realityPublicKey", out var publicKey) ||
                 !TryString(root, "shortId", out var shortId) ||
@@ -107,8 +106,8 @@ internal static class SubscriptionEndpoints
                 Query("sid", shortId), Query("type", "tcp")
             });
             var uri =
-                $"vless://{Uri.EscapeDataString(clientId)}@{host}:{endpoint.Port}?{query}#{Uri.EscapeDataString(service.Name)}";
-            return new XrayProxy(service.Name, endpoint.Host, endpoint.Port, clientId, flow, serverName, fingerprint,
+                $"vless://{Uri.EscapeDataString(service.Credential)}@{host}:{endpoint.Port}?{query}#{Uri.EscapeDataString(service.Name)}";
+            return new XrayProxy(service.Name, endpoint.Host, endpoint.Port, service.Credential, flow, serverName, fingerprint,
                 publicKey, shortId, uri);
         }
         catch (JsonException)

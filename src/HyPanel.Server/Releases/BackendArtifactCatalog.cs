@@ -3,104 +3,137 @@ namespace HyPanel.Server.Releases;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using HyPanel.Shared.Contracts;
-using HyPanel.Shared.Serialization;
+using HyPanel.Shared.Versioning;
 
 internal sealed class BackendArtifactCatalog
 {
-    private static readonly string[] SupportedRids =
-    [
-        "win-x64", "win-arm64", "osx-x64", "osx-arm64",
-        "linux-x64", "linux-arm64", "linux-musl-x64", "linux-musl-arm64"
-    ];
-
-    private readonly Dictionary<string, BackendArtifact> _assetsByFileName = new(StringComparer.Ordinal);
+    private Snapshot snapshot = new([], [], []);
 
     public BackendArtifactCatalog(IConfiguration configuration)
     {
         var configuredDirectory = configuration["HyPanel:BackendReleasesDirectory"];
-        ReleasesDirectory = Path.GetFullPath(
-            string.IsNullOrWhiteSpace(configuredDirectory)
-                ? Path.Combine(Environment.CurrentDirectory, "backend-releases")
-                : configuredDirectory,
+        ReleasesDirectory = Path.GetFullPath(string.IsNullOrWhiteSpace(configuredDirectory)
+            ? Path.Combine(ServerDataDirectory.Resolve(configuration), "backend-releases") : configuredDirectory,
             Environment.CurrentDirectory);
-
-        var manifestPath = Path.Combine(ReleasesDirectory, "manifest.json");
-        if (!File.Exists(manifestPath))
-        {
-            return;
-        }
-
-        using var stream = File.OpenRead(manifestPath);
-        Manifest = JsonSerializer.Deserialize(stream,
-                       BackendArtifactManifestJsonContext.Default.BackendArtifactManifest)
-                   ?? throw new InvalidOperationException("Backend artifact manifest must not be null.");
-        Validate(Manifest);
-        foreach (var asset in Manifest.Assets)
-        {
-            _assetsByFileName.Add(asset.FileName, asset);
-        }
+        Reload();
     }
 
     public string ReleasesDirectory { get; }
+    public BackendArtifactManifest? Manifest { get; private set; }
 
-    public BackendArtifactManifest? Manifest { get; }
+    public IReadOnlyList<BackendArtifact> GetArtifacts(string rid) =>
+        Volatile.Read(ref snapshot).Artifacts.Where(asset => asset.Rid == rid).ToArray();
 
-    public IReadOnlyList<BackendArtifact> GetArtifacts(string platform) =>
-        Manifest is null ? [] : Manifest.Assets.Where(asset => asset.Rid == platform).ToArray();
+    public string? GetLatestVersion(string backendType) =>
+        Volatile.Read(ref snapshot).LatestVersions.TryGetValue(backendType, out var version) ? version : null;
+
+    public BackendReleaseIndex? GetRelease(string backendType, string version) =>
+        Volatile.Read(ref snapshot).Releases.TryGetValue(Key(backendType, version), out var release) ? release : null;
+
+    public BackendArtifact? FindArtifact(string backendType, string version, string rid) =>
+        Volatile.Read(ref snapshot).Artifacts.SingleOrDefault(asset => asset.BackendType == backendType
+            && asset.Version == version && asset.Rid == rid);
 
     public bool TryGetAssetPath(string fileName, out string path)
     {
         path = string.Empty;
-        if (!_assetsByFileName.ContainsKey(fileName))
-        {
-            return false;
-        }
-
+        if (!Volatile.Read(ref snapshot).FileNames.Contains(fileName)) return false;
         path = Path.Combine(ReleasesDirectory, fileName);
         return File.Exists(path);
     }
 
-    private static void Validate(BackendArtifactManifest manifest)
+    public void Reload()
     {
-        if (manifest.SchemaVersion != 1 || !IsText(manifest.Version) || manifest.Assets is null)
+        if (!Directory.Exists(ReleasesDirectory)) return;
+        Manifest = null;
+        var releases = new Dictionary<string, BackendReleaseIndex>(StringComparer.Ordinal);
+        var artifacts = new List<BackendArtifact>();
+        var legacyPath = Path.Combine(ReleasesDirectory, "manifest.json");
+        if (File.Exists(legacyPath))
         {
-            throw new InvalidOperationException("Backend artifact manifest is invalid.");
+            using var stream = File.OpenRead(legacyPath);
+            var legacy = JsonSerializer.Deserialize(stream,
+                BackendArtifactManifestJsonContext.Default.BackendArtifactManifest)
+                ?? throw new InvalidOperationException("Backend artifact manifest must not be null.");
+            ValidateLegacy(legacy);
+            Manifest = legacy;
+            artifacts.AddRange(legacy.Assets);
         }
+        foreach (var path in Directory.EnumerateFiles(ReleasesDirectory, "release-*.json"))
+        {
+            using var stream = File.OpenRead(path);
+            var release = JsonSerializer.Deserialize(stream,
+                BackendArtifactManifestJsonContext.Default.BackendReleaseIndex)
+                ?? throw new InvalidOperationException("Backend release index must not be null.");
+            ValidateRelease(release);
+            releases[Key(release.BackendType, release.Version)] = release;
+            artifacts.AddRange(release.Artifacts.Where(asset =>
+                File.Exists(Path.Combine(ReleasesDirectory, asset.FileName))));
+        }
+        var latest = releases.Values.GroupBy(item => item.BackendType, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key,
+                group => group.MaxBy(item => SemanticVersion.Parse(item.Version))!.Version, StringComparer.Ordinal);
+        Volatile.Write(ref snapshot, new Snapshot(releases, latest,
+            artifacts.GroupBy(item => $"{item.BackendType}\n{item.Version}\n{item.Rid}", StringComparer.Ordinal)
+                .Select(group => group.Last()).ToArray()));
+    }
 
+    internal static void ValidateRelease(BackendReleaseIndex release)
+    {
+        if (release.SchemaVersion != 1 || !BackendReleaseSources.IsBackendType(release.BackendType)
+            || !SemanticVersion.TryParse(release.Version, out _) || release.PublishedAt.Offset != TimeSpan.Zero
+            || release.SourceAssets is null || release.Artifacts is null)
+            throw new InvalidOperationException("Backend release index is invalid.");
+        var sourceRids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var source in release.SourceAssets)
+            if (!ReleaseCatalog.SupportedRids.Contains(source.Rid, StringComparer.Ordinal) || !sourceRids.Add(source.Rid)
+                || !ReleaseCatalog.IsBasename(source.AssetName) || !Uri.TryCreate(source.DownloadUrl, UriKind.Absolute, out var uri)
+                || uri.Scheme != Uri.UriSchemeHttps || uri.Host != "github.com" && uri.Host != "objects.githubusercontent.com")
+                throw new InvalidOperationException("Backend release source asset is invalid.");
+        foreach (var artifact in release.Artifacts)
+            ValidateArtifact(artifact, release.BackendType, release.Version);
+    }
+
+    internal static void ValidateArtifact(BackendArtifact artifact, string backendType, string version)
+    {
+        if (artifact.BackendType != backendType || artifact.Version != version
+            || !ReleaseCatalog.SupportedRids.Contains(artifact.Rid, StringComparer.Ordinal)
+            || !ReleaseCatalog.IsBasename(artifact.FileName) || !ReleaseCatalog.IsSha256(artifact.Sha256)
+            || artifact.Size <= 0)
+            throw new InvalidOperationException("Backend artifact is invalid.");
+    }
+
+    private static void ValidateLegacy(BackendArtifactManifest manifest)
+    {
+        if (manifest.SchemaVersion != 1 || manifest.Assets is null) throw new InvalidOperationException("Backend artifact manifest is invalid.");
         var combinations = new HashSet<string>(StringComparer.Ordinal);
         var fileNames = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var asset in manifest.Assets)
+        foreach (var artifact in manifest.Assets)
         {
-            if (asset is null || asset.BackendType is not ("hysteria2" or "xray" or "mihomo" or "sing-box") || !IsText(asset.Version)
-                || !SupportedRids.Contains(asset.Rid, StringComparer.Ordinal) || !IsBasename(asset.FileName)
-                || !fileNames.Add(asset.FileName) || !IsLowercaseSha256(asset.Sha256) || asset.Size <= 0
-                || !combinations.Add($"{asset.BackendType}\n{asset.Version}\n{asset.Rid}"))
-            {
-                throw new InvalidOperationException("Backend artifact manifest contains an invalid asset.");
-            }
+            if (!BackendReleaseSources.IsBackendType(artifact.BackendType)
+                || !combinations.Add($"{artifact.BackendType}\n{artifact.Version}\n{artifact.Rid}")
+                || !fileNames.Add(artifact.FileName))
+                throw new InvalidOperationException("Backend artifact manifest contains a duplicate or unsupported asset.");
+            ValidateArtifact(artifact, artifact.BackendType, artifact.Version);
         }
     }
 
-    private static bool IsText(string? value) =>
-        !string.IsNullOrWhiteSpace(value) && value.All(character => !char.IsControl(character));
-
-    private static bool IsBasename(string? fileName) => !string.IsNullOrWhiteSpace(fileName) &&
-                                                        fileName == Path.GetFileName(fileName)
-                                                        && fileName is not "." and not ".." &&
-                                                        !fileName.Contains('/') && !fileName.Contains('\\') &&
-                                                        !fileName.Contains('\0');
-
-    private static bool IsLowercaseSha256(string? hash) => hash is { Length: 64 } &&
-                                                           hash.All(character =>
-                                                               (character is >= '0' and <= '9') ||
-                                                               (character is >= 'a' and <= 'f'));
+    private static string Key(string backendType, string version) => backendType + "\n" + version;
+    private sealed record Snapshot(Dictionary<string, BackendReleaseIndex> Releases,
+        Dictionary<string, string> LatestVersions, IReadOnlyList<BackendArtifact> Artifacts)
+    {
+        public HashSet<string> FileNames { get; } = Artifacts.Select(item => item.FileName).ToHashSet(StringComparer.Ordinal);
+    }
 }
 
-internal sealed record BackendArtifactManifest(
-    int SchemaVersion,
-    string Version,
-    IReadOnlyList<BackendArtifact> Assets);
+internal sealed record BackendReleaseIndex(int SchemaVersion, string BackendType, string Version,
+    DateTimeOffset PublishedAt, IReadOnlyList<BackendSourceAsset> SourceAssets,
+    IReadOnlyList<BackendArtifact> Artifacts);
+internal sealed record BackendSourceAsset(string Rid, string AssetName, string DownloadUrl);
+internal sealed record BackendArtifactManifest(int SchemaVersion, string Version, IReadOnlyList<BackendArtifact> Assets);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(BackendArtifactManifest))]
+[JsonSerializable(typeof(BackendReleaseIndex))]
+[JsonSerializable(typeof(BackendSourceAsset[]))]
 internal sealed partial class BackendArtifactManifestJsonContext : JsonSerializerContext;

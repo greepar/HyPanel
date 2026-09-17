@@ -6,6 +6,7 @@ using System.Threading.RateLimiting;
 using HyPanel.Server.Endpoints;
 using HyPanel.Server.Persistence;
 using HyPanel.Server.Releases;
+using HyPanel.Server.Security;
 using HyPanel.Shared.Serialization;
 using Microsoft.AspNetCore.HttpOverrides;
 
@@ -29,6 +30,7 @@ public static class Program
         builder.Services.AddSingleton<AgentAuthentication>();
         builder.Services.AddSingleton<UserAuthentication>();
         builder.Services.AddSingleton<PasswordService>();
+        builder.Services.AddSingleton<ProxyCredentialProtector>();
         builder.Services.AddSingleton<SqliteConnectionFactory>();
         builder.Services.AddSingleton<SqliteMigrationRunner>();
         builder.Services.AddSingleton<SqliteServerRepository>();
@@ -38,6 +40,9 @@ public static class Program
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = true });
         builder.Services.AddHostedService<ReleaseSyncWorker>();
         builder.Services.AddSingleton<BackendArtifactCatalog>();
+        builder.Services.AddHttpClient("backend-release-sync", client => client.Timeout = TimeSpan.FromMinutes(10));
+        builder.Services.AddSingleton<BackendReleaseSyncWorker>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<BackendReleaseSyncWorker>());
         builder.Services.AddSingleton<InstallCodeService>();
         builder.Services.AddRateLimiter(options => options.AddPolicy("install-code", context =>
             RateLimitPartition.GetFixedWindowLimiter(
@@ -51,6 +56,7 @@ public static class Program
                 })));
 
         var app = builder.Build();
+        Directory.CreateDirectory(ServerDataDirectory.Resolve(app.Configuration));
 
         app.UseForwardedHeaders();
         app.UseRateLimiter();
@@ -58,7 +64,10 @@ public static class Program
         _ = app.Services.GetRequiredService<AdminTokenAuthentication>();
         _ = app.Services.GetRequiredService<ReleaseCatalog>();
         _ = app.Services.GetRequiredService<BackendArtifactCatalog>();
+        _ = app.Services.GetRequiredService<ProxyCredentialProtector>();
         await app.Services.GetRequiredService<SqliteMigrationRunner>().MigrateAsync(CancellationToken.None);
+        await app.Services.GetRequiredService<SqliteServerRepository>()
+            .InitializeProxyCredentialsAsync(CancellationToken.None);
 
         app.MapGet("/health", static () =>
             Results.Json(HealthResponse.Instance, HealthJsonSerializerContext.Default.HealthResponse));

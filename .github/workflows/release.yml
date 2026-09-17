@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   build:
@@ -105,3 +106,79 @@ jobs:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', inputs.version) }}
           name: HyPanel ${{ inputs.version || github.ref_name }}
           files: assembled/*
+
+  container-build:
+    name: Build GHCR ${{ matrix.arch }}
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { arch: amd64, platform: linux/amd64, runner: ubuntu-latest }
+          - { arch: arm64, platform: linux/arm64, runner: ubuntu-24.04-arm }
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve image version
+        id: image-version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$REF_TYPE" == "tag" ]]; then version="${REF_NAME#v}"; else version="$INPUT_VERSION"; fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          platforms: ${{ matrix.platform }}
+          build-args: VERSION=${{ steps.image-version.outputs.version }}
+          push: true
+          tags: ghcr.io/greepar/hypanel:${{ steps.image-version.outputs.version }}-${{ matrix.arch }}
+
+  container:
+    name: Publish GHCR manifest
+    needs: container-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish multi-architecture tags
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          COMMIT_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$REF_TYPE" == "tag" ]]; then version="${REF_NAME#v}"; else version="$INPUT_VERSION"; fi
+          short_sha="${COMMIT_SHA:0:7}"
+          source_amd64="ghcr.io/greepar/hypanel:$version-amd64"
+          source_arm64="ghcr.io/greepar/hypanel:$version-arm64"
+          for tag in "$version" latest "sha-$short_sha"; do
+            docker buildx imagetools create -t "ghcr.io/greepar/hypanel:$tag" "$source_amd64" "$source_arm64"
+          done

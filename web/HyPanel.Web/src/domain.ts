@@ -62,6 +62,8 @@ export type Service = {
   configSchemaVersion: number
   configJson: string
   runtime: Runtime | null
+  backendUpdatePolicy: 'Manual' | 'Auto'
+  latestBackendVersion: string | null
 }
 
 export type Usage = {
@@ -71,6 +73,7 @@ export type Usage = {
   downloadBytes: number
   updatedAtUtc: string
 }
+export type UserServiceAccess = { serviceId: string; credentialStatus: 'Active' | 'Revoked' | 'Unsupported'; multiUser: boolean; perUserTraffic: boolean; trafficStats: boolean }
 
 export type HealthIssue = {
   kind: string
@@ -112,7 +115,7 @@ export type ServiceRef = Service & { nodeId: string; nodeName: string }
 export type UserForm = { username: string; password: string; role: Role; enabled: boolean; trafficLimitBytes: string; expiresAtUtc: string }
 
 export type HyForm = { backendType: 'hysteria2'; name: string; version: string; listenHost: string; port: string; certificatePath: string; privateKeyPath: string; authPassword: string; masqueradeUrl: string; obfsPassword: string; upMbps: string; downMbps: string }
-export type XrayForm = { backendType: 'xray'; name: string; version: string; listenHost: string; port: string; clientId: string; clientEmail: string; realityPrivateKey: string; realityPublicKey: string; shortId: string; serverName: string; destination: string; fingerprint: string }
+export type XrayForm = { backendType: 'xray'; name: string; version: string; listenHost: string; port: string; realityPrivateKey: string; realityPublicKey: string; shortId: string; serverName: string; destination: string; fingerprint: string }
 export type ShadowsocksForm = { backendType: 'mihomo' | 'sing-box'; name: string; version: string; listenHost: string; port: string; password: string }
 export type ServiceForm = HyForm | XrayForm | ShadowsocksForm
 export type ServicePayload = { name: string; backendType: string; backendVersion: string; configSchemaVersion: 1; configJson: string }

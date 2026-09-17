@@ -1,0 +1,15 @@
+**
+!global.json
+!Directory.Build.props
+!src/HyPanel.Shared/**/*.cs
+!src/HyPanel.Shared/*.csproj
+!src/HyPanel.Server/**/*.cs
+!src/HyPanel.Server/*.csproj
+!src/HyPanel.Server/appsettings*.json
+!web/HyPanel.Web/package.json
+!web/HyPanel.Web/package-lock.json
+!web/HyPanel.Web/src/**
+!web/HyPanel.Web/index.html
+!web/HyPanel.Web/tsconfig*.json
+!web/HyPanel.Web/vite.config.ts
+!deploy/docker/Dockerfile

@@ -14,7 +14,7 @@ public sealed class XrayProviderTests
     private const string ClientId = "01234567-89ab-cdef-0123-456789abcdef";
     private const string PrivateKey = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
     private const string PublicKey = "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8";
-    private readonly XrayProvider provider = new();
+    private readonly XrayProvider provider = new(TimeProvider.System);
 
     [TestMethod]
     public async Task ValidateAsync_ValidConfig_ReturnsTcpPortOnly()
@@ -22,7 +22,8 @@ public sealed class XrayProviderTests
         var result = await provider.ValidateAsync(CreateDesiredState(), CancellationToken.None);
 
         Assert.IsTrue(result.IsValid);
-        CollectionAssert.AreEqual(new[] { 443 }, result.TcpPorts.ToArray());
+        Assert.AreEqual(2, result.TcpPorts.Count);
+        CollectionAssert.Contains(result.TcpPorts.ToArray(), 443);
         CollectionAssert.AreEqual(Array.Empty<int>(), result.UdpPorts.ToArray());
     }
 
@@ -42,7 +43,7 @@ public sealed class XrayProviderTests
         Assert.AreEqual(443, inbound.GetProperty("port").GetInt32());
         Assert.AreEqual("vless", inbound.GetProperty("protocol").GetString());
         Assert.AreEqual(ClientId, settings.GetProperty("clients")[0].GetProperty("id").GetString());
-        Assert.AreEqual("client@example", settings.GetProperty("clients")[0].GetProperty("email").GetString());
+        Assert.AreEqual("hypanel-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", settings.GetProperty("clients")[0].GetProperty("email").GetString());
         Assert.AreEqual("xtls-rprx-vision", settings.GetProperty("clients")[0].GetProperty("flow").GetString());
         Assert.AreEqual("none", settings.GetProperty("decryption").GetString());
         Assert.AreEqual("tcp", inbound.GetProperty("streamSettings").GetProperty("network").GetString());
@@ -91,9 +92,6 @@ public sealed class XrayProviderTests
     [DataRow("\"listenHost\":\"203.0.113.010\"")]
     [DataRow("\"listenPort\":0")]
     [DataRow("\"listenPort\":65536")]
-    [DataRow("\"clientId\":\"not-a-uuid\"")]
-    [DataRow("\"clientId\":\"01234567-89AB-cdef-0123-456789abcdef\"")]
-    [DataRow("\"clientEmail\":\"bad\\nemail\"")]
     [DataRow("\"flow\":\"none\"")]
     [DataRow("\"realityPrivateKey\":\"AA==\"")]
     [DataRow("\"realityPublicKey\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=\"")]
@@ -112,7 +110,22 @@ public sealed class XrayProviderTests
 
     [TestMethod]
     public void Capabilities_AreExactlyFrozenSet() =>
-        Assert.AreEqual(BackendCapabilities.Users | BackendCapabilities.Logs | BackendCapabilities.VersionQuery | BackendCapabilities.ConfigValidation, provider.Capabilities);
+        Assert.AreEqual(BackendCapabilities.MultiUser | BackendCapabilities.PerUserTraffic | BackendCapabilities.TrafficStats | BackendCapabilities.Logs | BackendCapabilities.VersionQuery | BackendCapabilities.ConfigValidation, provider.Capabilities);
+
+    [TestMethod]
+    public void ParseStats_AttributesOnlyDesiredUsers()
+    {
+        var userId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        var other = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        var json = $$"""{"stat":[{"name":"user>>>hypanel-{{userId:N}}>>>traffic>>>uplink","value":123},{"name":"user>>>hypanel-{{userId:N}}>>>traffic>>>downlink","value":456},{"name":"user>>>hypanel-{{other:N}}>>>traffic>>>uplink","value":999}]}""";
+
+        var result = XrayProvider.ParseStats(json, [new BackendUser(userId, ClientId)], DateTimeOffset.UtcNow);
+
+        Assert.AreEqual(1, result.Count);
+        Assert.AreEqual(userId, result[0].UserId);
+        Assert.AreEqual(123L, result[0].UploadBytes);
+        Assert.AreEqual(456L, result[0].DownloadBytes);
+    }
 
     [TestMethod]
     public async Task CreateProcessSpecAsync_ReturnsExactXrayCommand()
@@ -143,15 +156,12 @@ public sealed class XrayProviderTests
         }
     }
 
-    [TestMethod]
-    public async Task CollectTrafficAsync_ReturnsNull() =>
-        Assert.IsNull(await provider.CollectTrafficAsync(CreateInstanceContext("/tmp", "/tmp/xray", "/tmp/config.json"), CancellationToken.None));
-
     private static ServiceDesiredState CreateDesiredState(int schemaVersion = 1, string? configJson = null) =>
-        new(Guid.NewGuid(), "test", "xray", "25.1.30", true, schemaVersion, configJson ?? CreateConfigJson());
+        new(Guid.NewGuid(), "test", "xray", "25.1.30", true, schemaVersion, configJson ?? CreateConfigJson(),
+            [new BackendUser(Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), ClientId)], 20000);
 
     private static string CreateConfigJson(int listenPort = 443, string clientEmail = "client@example", string shortId = "a1b2", string serverName = "www.example.com", string destination = "www.example.com:443") =>
-        $$"""{"listenHost":"203.0.113.10","listenPort":{{listenPort}},"clientId":"{{ClientId}}","clientEmail":"{{clientEmail}}","flow":"xtls-rprx-vision","realityPrivateKey":"{{PrivateKey}}","realityPublicKey":"{{PublicKey}}","shortId":"{{shortId}}","serverName":"{{serverName}}","destination":"{{destination}}","fingerprint":"chrome"}""";
+        $$"""{"listenHost":"203.0.113.10","listenPort":{{listenPort}},"flow":"xtls-rprx-vision","realityPrivateKey":"{{PrivateKey}}","realityPublicKey":"{{PublicKey}}","shortId":"{{shortId}}","serverName":"{{serverName}}","destination":"{{destination}}","fingerprint":"chrome"}""";
 
     private static BackendInstanceContext CreateInstanceContext(string directory, string binaryPath, string configPath) =>
         new(CreateDesiredState(), directory, binaryPath, configPath);

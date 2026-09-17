@@ -1,5 +1,6 @@
 using System.Text.Json;
 using HyPanel.Agent;
+using HyPanel.Agent.Backends;
 using HyPanel.Shared.Contracts;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -137,6 +138,65 @@ public sealed class AgentUsageStateStoreTests
 
         await Assert.ThrowsExceptionAsync<JsonException>(() =>
             store.AcknowledgeAsync(store.GetPendingBatchesSnapshot(), [Guid.NewGuid()], CancellationToken.None));
+    }
+
+    [TestMethod]
+    public async Task RecordCumulativeAsync_PersistsBaselineAndEmitsOnlyPositiveDeltasAcrossRestartAndReset()
+    {
+        var serviceId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var observedAt = DateTimeOffset.Parse("2026-09-10T12:34:56+00:00");
+        var store = CreateStore();
+        await store.LoadAsync(CancellationToken.None);
+
+        await store.RecordCumulativeAsync(serviceId,
+            [new BackendUserTraffic(userId, 100, 200, observedAt)], CancellationToken.None);
+        Assert.AreEqual(0, store.GetPendingBatchesSnapshot().Count);
+
+        store = CreateStore();
+        await store.LoadAsync(CancellationToken.None);
+        await store.RecordCumulativeAsync(serviceId,
+            [new BackendUserTraffic(userId, 150, 260, observedAt.AddSeconds(8))], CancellationToken.None);
+        var delta = store.GetPendingBatchesSnapshot().Single().Records.Single();
+        Assert.AreEqual(50L, delta.UploadBytes);
+        Assert.AreEqual(60L, delta.DownloadBytes);
+
+        var sent = store.GetPendingBatchesSnapshot();
+        await store.AcknowledgeAsync(sent, [sent.Single().BatchId], CancellationToken.None);
+        await store.RecordCumulativeAsync(serviceId,
+            [new BackendUserTraffic(userId, 10, 20, observedAt.AddSeconds(16))], CancellationToken.None);
+        Assert.AreEqual(0, store.GetPendingBatchesSnapshot().Count, "A reset establishes a new baseline.");
+        await store.RecordCumulativeAsync(serviceId,
+            [new BackendUserTraffic(userId, 15, 25, observedAt.AddSeconds(24))], CancellationToken.None);
+        delta = store.GetPendingBatchesSnapshot().Single().Records.Single();
+        Assert.AreEqual(5L, delta.UploadBytes);
+        Assert.AreEqual(5L, delta.DownloadBytes);
+    }
+
+    [TestMethod]
+    public async Task EnsureBaselinesAsync_CapturesFirstObservationAndDoesNotResetExistingCounter()
+    {
+        var serviceId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var user = new BackendUser(userId, Guid.NewGuid().ToString("D"));
+        var observedAt = DateTimeOffset.Parse("2026-09-10T12:34:56+00:00");
+        var store = CreateStore();
+        await store.LoadAsync(CancellationToken.None);
+
+        await store.EnsureBaselinesAsync(serviceId, [user], CancellationToken.None);
+        await store.RecordCumulativeAsync(serviceId,
+            [new BackendUserTraffic(userId, 30, 40, observedAt)], CancellationToken.None);
+        var first = store.GetPendingBatchesSnapshot().Single();
+        Assert.AreEqual(30L, first.Records.Single().UploadBytes);
+        Assert.AreEqual(40L, first.Records.Single().DownloadBytes);
+        await store.AcknowledgeAsync([first], [first.BatchId], CancellationToken.None);
+
+        await store.EnsureBaselinesAsync(serviceId, [user], CancellationToken.None);
+        await store.RecordCumulativeAsync(serviceId,
+            [new BackendUserTraffic(userId, 35, 45, observedAt.AddSeconds(8))], CancellationToken.None);
+        var second = store.GetPendingBatchesSnapshot().Single().Records.Single();
+        Assert.AreEqual(5L, second.UploadBytes);
+        Assert.AreEqual(5L, second.DownloadBytes);
     }
 
     private AgentUsageStateStore CreateStore() =>

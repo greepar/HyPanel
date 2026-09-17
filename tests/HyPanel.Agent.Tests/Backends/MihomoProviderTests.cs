@@ -122,8 +122,8 @@ rules:
     }
 
     [TestMethod]
-    public async Task CollectTrafficAsync_ReturnsNull() =>
-        Assert.IsNull(await provider.CollectTrafficAsync(CreateInstanceContext("/tmp", "/tmp/mihomo", "/tmp/config.yaml"), CancellationToken.None));
+    public async Task CollectUserTrafficAsync_ReturnsEmpty() =>
+        Assert.AreEqual(0, (await provider.CollectUserTrafficAsync(CreateInstanceContext("/tmp", "/tmp/mihomo", "/tmp/config.yaml"), CancellationToken.None)).Count);
 
     private static ServiceDesiredState CreateDesiredState(string? configJson = null) =>
         new(Guid.NewGuid(), "test", "mihomo", "1.19.0", true, 1, configJson ?? CreateConfigJson());

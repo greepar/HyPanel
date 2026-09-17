@@ -18,7 +18,8 @@ internal sealed class ReleaseCatalog
     {
         var configuredDirectory = configuration["HyPanel:ReleasesDirectory"];
         ReleasesDirectory = Path.GetFullPath(string.IsNullOrWhiteSpace(configuredDirectory)
-            ? Path.Combine(Environment.CurrentDirectory, "releases") : configuredDirectory, Environment.CurrentDirectory);
+            ? Path.Combine(ServerDataDirectory.Resolve(configuration), "releases") : configuredDirectory,
+            Environment.CurrentDirectory);
         Reload();
     }
 

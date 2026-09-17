@@ -9,8 +9,31 @@ internal sealed partial class XrayRuntimeJsonSerializerContext : JsonSerializerC
 internal sealed class XrayRuntimeConfig
 {
     public required XrayLog Log { get; init; }
+    public required XrayApi Api { get; init; }
+    public required XrayStats Stats { get; init; }
+    public required XrayPolicy Policy { get; init; }
     public required XrayInbound[] Inbounds { get; init; }
     public required XrayOutbound[] Outbounds { get; init; }
+}
+
+internal sealed class XrayApi
+{
+    public required string Tag { get; init; }
+    public required string Listen { get; init; }
+    public required string[] Services { get; init; }
+}
+
+internal sealed class XrayStats;
+
+internal sealed class XrayPolicy
+{
+    public required Dictionary<string, XrayLevelPolicy> Levels { get; init; }
+}
+
+internal sealed class XrayLevelPolicy
+{
+    public required bool StatsUserUplink { get; init; }
+    public required bool StatsUserDownlink { get; init; }
 }
 
 internal sealed class XrayLog
@@ -38,6 +61,7 @@ internal sealed class XrayClient
     public required string Id { get; init; }
     public required string Email { get; init; }
     public required string Flow { get; init; }
+    public required int Level { get; init; }
 }
 
 internal sealed class XrayStreamSettings
@@ -61,4 +85,19 @@ internal sealed class XrayOutbound
 {
     public required string Protocol { get; init; }
     public required string Tag { get; init; }
+}
+
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(XrayStatsQueryResult))]
+internal sealed partial class XrayStatsJsonSerializerContext : JsonSerializerContext;
+
+internal sealed class XrayStatsQueryResult
+{
+    public XrayStat[]? Stat { get; init; }
+}
+
+internal sealed class XrayStat
+{
+    public string? Name { get; init; }
+    public long Value { get; init; }
 }
