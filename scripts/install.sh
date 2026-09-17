@@ -6,8 +6,15 @@ set -eu
 fail() { printf '%s\n' "install.sh: $*" >&2; exit 1; }
 note() { printf '%s\n' "install.sh: $*" >&2; }
 
+OS=$(uname -s 2>/dev/null || true)
+MACOS_USER_INSTALL=0
 if [ -z "${HYPANEL_INSTALL_ROOT:-}" ]; then
-    [ "$(id -u)" = "0" ] || fail "must be run as root"
+    if [ "$(id -u)" != "0" ]; then
+        [ "$OS" = Darwin ] || fail "must be run as root"
+        MACOS_USER_INSTALL=1
+        : "${HOME:?HOME is required for a macOS user installation}"
+        case "$HOME" in /*) ;; *) fail "HOME must be an absolute path" ;; esac
+    fi
 fi
 : "${HYPANEL_PANEL_URL:?HYPANEL_PANEL_URL is required}"
 : "${HYPANEL_ENROLLMENT_TOKEN:?HYPANEL_ENROLLMENT_TOKEN is required}"
@@ -49,7 +56,6 @@ MANIFEST_URL=${HYPANEL_MANIFEST_URL:-"$PANEL_URL/api/releases/v1/manifest"}
 validate_url "$MANIFEST_URL"
 MANIFEST_ORIGIN=$(origin_of "$MANIFEST_URL")
 
-OS=$(uname -s 2>/dev/null || true)
 ARCH=$(uname -m 2>/dev/null || true)
 case "$ARCH" in
     x86_64|amd64) ARCH=x64 ;;
@@ -90,16 +96,37 @@ else
     STAGING_INSTALL=0
     case "$OS" in
         Linux) INSTALL_ROOT=/opt/hypanel/agent ;;
-        Darwin) INSTALL_ROOT=/usr/local/libexec/hypanel-agent ;;
+        Darwin)
+            if [ "$MACOS_USER_INSTALL" = 1 ]; then
+                INSTALL_ROOT="$HOME/Library/Application Support/HyPanel/Agent"
+            else
+                INSTALL_ROOT=/usr/local/libexec/hypanel-agent
+            fi ;;
     esac
 fi
 AGENT_PATH="$INSTALL_ROOT/HyPanel.Agent"
 case "$OS" in
     Linux) DATA_DIR=${HYPANEL_DATA_DIR:-/var/lib/hypanel-agent} ;;
-    Darwin) DATA_DIR=${HYPANEL_DATA_DIR:-"/Library/Application Support/HyPanel"} ;;
+    Darwin)
+        if [ "$MACOS_USER_INSTALL" = 1 ]; then
+            DATA_DIR=${HYPANEL_DATA_DIR:-"$HOME/Library/Application Support/HyPanel"}
+        else
+            DATA_DIR=${HYPANEL_DATA_DIR:-"/Library/Application Support/HyPanel"}
+        fi ;;
 esac
 BOOTSTRAP_ENV="$DATA_DIR/bootstrap.env"
 REENROLL_BACKUP="$DATA_DIR/.re-enrollment-backup.$$"
+MACOS_SERVICE_DOMAIN=
+MACOS_PLIST=
+if [ "$OS" = Darwin ]; then
+    if [ "$MACOS_USER_INSTALL" = 1 ]; then
+        MACOS_SERVICE_DOMAIN="gui/$(id -u)"
+        MACOS_PLIST="$HOME/Library/LaunchAgents/com.hypanel.agent.plist"
+    else
+        MACOS_SERVICE_DOMAIN=system
+        MACOS_PLIST=/Library/LaunchDaemons/com.hypanel.agent.plist
+    fi
+fi
 
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 TMPDIR_BASE=${TMPDIR:-/tmp}
@@ -307,10 +334,29 @@ if [ "$STAGING_INSTALL" = 0 ] && [ "$OS" = Linux ] && { command -v systemctl >/d
 fi
 umask 077
 escape_env() { printf '%s' "$1" | sed 's/[\\`"$]/\\&/g'; }
+write_optional_env() {
+    name=$1
+    value=$2
+    [ -z "$value" ] && return 0
+    case "$value" in *'
+'*) fail "$name must not contain a newline" ;; esac
+    printf '%s="%s"\n' "$name" "$(escape_env "$value")"
+}
+write_proxy_env() {
+    write_optional_env HTTP_PROXY "${HTTP_PROXY:-}"
+    write_optional_env HTTPS_PROXY "${HTTPS_PROXY:-}"
+    write_optional_env ALL_PROXY "${ALL_PROXY:-}"
+    write_optional_env NO_PROXY "${NO_PROXY:-}"
+    write_optional_env http_proxy "${http_proxy:-}"
+    write_optional_env https_proxy "${https_proxy:-}"
+    write_optional_env all_proxy "${all_proxy:-}"
+    write_optional_env no_proxy "${no_proxy:-}"
+}
 {
     printf 'HYPANEL_PANEL_URL="%s"\n' "$(escape_env "$PANEL_URL")"
     printf 'HYPANEL_ENROLLMENT_TOKEN="%s"\n' "$(escape_env "$HYPANEL_ENROLLMENT_TOKEN")"
     printf 'HYPANEL_DATA_DIR="%s"\n' "$(escape_env "$DATA_DIR")"
+    write_proxy_env
 } > "$BOOTSTRAP_ENV"
 chmod 600 "$BOOTSTRAP_ENV"
 [ -n "$AGENT_USER" ] && chown "$AGENT_USER" "$BOOTSTRAP_ENV"
@@ -323,7 +369,7 @@ service_stop() {
             elif command -v systemctl >/dev/null 2>&1; then systemctl stop hypanel-agent.service || true
             elif command -v rc-service >/dev/null 2>&1; then rc-service hypanel-agent stop || true
             fi ;;
-        Darwin) launchctl bootout system /Library/LaunchDaemons/com.hypanel.agent.plist >/dev/null 2>&1 || true ;;
+        Darwin) launchctl bootout "$MACOS_SERVICE_DOMAIN" "$MACOS_PLIST" >/dev/null 2>&1 || true ;;
     esac
 }
 service_start() {
@@ -335,7 +381,7 @@ service_start() {
             elif command -v rc-service >/dev/null 2>&1; then rc-service hypanel-agent start
             else fail "no supported Linux service manager found (systemd, OpenRC, or procd required)"
             fi ;;
-        Darwin) launchctl bootstrap system /Library/LaunchDaemons/com.hypanel.agent.plist ;;
+        Darwin) launchctl bootstrap "$MACOS_SERVICE_DOMAIN" "$MACOS_PLIST" ;;
     esac
 }
 
@@ -394,12 +440,19 @@ EOF
             rc-update add hypanel-agent default
         fi ;;
     Darwin)
-        cat > /Library/LaunchDaemons/com.hypanel.agent.plist <<EOF
+        mkdir -p "${MACOS_PLIST%/*}"
+        touch "$DATA_DIR/agent.stdout.log" "$DATA_DIR/agent.stderr.log"
+        chmod 600 "$DATA_DIR/agent.stdout.log" "$DATA_DIR/agent.stderr.log"
+        xml_escape() { printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g; s/'"'"'/\&apos;/g'; }
+        PLIST_BOOTSTRAP_ENV=$(xml_escape "$(escape_env "$BOOTSTRAP_ENV")")
+        PLIST_AGENT_PATH=$(xml_escape "$(escape_env "$AGENT_PATH")")
+        PLIST_DATA_DIR=$(xml_escape "$DATA_DIR")
+        cat > "$MACOS_PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict><key>Label</key><string>com.hypanel.agent</string><key>ProgramArguments</key><array><string>/bin/sh</string><string>-c</string><string>. "$BOOTSTRAP_ENV"; exec "$AGENT_PATH"</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>
+<plist version="1.0"><dict><key>Label</key><string>com.hypanel.agent</string><key>ProgramArguments</key><array><string>/bin/sh</string><string>-c</string><string>set -a; . "$PLIST_BOOTSTRAP_ENV"; set +a; exec "$PLIST_AGENT_PATH"</string></array><key>WorkingDirectory</key><string>$PLIST_DATA_DIR</string><key>StandardOutPath</key><string>$PLIST_DATA_DIR/agent.stdout.log</string><key>StandardErrorPath</key><string>$PLIST_DATA_DIR/agent.stderr.log</string><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>
 EOF
-        chmod 600 /Library/LaunchDaemons/com.hypanel.agent.plist ;;
+        chmod 600 "$MACOS_PLIST" ;;
 esac
 
 if ! service_start; then
@@ -414,7 +467,10 @@ fi
 elapsed=0
 while [ "$elapsed" -lt 30 ]; do
     if [ -s "$DATA_DIR/credentials.json" ]; then
-        printf 'HYPANEL_DATA_DIR="%s"\n' "$(escape_env "$DATA_DIR")" > "$BOOTSTRAP_ENV"
+        {
+            printf 'HYPANEL_DATA_DIR="%s"\n' "$(escape_env "$DATA_DIR")"
+            write_proxy_env
+        } > "$BOOTSTRAP_ENV"
         chmod 600 "$BOOTSTRAP_ENV"
         rm -rf "$REENROLL_BACKUP"
         rm -rf "$BACKUP_INSTALL"

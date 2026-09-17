@@ -66,6 +66,10 @@ public sealed class NodeMetricsCollector(AgentEnrollmentOptions options, TimePro
 
     private static TimeSpan GetSystemCpuTime()
     {
+        // Process enumeration can crash a NativeAOT process launched by launchd on macOS 26.
+        // Report CPU as unavailable there instead of risking the entire Agent.
+        if (OperatingSystem.IsMacOS()) return TimeSpan.Zero;
+
         var ticks = 0L;
         foreach (var process in Process.GetProcesses())
         {
@@ -84,6 +88,10 @@ public sealed class NodeMetricsCollector(AgentEnrollmentOptions options, TimePro
 
     private static (long Upload, long Download) GetNetworkMetrics()
     {
+        // Interface enumeration has the same launchd/NativeAOT failure mode as process
+        // enumeration on macOS 26, but aborts the process instead of throwing.
+        if (OperatingSystem.IsMacOS()) return (0, 0);
+
         long upload = 0;
         long download = 0;
         try

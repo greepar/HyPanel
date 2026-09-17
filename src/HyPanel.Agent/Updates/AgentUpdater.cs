@@ -302,6 +302,7 @@ public sealed class AgentUpdater(
             File.Move(state.InstallPath, failed, overwrite: true);
             File.Move(previous, state.InstallPath, overwrite: true);
         }
+        CleanupStaging(state.InstallPath);
         await FailAsync(state, error, cancellationToken);
     }
 
@@ -370,6 +371,7 @@ public sealed class AgentUpdater(
         TryDelete(failed);
         File.Move(state.InstallPath, failed, overwrite: true);
         File.Move(previous, state.InstallPath, overwrite: true);
+        CleanupStaging(state.InstallPath);
         await FailAsync(state, error, cancellationToken);
         if (!OperatingSystem.IsWindows()) UnixProcess.ReplaceCurrentProcess(state.InstallPath);
     }

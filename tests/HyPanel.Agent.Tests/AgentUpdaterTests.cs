@@ -80,6 +80,28 @@ public sealed class AgentUpdaterTests
         Assert.AreEqual(AgentUpdateStatus.Verifying, (await store.LoadAsync(CancellationToken.None))!.Status);
     }
 
+    [TestMethod]
+    public async Task RecoverAsync_WhenRestartFailed_RestoresPreviousAndCleansStagingFiles()
+    {
+        var store = CreateStore();
+        var state = State(AgentUpdateStatus.Applying) with { TargetVersion = "9.0.0" };
+        await store.SaveAsync(state, CancellationToken.None);
+        File.WriteAllText(state.InstallPath, "failed");
+        File.WriteAllText(AgentUpdater.PreviousPath(state.InstallPath), "previous");
+        File.WriteAllText(AgentUpdater.StagingArchivePath(state.InstallPath), "archive");
+        File.WriteAllText(AgentUpdater.StagedExecutablePath(state.InstallPath), "staged");
+        var updater = CreateUpdater(store, new StaticHandler(Array.Empty<byte>()));
+
+        await updater.RecoverAsync(CancellationToken.None);
+
+        var recovered = await store.LoadAsync(CancellationToken.None);
+        Assert.AreEqual(AgentUpdateStatus.Failed, recovered!.Status);
+        Assert.AreEqual("restart_failed", recovered.LastError);
+        Assert.AreEqual("previous", File.ReadAllText(state.InstallPath));
+        Assert.IsFalse(File.Exists(AgentUpdater.StagingArchivePath(state.InstallPath)));
+        Assert.IsFalse(File.Exists(AgentUpdater.StagedExecutablePath(state.InstallPath)));
+    }
+
     [DataTestMethod]
     [DataRow("1.0.0", "1.0.0")]
     [DataRow("2.0.0", "1.9.9")]
