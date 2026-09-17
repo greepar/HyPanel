@@ -199,3 +199,20 @@ Deliver:
 - Non-root runtime, `/data` persistence, port 8080 and image HEALTHCHECK.
 - Release-version, `latest` and `sha-*` tags from the release workflow.
 - No Docker socket and no in-container self-replacement.
+
+## Phase 14 — Server self update
+
+Deliver:
+
+- Independent Server version/RID stamping and update state.
+- Bare-metal GitHub discovery, size/SHA verification, safe extraction and exact self-test.
+- Atomic executable backup/replacement, same-process exec and startup/stability verification.
+- Automatic rollback when the replacement cannot complete verification.
+- Docker deployment detection with image pull/recreate guidance only.
+- Global Settings page with current/latest/deployment/status information.
+
+Exit criteria:
+
+- Bare-metal Server updates itself without SSH replacement or Docker access.
+- Database and release caches survive unchanged.
+- Docker mode cannot trigger executable replacement.

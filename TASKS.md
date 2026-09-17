@@ -896,23 +896,35 @@ Planned slices:
 ### HP-1400 — Freeze Server deployment/update model
 - Owner: architect (Sol)
 - Depends on: HP-1302
-- Status: IN PROGRESS
+- Status: DONE
 - Scope: separate bare-metal Server updater contract/state from Agent updates and Docker image availability.
+- Result: Server update has independent build stamping, state, API and UI. Bare-metal Linux may replace only its fixed
+  executable; Docker mode is read-only and never accesses the Docker daemon.
 
 ### HP-1401 — Implement bare-metal Server update
 - Owner: architect (Sol)
 - Depends on: HP-1400
-- Status: TODO
+- Status: DONE
 - Scope: release discovery, RID selection, size/SHA, stage/self-test, replacement, service restart and rollback.
+- Result: Official GitHub metadata selects exact Server RID archive, verifies declared size/SHA256, safely extracts one
+  binary, executes exact version/RID self-test, preserves `.previous`, replaces and `exec`s. RestartPending enters a
+  startup/stability verification window; a second verifying startup restores the previous binary.
 
 ### HP-1402 — Implement Docker image update status
 - Owner: architect (Sol)
 - Depends on: HP-1400
-- Status: TODO
+- Status: DONE
 - Scope: detect container deployment and show pull/recreate guidance without Docker socket access.
+- Result: `DOTNET_RUNNING_IN_CONTAINER`/deployment mode disables in-place replacement. API and Settings show current,
+  latest and Docker guidance; update POST returns 409 and no Docker socket is mounted.
 
 ### HP-1403 — Server update UI and acceptance
 - Owner: architect (Sol)
 - Depends on: HP-1401, HP-1402
-- Status: TODO
+- Status: DONE
 - Scope: Admin update surface, tests, NativeAOT and bare-metal/Docker lifecycle verification.
+- Result: Shared 21/21, Server 108/108 and Agent 143/143 tests passed (272), Release/Web/NativeAOT and CI passed.
+  US Server used the Admin API to self-update `0.4.0 → 0.4.1`: MainPID remained 301708 through `exec`, DB SHA stayed
+  identical, health remained OK, state reached Succeeded and `.previous` was removed after stability verification.
+  GHCR 0.4.1 Docker reported Docker mode, refused POST with 409 and remained healthy. Settings passed desktop/390px
+  browser checks with zero overflow or console messages. Temporary acceptance resources were removed.
