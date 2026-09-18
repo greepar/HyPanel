@@ -54,18 +54,22 @@ public sealed class AgentUpdaterTests
     }
 
     [TestMethod]
-    public async Task MarkSyncSucceededAsync_WhenVerifying_MarksSucceededAndDeletesPrevious()
+    public async Task MarkSyncSucceededAsync_WhenVerifying_MarksSucceededAndCleansUpdateArtifacts()
     {
         var store = CreateStore();
         var state = State(AgentUpdateStatus.Verifying);
         await store.SaveAsync(state, CancellationToken.None);
         File.WriteAllText(AgentUpdater.PreviousPath(state.InstallPath), "old");
+        File.WriteAllText(AgentUpdater.StagedExecutablePath(state.InstallPath), "staged");
+        File.WriteAllText(AgentUpdater.StagingArchivePath(state.InstallPath), "archive");
         var updater = CreateUpdater(store, new StaticHandler(Array.Empty<byte>()));
 
         await updater.MarkSyncSucceededAsync(CancellationToken.None);
 
         Assert.AreEqual(AgentUpdateStatus.Succeeded, (await store.LoadAsync(CancellationToken.None))!.Status);
         Assert.IsFalse(File.Exists(AgentUpdater.PreviousPath(state.InstallPath)));
+        Assert.IsFalse(File.Exists(AgentUpdater.StagedExecutablePath(state.InstallPath)));
+        Assert.IsFalse(File.Exists(AgentUpdater.StagingArchivePath(state.InstallPath)));
     }
 
     [TestMethod]

@@ -64,6 +64,7 @@ public sealed class AgentUpdater(
         await stateStore.SaveAsync(state with { Status = AgentUpdateStatus.Succeeded, LastError = null }, cancellationToken);
         TryDelete(PreviousPath(state.InstallPath));
         TryDelete(state.InstallPath + ".update-helper.exe");
+        CleanupStaging(state.InstallPath);
     }
 
     public async Task ApplyOfferAsync(AgentUpdateDescriptor offer, AgentCredentials credentials,
