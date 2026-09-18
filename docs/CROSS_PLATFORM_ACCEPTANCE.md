@@ -5,7 +5,7 @@ until the listed service manager and executable-replacement path run on that pla
 
 | Platform | Evidence | Status |
 |---|---|---|
-| Linux x64 / systemd | Ubuntu 26.04 and AlmaLinux 10.2 glibc lifecycle; details below | Phase 18 short-run verified; reboot and multi-hour soak pending |
+| Linux x64 / systemd | Ubuntu 26.04 and AlmaLinux 10.2 glibc lifecycle; details below | Phase 18 production verified |
 | Linux Server / systemd | Bare-metal Server `0.4.0 -> 0.4.1`, same-PID exec, health and persistent DB on US Ubuntu | Production verified |
 | Docker amd64 | GHCR pull, non-root startup, health, `/data` persistence | Verified |
 | Docker arm64 | Native GitHub ARM build, GHCR pull and internal health endpoint under arm64 execution | Verified |
@@ -30,19 +30,28 @@ until the listed service manager and executable-replacement path run on that pla
 - Invalid config and a read-only service-directory write failure both preserved the old PID, metadata hash, config and
   listener. A corrupt command cache was quarantined and rebuilt; four Backends restored. Corrupt identity was not
   replaced or re-enrolled.
-- A 90-second Panel outage preserved Agent and Backend PIDs/listeners. Retry was bounded and Panel recovery reconnected
-  automatically. This is short-run evidence only; the required one-hour outage remains pending.
+- A 61-minute Agent-only Panel outage preserved the same Agent PID, all four Backend PIDs and all eight listeners.
+  Retry was bounded to one warning and Panel recovery reconnected automatically with revision 20/20.
 - No-op sync did not change config mtimes. Backend updates to Mihomo 1.19.31 and sing-box 1.14.1 converged for four
   instances. Agent journal search found no tested passwords or secret field names.
 - Resource snapshots: idle Agent on AlmaLinux used about 28 MiB cgroup memory and 10 tasks. Ubuntu with two services
   showed Agent 17-33 MiB RSS, 11-13 threads and 15 FDs; with four services Agent was about 17 MiB RSS, 11 threads and
   23 FDs. A 20-sample, 9.5-minute four-service run measured 19.2-30.3 MiB RSS (first 27.6 MiB, last 30.3 MiB),
-  11-13 threads and 13-20 FDs without linear growth. Backend memory is accounted separately inside the systemd cgroup;
-  this short run does not replace the pending multi-hour soak.
+  11-13 threads and 13-20 FDs without linear growth. Backend memory is accounted separately inside the systemd cgroup.
+- AlmaLinux four-service soak collected 181 one-minute samples over three hours: Agent RSS was 19-33 MiB, threads
+  9-14 (first/last 12), FDs 18-20, and CPU time was about 2.5% of one core. RSS rose during warm-up, plateaued around
+  32 MiB, and the final 30-minute average fell to about 30 MiB; no continuously growing collection/handle count was
+  observed.
+- Published Agent updates `0.4.3 -> 0.4.4 -> 0.4.5` passed with identity/revision retention, four-service restoration,
+  and cleanup of `.previous`, `.staged`, archive and rollback marker files. An intentionally non-starting replacement
+  exposed and validated the fixed-path systemd update guard: it restored `0.4.4` on the second failed start before
+  start-limit, reported `restart_failed`, and restored all four Backends.
+- AlmaLinux was rebooted after the final `0.4.5` update. systemd started the Agent at boot, all four Backends and eight
+  listeners returned, Panel reconnected online, and revision remained applied=desired. The host's degraded systemd
+  status was caused by pre-existing `mcelog` and `uk-edge-connlimit` failures, not HyPanel.
 - `linux-x64` and `linux-arm64` NativeAOT publishes pass. No ARM64 glibc VPS is currently available for runtime evidence.
-- Pending before Phase 18 completion: multi-hour soak result, one-hour Panel outage, real reboot, successful published
-  Agent update with this build, explicit failed Agent update rollback on this build, and cleanup of temporary Ubuntu
-  acceptance resources. Reboot is not executed yet because the available Ubuntu host also runs the production Panel.
+- All temporary acceptance Services, artifacts, firewall rules and samplers were removed. Production Server and Agent
+  both run official `0.4.5`. ARM64 has NativeAOT publish evidence but still lacks a real ARM64 glibc runtime host.
 
 ## Windows x64 checklist
 

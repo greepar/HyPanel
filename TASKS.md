@@ -1004,9 +1004,9 @@ Planned slices:
 ### HP-1803 — Linux glibc production acceptance
 - Owner: architect (Sol)
 - Depends on: HP-1801, HP-1802
-- Status: IN PROGRESS
-- Result so far: Ubuntu 26.04 and AlmaLinux 10.2 x64 fresh/reinstall/uninstall, Agent/Backend crash recovery, graceful
+- Status: DONE
+- Result: Ubuntu 26.04 and AlmaLinux 10.2 x64 fresh/reinstall/uninstall, Agent/Backend crash recovery, graceful
   restart, four-service coexistence, Backend updates, config/write rollback, command-cache quarantine, identity failure,
-  short Panel outage, permission/secret audit and resource snapshots passed. `linux-x64` and `linux-arm64` NativeAOT
-  publish passed. Multi-hour soak, one-hour outage, reboot, and published Agent update success/failure evidence remain;
-  ARM64 runtime hardware is unavailable. Phase 19 must not start until these are resolved or explicitly accepted.
+  one-hour Panel outage, permission/secret audit, three-hour soak, real reboot, and published Agent update success/failure
+  recovery passed. `linux-x64` and `linux-arm64` NativeAOT publish passed. Official Server and Agent now run `0.4.5`.
+  ARM64 runtime hardware remains unavailable and is recorded as a platform evidence gap, not a Phase 18 blocker.
