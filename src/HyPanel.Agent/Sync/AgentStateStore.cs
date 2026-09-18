@@ -18,8 +18,19 @@ public sealed class AgentStateStore(AgentEnrollmentOptions options)
         }
 
         var bytes = await File.ReadAllBytesAsync(StatePath, cancellationToken);
-        return JsonSerializer.Deserialize(bytes, AgentSyncJsonSerializerContext.Default.AgentLocalState)
-            ?? throw new InvalidOperationException("The Agent state file is invalid.");
+        try
+        {
+            var state = JsonSerializer.Deserialize(bytes, AgentSyncJsonSerializerContext.Default.AgentLocalState)
+                ?? throw new JsonException("The Agent state file is empty.");
+            if (state.AppliedRevision < 0 || state.DesiredState is { Revision: < 0 })
+                throw new InvalidDataException("The Agent state file is invalid.");
+            return state;
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidDataException("The Agent state file is corrupt; restore it or remove it explicitly.",
+                exception);
+        }
     }
 
     public Task SaveAsync(AgentLocalState state, CancellationToken cancellationToken) =>
@@ -28,4 +39,5 @@ public sealed class AgentStateStore(AgentEnrollmentOptions options)
             StateFileName,
             JsonSerializer.SerializeToUtf8Bytes(state, AgentSyncJsonSerializerContext.Default.AgentLocalState),
             cancellationToken);
+
 }

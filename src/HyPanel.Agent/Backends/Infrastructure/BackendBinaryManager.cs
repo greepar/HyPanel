@@ -14,6 +14,7 @@ public sealed class BackendBinaryManager(
 {
     private static readonly SemaphoreSlim DownloadLock = new(1, 1);
     private static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(10);
+    private const long MaximumArtifactSize = 512L * 1024 * 1024;
 
     public string CurrentRid => RuntimeInformation.RuntimeIdentifier;
 
@@ -31,6 +32,8 @@ public sealed class BackendBinaryManager(
             {
                 return destination;
             }
+
+            DiskSpace.Require(destinationDirectory, artifact.Size);
 
             var credentials = await credentialStore.TryLoadAsync(cancellationToken)
                 ?? throw new InvalidOperationException("Agent credentials are required to download a backend binary.");
@@ -91,7 +94,7 @@ public sealed class BackendBinaryManager(
 
     private void ValidateArtifact(BackendArtifact artifact)
     {
-        if (artifact.Rid != CurrentRid || artifact.Size <= 0 || !IsSafeComponent(artifact.BackendType) || !IsSafeComponent(artifact.Version) || !IsSafeBaseName(artifact.FileName) ||
+        if (artifact.Rid != CurrentRid || artifact.Size is <= 0 or > MaximumArtifactSize || !IsSafeComponent(artifact.BackendType) || !IsSafeComponent(artifact.Version) || !IsSafeBaseName(artifact.FileName) ||
             artifact.Sha256.Length != 64 || artifact.Sha256.Any(character => !(character is >= '0' and <= '9' or >= 'a' and <= 'f')))
             throw new InvalidDataException("The backend artifact is invalid for this Agent.");
     }

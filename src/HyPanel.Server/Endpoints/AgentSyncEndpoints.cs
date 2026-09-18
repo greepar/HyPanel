@@ -99,11 +99,10 @@ internal static class AgentSyncEndpoints
                     service.BackendVersion, service.Enabled, service.ConfigSchemaVersion, service.ConfigJson, users,
                     service.BackendType == "xray" ? controlPort++ : null));
             }
-            desiredState = new NodeDesiredState(desired.Value.Revision, desiredServices,
-                desired.Value.Services.Where(service => service.Enabled).Select(service =>
-                        backendArtifactCatalog.FindArtifact(service.BackendType, service.BackendVersion,
-                            request.Platform.Trim()))
-                    .Where(static artifact => artifact is not null).Cast<BackendArtifact>().ToArray());
+            var artifacts = DistinctArtifacts(desired.Value.Services.Where(service => service.Enabled)
+                .Select(service => backendArtifactCatalog.FindArtifact(service.BackendType, service.BackendVersion,
+                    request.Platform.Trim())));
+            desiredState = new NodeDesiredState(desired.Value.Revision, desiredServices, artifacts);
         }
         var response = new AgentSyncResponse(
             desired.Value.Revision,
@@ -114,6 +113,12 @@ internal static class AgentSyncEndpoints
             update);
         return Results.Json(response, HyPanelJsonSerializerContext.Default.AgentSyncResponse);
     }
+
+    internal static BackendArtifact[] DistinctArtifacts(IEnumerable<BackendArtifact?> artifacts) => artifacts
+                .Where(static artifact => artifact is not null)
+                .Cast<BackendArtifact>()
+                .DistinctBy(static artifact => (artifact.BackendType, artifact.Version, artifact.Rid))
+                .ToArray();
 
     internal static async Task<AgentUpdateDescriptor?> GetAgentUpdateAsync(Guid agentId, AgentSyncRequest request,
         SqliteServerRepository repository, ReleaseCatalog catalog, CancellationToken cancellationToken)

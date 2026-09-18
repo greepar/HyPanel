@@ -31,11 +31,19 @@ public sealed class SyncWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await updater.RecoverAsync(stoppingToken);
         AgentCredentials credentials;
+        AgentLocalState state;
+        AgentCommandStoreState commandState;
         try
         {
+            await updater.RecoverAsync(stoppingToken);
             credentials = await identityManager.EnsureIdentityAsync(stoppingToken);
+            state = await stateStore.LoadAsync(stoppingToken);
+            await reconciler.RestoreAsync(credentials, stoppingToken);
+            state = await stateStore.LoadAsync(stoppingToken);
+            commandState = await commandStateStore.LoadAsync(stoppingToken);
+            commandState = await FinalizeInterruptedCommandsAsync(commandState, stoppingToken);
+            await usageStateStore.LoadAsync(stoppingToken);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
@@ -43,16 +51,11 @@ public sealed class SyncWorker(
         }
         catch
         {
+            Environment.ExitCode = 1;
             await updater.RollbackStartupFailureAsync(CancellationToken.None);
             throw;
         }
 
-        var state = await stateStore.LoadAsync(stoppingToken);
-        await reconciler.RestoreAsync(credentials, stoppingToken);
-        state = await stateStore.LoadAsync(stoppingToken);
-        var commandState = await commandStateStore.LoadAsync(stoppingToken);
-        commandState = await FinalizeInterruptedCommandsAsync(commandState, stoppingToken);
-        await usageStateStore.LoadAsync(stoppingToken);
         var backoffSeconds = 0;
         var nextDelaySeconds = DefaultIntervalSeconds;
 
@@ -109,15 +112,23 @@ public sealed class SyncWorker(
             }
             catch (Exception exception) when (IsTransient(exception))
             {
+                var firstFailure = backoffSeconds == 0;
                 backoffSeconds = backoffSeconds == 0 ? 2 : Math.Min(backoffSeconds * 2, 60);
                 nextDelaySeconds = backoffSeconds;
-                logger.LogWarning(exception, "Agent sync failed; retrying with backoff.");
+                if (firstFailure)
+                    logger.LogWarning("Agent sync failed; retrying with bounded backoff.");
+                else
+                    logger.LogDebug(exception, "Agent sync remains unavailable; retrying with bounded backoff.");
             }
             catch (Exception exception)
             {
+                var firstFailure = backoffSeconds == 0;
                 backoffSeconds = backoffSeconds == 0 ? 2 : Math.Min(backoffSeconds * 2, 60);
                 nextDelaySeconds = backoffSeconds;
-                logger.LogWarning(exception, "Agent sync response was rejected; retrying with backoff.");
+                if (firstFailure)
+                    logger.LogWarning("Agent sync response was rejected; retrying with bounded backoff.");
+                else
+                    logger.LogDebug(exception, "Agent sync response remains invalid; retrying with bounded backoff.");
             }
 
             var jitterMilliseconds = Random.Shared.Next(0, 1001);

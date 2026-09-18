@@ -23,6 +23,17 @@ internal static class AtomicFile
         }
     }
 
+    public static void Quarantine(string path)
+    {
+        if (!File.Exists(path)) return;
+        var directory = Path.GetDirectoryName(path) ?? throw new InvalidOperationException("State path has no directory.");
+        var name = Path.GetFileNameWithoutExtension(path);
+        var extension = Path.GetExtension(path);
+        var quarantine = Path.Combine(directory,
+            $"{name}.corrupt-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}{extension}");
+        File.Move(path, quarantine);
+    }
+
     private static void RestrictToOwner(string path)
     {
         if (!OperatingSystem.IsWindows())

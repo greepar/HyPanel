@@ -34,4 +34,18 @@ public sealed class AgentStateStoreTests
 
         Assert.AreEqual(42L, loaded.AppliedRevision);
     }
+
+    [TestMethod]
+    public async Task LoadAsync_CorruptDesiredState_FailsWithoutReplacingFile()
+    {
+        Directory.CreateDirectory(dataDirectory);
+        await File.WriteAllTextAsync(Path.Combine(dataDirectory, "state.json"), "{not-json");
+        var store = new AgentStateStore(new AgentEnrollmentOptions(null, null, dataDirectory));
+
+        var exception = await Assert.ThrowsExceptionAsync<InvalidDataException>(() =>
+            store.LoadAsync(CancellationToken.None));
+
+        StringAssert.Contains(exception.Message, "corrupt");
+        Assert.IsTrue(File.Exists(Path.Combine(dataDirectory, "state.json")));
+    }
 }

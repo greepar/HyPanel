@@ -5,7 +5,7 @@ until the listed service manager and executable-replacement path run on that pla
 
 | Platform | Evidence | Status |
 |---|---|---|
-| Linux x64 / systemd | Fresh enrollment, service reconciliation, Agent self-update, backend update/rollback and reconnect on UK AlmaLinux | Production verified |
+| Linux x64 / systemd | Ubuntu 26.04 and AlmaLinux 10.2 glibc lifecycle; details below | Phase 18 short-run verified; reboot and multi-hour soak pending |
 | Linux Server / systemd | Bare-metal Server `0.4.0 -> 0.4.1`, same-PID exec, health and persistent DB on US Ubuntu | Production verified |
 | Docker amd64 | GHCR pull, non-root startup, health, `/data` persistence | Verified |
 | Docker arm64 | Native GitHub ARM build, GHCR pull and internal health endpoint under arm64 execution | Verified |
@@ -13,6 +13,36 @@ until the listed service manager and executable-replacement path run on that pla
 | Alpine musl x64 | Official musl archive selection, size/SHA validation, safe extraction and `--self-test` in Alpine 3.22 | Staging verified; OpenRC pending |
 | Windows x64 | Build, archive and helper unit coverage only | Real Windows Service update pending |
 | OpenWrt musl | Installer/procd implementation and static review only | Real procd device pending |
+
+## Linux glibc systemd checklist
+
+- Ubuntu 26.04 x64: fresh one-line enrollment, dedicated user, hardened systemd unit, 0600 credentials/bootstrap,
+  0700 DataDir/service directories, and 0750 install directory verified.
+- AlmaLinux 10.2 x64: same-node reinstall preserved credential hash and DataDir; final hardening unit loaded; Agent
+  SIGKILL caused systemd restart after five seconds and sync recovered.
+- Ubuntu: same-node reinstall and uninstall/reinstall preserved credential/state hashes, Backend cache and service
+  directories. Default uninstall stopped all managed Backends and preserved DataDir.
+- Ubuntu: four simultaneous managed services (two Mihomo and two sing-box) reached unique TCP/UDP listeners. A duplicate
+  shared Backend artifact defect in Server desired-state generation was found and fixed; revision 14 then converged
+  applied=desired with all Desired/Runtime versions equal.
+- Killing one Backend restarted only that Backend. Agent SIGKILL and graceful `systemctl restart` recreated all managed
+  Backends with one process per service and no stale listener.
+- Invalid config and a read-only service-directory write failure both preserved the old PID, metadata hash, config and
+  listener. A corrupt command cache was quarantined and rebuilt; four Backends restored. Corrupt identity was not
+  replaced or re-enrolled.
+- A 90-second Panel outage preserved Agent and Backend PIDs/listeners. Retry was bounded and Panel recovery reconnected
+  automatically. This is short-run evidence only; the required one-hour outage remains pending.
+- No-op sync did not change config mtimes. Backend updates to Mihomo 1.19.31 and sing-box 1.14.1 converged for four
+  instances. Agent journal search found no tested passwords or secret field names.
+- Resource snapshots: idle Agent on AlmaLinux used about 28 MiB cgroup memory and 10 tasks. Ubuntu with two services
+  showed Agent 17-33 MiB RSS, 11-13 threads and 15 FDs; with four services Agent was about 17 MiB RSS, 11 threads and
+  23 FDs. A 20-sample, 9.5-minute four-service run measured 19.2-30.3 MiB RSS (first 27.6 MiB, last 30.3 MiB),
+  11-13 threads and 13-20 FDs without linear growth. Backend memory is accounted separately inside the systemd cgroup;
+  this short run does not replace the pending multi-hour soak.
+- `linux-x64` and `linux-arm64` NativeAOT publishes pass. No ARM64 glibc VPS is currently available for runtime evidence.
+- Pending before Phase 18 completion: multi-hour soak result, one-hour Panel outage, real reboot, successful published
+  Agent update with this build, explicit failed Agent update rollback on this build, and cleanup of temporary Ubuntu
+  acceptance resources. Reboot is not executed yet because the available Ubuntu host also runs the production Panel.
 
 ## Windows x64 checklist
 

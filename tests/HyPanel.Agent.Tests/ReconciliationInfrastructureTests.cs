@@ -92,7 +92,19 @@ public sealed class ReconciliationInfrastructureTests
     }
 
     [TestMethod]
-    public async Task ApplyAsync_DuplicateEnabledUdpPort_FailsBeforeCreatingServiceDataOrAdvancingRevision()
+    public void DiskSpace_ImpossibleRequirement_ReportsInsufficientSpace()
+    {
+        var root = Path.GetPathRoot(Path.GetFullPath(dataDirectory))!;
+        var available = new DriveInfo(root).AvailableFreeSpace;
+
+        var exception = Assert.ThrowsException<IOException>(() =>
+            DiskSpace.Require(dataDirectory, checked(available + 1)));
+
+        Assert.AreEqual("insufficient_space", exception.Message);
+    }
+
+    [TestMethod]
+    public async Task ApplyAsync_DuplicateEnabledUdpPort_IsolatesConflictingServiceWithoutAdvancingRevision()
     {
         await using var fixture = await ReconcilerFixture.CreateAsync(dataDirectory, new FakeProvider());
         var first = Service("first", "udp");
@@ -102,7 +114,9 @@ public sealed class ReconciliationInfrastructureTests
 
         Assert.IsFalse(result.Succeeded);
         Assert.AreEqual("invalid_config", result.ErrorCode);
-        Assert.IsFalse(Directory.Exists(Path.Combine(dataDirectory, "services")));
+        Assert.AreEqual(ServiceRuntimeStatus.Running, fixture.Supervisor.GetStatus(first.ServiceId).Status);
+        Assert.AreEqual(ServiceRuntimeStatus.Failed,
+            fixture.Reconciler.GetRuntimeStates().Single(item => item.ServiceId == second.ServiceId).Status);
         Assert.AreEqual(0L, (await fixture.StateStore.LoadAsync(CancellationToken.None)).AppliedRevision);
     }
 
@@ -154,6 +168,77 @@ public sealed class ReconciliationInfrastructureTests
     }
 
     [TestMethod]
+    public async Task ApplyAsync_UnchangedDesiredState_DoesNotRewriteConfig()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("This process assertion uses /bin/sleep.");
+        await using var fixture = await ReconcilerFixture.CreateAsync(dataDirectory, new FakeProvider());
+        var service = Service("stable", "tcp");
+        var desired = Desired(1, [service]);
+        Assert.IsTrue((await fixture.Reconciler.ApplyAsync(desired, fixture.Credentials,
+            CancellationToken.None)).Succeeded);
+        var metadata = await fixture.InstanceStore.TryLoadAsync(service.ServiceId, CancellationToken.None);
+        var configPath = Path.Combine(fixture.InstanceStore.GetInstanceDirectory(service.ServiceId),
+            metadata!.ConfigFileName);
+        var writtenAt = File.GetLastWriteTimeUtc(configPath);
+
+        await Task.Delay(50);
+        var repeated = await fixture.Reconciler.ApplyAsync(desired, fixture.Credentials, CancellationToken.None);
+
+        Assert.IsTrue(repeated.Succeeded);
+        Assert.AreEqual(writtenAt, File.GetLastWriteTimeUtc(configPath));
+    }
+
+    [TestMethod]
+    public async Task RefreshRuntimeStatesAsync_CrashedBackend_RestartsManagedService()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("This process assertion uses /bin/sleep.");
+        await using var fixture = await ReconcilerFixture.CreateAsync(dataDirectory, new FakeProvider());
+        var service = Service("recover", "tcp");
+        Assert.IsTrue((await fixture.Reconciler.ApplyAsync(Desired(1, [service]), fixture.Credentials,
+            CancellationToken.None)).Succeeded);
+        var original = fixture.Supervisor.GetStatus(service.ServiceId).ProcessId;
+        Assert.IsNotNull(original);
+        using (var process = System.Diagnostics.Process.GetProcessById(original.Value))
+        {
+            process.Kill();
+            await process.WaitForExitAsync();
+        }
+
+        await fixture.Reconciler.RefreshRuntimeStatesAsync(CancellationToken.None);
+
+        var restarted = fixture.Supervisor.GetStatus(service.ServiceId);
+        Assert.AreEqual(ServiceRuntimeStatus.Running, restarted.Status);
+        Assert.IsNotNull(restarted.ProcessId);
+        Assert.AreNotEqual(original.Value, restarted.ProcessId.Value);
+    }
+
+    [TestMethod]
+    public async Task ApplyAsync_FailingService_DoesNotStopIndependentService()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("This process assertion uses Unix test binaries.");
+        await using var fixture = await ReconcilerFixture.CreateAsync(dataDirectory, new FakeProvider());
+        var stable = Service("stable", "tcp");
+        var failing = Service("failing", "exit") with { ConfigJson = "exit" };
+
+        var result = await fixture.Reconciler.ApplyAsync(Desired(1, [stable, failing]), fixture.Credentials,
+            CancellationToken.None);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ServiceRuntimeStatus.Running, fixture.Supervisor.GetStatus(stable.ServiceId).Status);
+        Assert.AreEqual(ServiceRuntimeStatus.Failed,
+            fixture.Reconciler.GetRuntimeStates().Single(item => item.ServiceId == failing.ServiceId).Status);
+
+        var repeated = await fixture.Reconciler.ApplyAsync(Desired(1, [stable, failing]), fixture.Credentials,
+            CancellationToken.None);
+        var failedRuntime = fixture.Reconciler.GetRuntimeStates().Single(item => item.ServiceId == failing.ServiceId);
+
+        Assert.IsFalse(repeated.Succeeded);
+        Assert.AreEqual(ServiceRuntimeStatus.Backoff, failedRuntime.Status);
+        Assert.AreEqual("backend_restart_backoff", failedRuntime.ErrorCode);
+        Assert.AreEqual(ServiceRuntimeStatus.Running, fixture.Supervisor.GetStatus(stable.ServiceId).Status);
+    }
+
+    [TestMethod]
     public async Task ApplyAsync_InvalidSecondRevision_PreservesPreviousRevisionAndDesiredState()
     {
         if (OperatingSystem.IsWindows())
@@ -179,6 +264,27 @@ public sealed class ReconciliationInfrastructureTests
         CollectionAssert.AreEqual(initial.Services.ToArray(), saved.DesiredState.Services.ToArray());
         CollectionAssert.AreEqual(initial.BackendArtifacts.ToArray(), saved.DesiredState.BackendArtifacts.ToArray());
         Assert.AreEqual(ServiceRuntimeStatus.Running, fixture.Supervisor.GetStatus(initialService.ServiceId).Status);
+    }
+
+    [TestMethod]
+    public async Task ApplyAsync_InvalidService_DoesNotBlockIndependentValidService()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("This process assertion uses /bin/sleep.");
+        await using var fixture = await ReconcilerFixture.CreateAsync(dataDirectory, new FakeProvider());
+        var invalid = Service("invalid", "invalid");
+        var valid = Service("valid", "udp");
+
+        var result = await fixture.Reconciler.ApplyAsync(Desired(1, [invalid, valid]), fixture.Credentials,
+            CancellationToken.None);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(0L, (await fixture.StateStore.LoadAsync(CancellationToken.None)).AppliedRevision);
+        Assert.AreEqual(ServiceRuntimeStatus.Failed,
+            fixture.Reconciler.GetRuntimeStates().Single(item => item.ServiceId == invalid.ServiceId).Status);
+        Assert.AreEqual(ServiceRuntimeStatus.Running, fixture.Supervisor.GetStatus(valid.ServiceId).Status);
+        var recovery = await fixture.StateStore.LoadAsync(CancellationToken.None);
+        Assert.IsNotNull(recovery.DesiredState);
+        Assert.AreEqual(valid.ServiceId, recovery.DesiredState.Services.Single().ServiceId);
     }
 
     [TestMethod]
@@ -283,7 +389,7 @@ public sealed class ReconciliationInfrastructureTests
             CancellationToken cancellationToken) =>
             ValueTask.FromResult(desiredState.ConfigJson == "invalid"
                 ? new BackendValidationResult(false, [], [], "invalid", "invalid")
-                : desiredState.ConfigJson == "udp"
+                : desiredState.ConfigJson is "udp" or "exit"
                     ? new BackendValidationResult(true, [], [32100], null, null)
                     : new BackendValidationResult(true, [32100], [], null, null));
 

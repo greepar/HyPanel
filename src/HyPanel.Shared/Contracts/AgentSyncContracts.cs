@@ -96,6 +96,8 @@ public enum ServiceRuntimeStatus
     Stopping = 5,
     Failed = 6,
     Updating = 7,
+    Restarting = 8,
+    Backoff = 9,
 }
 
 public sealed record ServiceRuntimeState(

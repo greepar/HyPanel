@@ -972,3 +972,41 @@ Planned slices:
   artifact downloads are bounded and verified, secret logging search is clean, SQLite uses explicit columns and sync
   sends only desired artifacts. One evidence-based optimization was applied: when revisions already match, sync no
   longer decrypts credentials or constructs a discarded desired payload. No cosmetic broad refactor was performed.
+
+## Phase 18 — Linux Agent production hardening
+
+### HP-1800 — Audit Linux Agent lifecycle and failure boundaries
+- Owner: architect (Sol)
+- Depends on: HP-1700
+- Status: DONE
+- Result: Audited Program/SyncWorker/reconciliation/process supervision/artifact management/updaters/state stores,
+  installer/systemd, metrics and logs. Confirmed the production model is a dedicated unprivileged Agent user with
+  Backend children in the same systemd cgroup; safe cross-restart process adoption is intentionally rejected.
+
+### HP-1801 — Harden systemd install, reinstall and uninstall
+- Owner: architect (Sol)
+- Depends on: HP-1800
+- Status: DONE
+- Result: Added bounded systemd restart/start limiting, SIGTERM/timeout/control-group stop, NoNewPrivileges,
+  PrivateTmp, owner-only umask and WorkingDirectory. Same-node repair preserves all state; token presence selects
+  explicit re-enrollment. `--uninstall` preserves DataDir and `--purge` removes it. Ubuntu and AlmaLinux reinstall plus
+  Ubuntu uninstall/reinstall passed with identity hashes unchanged and managed Backends stopped/restored.
+
+### HP-1802 — Harden reconciliation, process recovery and state writes
+- Owner: architect (Sol)
+- Depends on: HP-1800
+- Status: DONE
+- Result: Added per-service failure isolation, crash restart/backoff states, real Unix SIGTERM, process-handle cleanup,
+  no-op config preservation, content-addressed atomic config commit, restrictive service permissions, disk-space
+  preflight and explicit critical/non-critical state corruption boundaries. Server now de-duplicates shared Backend
+  artifacts before desired-state delivery. Focused regression tests cover these boundaries.
+
+### HP-1803 — Linux glibc production acceptance
+- Owner: architect (Sol)
+- Depends on: HP-1801, HP-1802
+- Status: IN PROGRESS
+- Result so far: Ubuntu 26.04 and AlmaLinux 10.2 x64 fresh/reinstall/uninstall, Agent/Backend crash recovery, graceful
+  restart, four-service coexistence, Backend updates, config/write rollback, command-cache quarantine, identity failure,
+  short Panel outage, permission/secret audit and resource snapshots passed. `linux-x64` and `linux-arm64` NativeAOT
+  publish passed. Multi-hour soak, one-hour outage, reboot, and published Agent update success/failure evidence remain;
+  ARM64 runtime hardware is unavailable. Phase 19 must not start until these are resolved or explicitly accepted.

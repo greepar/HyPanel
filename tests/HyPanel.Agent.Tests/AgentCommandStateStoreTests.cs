@@ -59,4 +59,19 @@ public sealed class AgentCommandStateStoreTests
         Assert.AreEqual("details", result.ErrorMessage);
         CollectionAssert.AreEqual(state.RecentCompletedIds.ToArray(), loaded.RecentCompletedIds.ToArray());
     }
+
+    [TestMethod]
+    public async Task LoadAsync_CorruptCommandCache_QuarantinesAndReturnsEmptyState()
+    {
+        Directory.CreateDirectory(dataDirectory);
+        await File.WriteAllTextAsync(Path.Combine(dataDirectory, "command-state.json"), "{bad-json");
+        var store = new AgentCommandStateStore(new AgentEnrollmentOptions(null, null, dataDirectory));
+
+        var loaded = await store.LoadAsync(CancellationToken.None);
+
+        Assert.AreEqual(0, loaded.PendingResults.Count);
+        Assert.AreEqual(0, loaded.RecentCompletedIds.Count);
+        Assert.IsFalse(File.Exists(Path.Combine(dataDirectory, "command-state.json")));
+        Assert.AreEqual(1, Directory.GetFiles(dataDirectory, "command-state.corrupt-*.json").Length);
+    }
 }

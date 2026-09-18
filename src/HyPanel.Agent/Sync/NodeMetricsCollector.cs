@@ -8,25 +8,15 @@ public sealed class NodeMetricsCollector(AgentEnrollmentOptions options, TimePro
 {
     private TimeSpan? previousCpuTime;
     private DateTimeOffset? previousSampleAt;
+    private long? previousLinuxBusyTicks;
+    private long? previousLinuxTotalTicks;
 
     public NodeMetrics Collect()
     {
         var observedAt = timeProvider.GetUtcNow();
-        var cpuTime = GetSystemCpuTime();
-        var cpuPercent = 0d;
-        if (previousCpuTime is { } priorCpu && previousSampleAt is { } priorTime)
-        {
-            var elapsed = observedAt - priorTime;
-            if (elapsed > TimeSpan.Zero)
-            {
-                cpuPercent = Math.Clamp(
-                    (cpuTime - priorCpu).TotalMilliseconds / elapsed.TotalMilliseconds / Environment.ProcessorCount * 100d,
-                    0d,
-                    100d);
-            }
-        }
-
-        previousCpuTime = cpuTime;
+        var cpuPercent = OperatingSystem.IsLinux()
+            ? CollectLinuxCpuPercent()
+            : CollectPortableCpuPercent(observedAt);
         previousSampleAt = observedAt;
         var memory = GC.GetGCMemoryInfo();
         var memoryTotal = Math.Max(0, memory.TotalAvailableMemoryBytes);
@@ -43,6 +33,42 @@ public sealed class NodeMetricsCollector(AgentEnrollmentOptions options, TimePro
             diskAvailable,
             networkUpload,
             networkDownload);
+    }
+
+    private double CollectPortableCpuPercent(DateTimeOffset observedAt)
+    {
+        var cpuTime = GetSystemCpuTimeSafely();
+        var percent = 0d;
+        if (previousCpuTime is { } priorCpu && previousSampleAt is { } priorTime)
+        {
+            var elapsed = observedAt - priorTime;
+            if (elapsed > TimeSpan.Zero)
+            {
+                percent = Math.Clamp(
+                    (cpuTime - priorCpu).TotalMilliseconds / elapsed.TotalMilliseconds / Environment.ProcessorCount * 100d,
+                    0d,
+                    100d);
+            }
+        }
+
+        previousCpuTime = cpuTime;
+        return percent;
+    }
+
+    private double CollectLinuxCpuPercent()
+    {
+        if (!TryReadLinuxCpuTicks(out var busy, out var total)) return 0d;
+        var percent = 0d;
+        if (previousLinuxBusyTicks is { } priorBusy && previousLinuxTotalTicks is { } priorTotal)
+        {
+            var busyDelta = busy - priorBusy;
+            var totalDelta = total - priorTotal;
+            if (busyDelta >= 0 && totalDelta > 0)
+                percent = Math.Clamp((double)busyDelta / totalDelta * 100d, 0d, 100d);
+        }
+        previousLinuxBusyTicks = busy;
+        previousLinuxTotalTicks = total;
+        return percent;
     }
 
     private (long Total, long Available) GetDiskMetrics()
@@ -84,6 +110,46 @@ public sealed class NodeMetricsCollector(AgentEnrollmentOptions options, TimePro
             }
         }
         return TimeSpan.FromTicks(ticks);
+    }
+
+    private static TimeSpan GetSystemCpuTimeSafely()
+    {
+        try
+        {
+            return GetSystemCpuTime();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or NotSupportedException
+                                               or System.ComponentModel.Win32Exception or PlatformNotSupportedException
+                                               or OverflowException)
+        {
+            return TimeSpan.Zero;
+        }
+    }
+
+    private static bool TryReadLinuxCpuTicks(out long busy, out long total)
+    {
+        busy = 0;
+        total = 0;
+        try
+        {
+            using var reader = new StreamReader("/proc/stat");
+            var line = reader.ReadLine();
+            if (line is null || !line.StartsWith("cpu ", StringComparison.Ordinal)) return false;
+            var fields = line.AsSpan(4).Trim().ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (fields.Length < 8) return false;
+            Span<long> ticks = stackalloc long[8];
+            for (var index = 0; index < ticks.Length; index++)
+                if (!long.TryParse(fields[index], out ticks[index]) || ticks[index] < 0) return false;
+            var idle = checked(ticks[3] + ticks[4]);
+            total = 0;
+            foreach (var value in ticks) total = checked(total + value);
+            busy = total - idle;
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or OverflowException)
+        {
+            return false;
+        }
     }
 
     private static (long Upload, long Download) GetNetworkMetrics()

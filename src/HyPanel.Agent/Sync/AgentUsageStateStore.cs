@@ -228,8 +228,16 @@ public sealed class AgentUsageStateStore(AgentEnrollmentOptions options)
         }
 
         var bytes = await File.ReadAllBytesAsync(StatePath, cancellationToken);
-        return JsonSerializer.Deserialize(bytes, AgentSyncJsonSerializerContext.Default.AgentUsageStoreState)
-               ?? throw new InvalidOperationException("The Agent usage state file is invalid.");
+        try
+        {
+            return JsonSerializer.Deserialize(bytes, AgentSyncJsonSerializerContext.Default.AgentUsageStoreState)
+                   ?? throw new JsonException("The Agent usage state file is empty.");
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidDataException(
+                "The Agent usage state file is corrupt; restore it to preserve idempotent accounting.", exception);
+        }
     }
 
     private Task PersistAsync(AgentUsageStoreState state, CancellationToken cancellationToken) =>

@@ -353,6 +353,48 @@ arbitrary command: preflight download/validate, snapshot last-known-good, stop/r
 bounded health window, and restore prior desired metadata/config/binary on failure. One cached binary version is shared
 across service instances.
 
+### Linux Agent lifecycle
+
+The production Linux target is glibc x64/arm64 under systemd. The installer creates the dedicated
+`hypanel-agent` account; the Agent does not require root after installation because its executable and DataDir are
+owned by that account. Backend processes run as the same restricted account. This intentionally avoids a second
+privilege boundary until a Backend demonstrates a concrete need for one.
+
+The systemd unit uses `Type=simple`, `Restart=on-failure`, a five-second restart delay, `SIGTERM`, a 30-second stop
+timeout, `KillMode=control-group`, `NoNewPrivileges`, `PrivateTmp`, and owner-only umask. Start rate limiting prevents
+critical-state corruption from producing an unbounded Agent crash loop. Broader sandboxing such as
+`ProtectSystem=strict`, `PrivateDevices`, or restricted address families is not enabled because the Agent must write
+its install/DataDir, inspect host metrics, download artifacts, and launch network-facing Backend processes.
+
+Agent stop/restart deliberately stops its supervised Backend children through the systemd control group. On startup,
+the Agent reads the last fully applied desired state and recreates each enabled Backend. HyPanel does not adopt unknown
+or detached processes from PID files: PID reuse cannot be validated safely across all supported Backends, and an
+adopted process would lose the bounded stdout/stderr supervision streams. A clean stop followed by deterministic
+restore is preferred over risking duplicate listeners or killing an unrelated process.
+
+Backend crashes are isolated per service. Reconciliation restarts only the failed service and applies a bounded
+exponential backoff up to 60 seconds, keyed by Backend version and rendered config hash. A changed desired config may
+retry immediately. `Restarting` and `Backoff` are reported as runtime states. Independent services continue to
+reconcile when one service has invalid config, an unavailable artifact, a write failure, or a crash loop; the Agent
+keeps the previous fully applied revision until every service converges.
+
+Rendered configs are written under 0700 service directories as 0600 content-addressed files. Metadata is atomically
+replaced last, so ENOSPC or permission failure cannot make old metadata point at partially replaced config. Unchanged
+desired state neither rewrites config nor restarts a process. Agent/backend updates preflight declared artifact size
+against available disk with a safety margin and still use exact size/SHA validation plus atomic replacement.
+
+`credentials.json`, `state.json`, `usage-state.json`, and `agent-update-state.json` are critical. Corruption is fatal
+and never creates a new identity or discards usage/update rollback context. The non-critical command de-duplication
+cache and per-service metadata are quarantined with a `.corrupt-*` name and rebuilt. Panel outage affects only sync:
+running Backends stay up, retries use bounded exponential backoff with jitter, and only the first outage is logged at
+warning level.
+
+Linux uninstall stops the Agent and all managed Backends, disables/removes the unit and executable, and preserves
+`/var/lib/hypanel-agent` by default. `--purge` additionally removes DataDir. Reinstall without an enrollment token is a
+same-node repair that preserves identity, desired state, Backend cache, usage state, and service directories. Supplying
+a fresh token explicitly selects re-enrollment; `HYPANEL_FORCE_REENROLL=0` can be used for a binary repair even when an
+ambient token exists.
+
 Global settings are a SQLite singleton. Update defaults are copied only when a new Node or Service is created; changing
 the default does not silently rewrite existing resources. The optional GitHub mirror is an HTTPS base URL applied only
 to compile-time-controlled official GitHub URLs. It cannot turn release workers into arbitrary URL downloaders.

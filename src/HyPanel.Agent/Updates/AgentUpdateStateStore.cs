@@ -24,9 +24,20 @@ public sealed class AgentUpdateStateStore(AgentEnrollmentOptions options)
     public async Task<AgentUpdateLocalState?> LoadAsync(CancellationToken cancellationToken)
     {
         if (!File.Exists(StatePath)) return null;
-        var bytes = await File.ReadAllBytesAsync(StatePath, cancellationToken);
-        return JsonSerializer.Deserialize(bytes, AgentSyncJsonSerializerContext.Default.AgentUpdateLocalState)
-               ?? throw new InvalidDataException("The Agent update state is invalid.");
+        try
+        {
+            var bytes = await File.ReadAllBytesAsync(StatePath, cancellationToken);
+            var state = JsonSerializer.Deserialize(bytes, AgentSyncJsonSerializerContext.Default.AgentUpdateLocalState)
+                   ?? throw new JsonException("The Agent update state is empty.");
+            if (state.UpdateId == Guid.Empty || string.IsNullOrWhiteSpace(state.InstallPath) || state.Size <= 0)
+                throw new InvalidDataException("The Agent update state is invalid.");
+            return state;
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidDataException(
+                "The Agent update state is corrupt; restore it to preserve rollback context.", exception);
+        }
     }
 
     public Task SaveAsync(AgentUpdateLocalState state, CancellationToken cancellationToken) =>

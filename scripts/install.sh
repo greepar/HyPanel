@@ -7,6 +7,13 @@ fail() { printf '%s\n' "install.sh: $*" >&2; exit 1; }
 note() { printf '%s\n' "install.sh: $*" >&2; }
 
 OS=$(uname -s 2>/dev/null || true)
+MODE=install
+case "${1:-}" in
+    '') ;;
+    --uninstall) MODE=uninstall ;;
+    --purge) MODE=purge ;;
+    *) fail "usage: install.sh [--uninstall|--purge]" ;;
+esac
 MACOS_USER_INSTALL=0
 if [ -z "${HYPANEL_INSTALL_ROOT:-}" ]; then
     if [ "$(id -u)" != "0" ]; then
@@ -16,8 +23,33 @@ if [ -z "${HYPANEL_INSTALL_ROOT:-}" ]; then
         case "$HOME" in /*) ;; *) fail "HOME must be an absolute path" ;; esac
     fi
 fi
+
+if [ "$MODE" != install ]; then
+    [ "$OS" = Linux ] || fail "$MODE is currently supported only for Linux"
+    [ "$(id -u)" = 0 ] || fail "$MODE must be run as root"
+    command -v systemctl >/dev/null 2>&1 || fail "$MODE requires systemd"
+    note "stopping and disabling hypanel-agent.service"
+    if systemctl cat hypanel-agent.service >/dev/null 2>&1; then
+        systemctl stop hypanel-agent.service || fail "could not stop hypanel-agent.service"
+        systemctl is-active --quiet hypanel-agent.service && fail "hypanel-agent.service is still running"
+    elif pgrep -f '^/opt/hypanel/agent/HyPanel.Agent$' >/dev/null 2>&1; then
+        fail "Agent is running without the expected systemd unit; stop it before uninstalling"
+    fi
+    systemctl disable hypanel-agent.service || true
+    rm -f /etc/systemd/system/hypanel-agent.service
+    systemctl daemon-reload
+    rm -rf /opt/hypanel/agent
+    if [ "$MODE" = purge ]; then
+        rm -rf /var/lib/hypanel-agent
+        note "Agent executable, service, and data were removed"
+    else
+        note "Agent executable and service were removed; /var/lib/hypanel-agent was preserved"
+    fi
+    exit 0
+fi
+
 : "${HYPANEL_PANEL_URL:?HYPANEL_PANEL_URL is required}"
-: "${HYPANEL_ENROLLMENT_TOKEN:?HYPANEL_ENROLLMENT_TOKEN is required}"
+HYPANEL_ENROLLMENT_TOKEN=${HYPANEL_ENROLLMENT_TOKEN:-}
 
 case "$HYPANEL_ENROLLMENT_TOKEN" in *'
 '*) fail "HYPANEL_ENROLLMENT_TOKEN must not contain a newline" ;; esac
@@ -116,6 +148,14 @@ case "$OS" in
 esac
 BOOTSTRAP_ENV="$DATA_DIR/bootstrap.env"
 REENROLL_BACKUP="$DATA_DIR/.re-enrollment-backup.$$"
+if [ -n "$HYPANEL_ENROLLMENT_TOKEN" ]; then DEFAULT_FORCE_REENROLL=1; else DEFAULT_FORCE_REENROLL=0; fi
+FORCE_REENROLL=${HYPANEL_FORCE_REENROLL:-$DEFAULT_FORCE_REENROLL}
+case "$FORCE_REENROLL" in 0|1) ;; *) fail "HYPANEL_FORCE_REENROLL must be 0 or 1" ;; esac
+HAS_CREDENTIALS=0
+[ -s "$DATA_DIR/credentials.json" ] && HAS_CREDENTIALS=1
+if [ "$HAS_CREDENTIALS" = 0 ] || [ "$FORCE_REENROLL" = 1 ]; then
+    [ -n "$HYPANEL_ENROLLMENT_TOKEN" ] || fail "HYPANEL_ENROLLMENT_TOKEN is required for enrollment"
+fi
 MACOS_SERVICE_DOMAIN=
 MACOS_PLIST=
 if [ "$OS" = Darwin ]; then
@@ -327,9 +367,8 @@ if [ "$STAGING_INSTALL" = 0 ] && [ "$OS" = Linux ] && { command -v systemctl >/d
             fail "a service user is required but useradd/adduser is unavailable"
         fi
     fi
-    chown "$AGENT_USER" "$DATA_DIR"
     mkdir -p "$INSTALL_ROOT"
-    chown "$AGENT_USER" "$INSTALL_ROOT"
+    chown "$AGENT_USER:$AGENT_USER" "$DATA_DIR" "$INSTALL_ROOT"
     chmod 750 "$INSTALL_ROOT"
 fi
 umask 077
@@ -353,20 +392,26 @@ write_proxy_env() {
     write_optional_env no_proxy "${no_proxy:-}"
 }
 {
-    printf 'HYPANEL_PANEL_URL="%s"\n' "$(escape_env "$PANEL_URL")"
-    printf 'HYPANEL_ENROLLMENT_TOKEN="%s"\n' "$(escape_env "$HYPANEL_ENROLLMENT_TOKEN")"
+    if [ "$HAS_CREDENTIALS" = 0 ] || [ "$FORCE_REENROLL" = 1 ]; then
+        printf 'HYPANEL_PANEL_URL="%s"\n' "$(escape_env "$PANEL_URL")"
+        printf 'HYPANEL_ENROLLMENT_TOKEN="%s"\n' "$(escape_env "$HYPANEL_ENROLLMENT_TOKEN")"
+    fi
     printf 'HYPANEL_DATA_DIR="%s"\n' "$(escape_env "$DATA_DIR")"
     write_proxy_env
 } > "$BOOTSTRAP_ENV"
 chmod 600 "$BOOTSTRAP_ENV"
-[ -n "$AGENT_USER" ] && chown "$AGENT_USER" "$BOOTSTRAP_ENV"
+[ -n "$AGENT_USER" ] && chown "$AGENT_USER:$AGENT_USER" "$BOOTSTRAP_ENV"
 
 service_stop() {
     [ "$STAGING_INSTALL" = 1 ] && return 0
     case "$OS" in
         Linux)
             if [ "$IS_OPENWRT" = 1 ] && [ -x /etc/init.d/hypanel-agent ]; then /etc/init.d/hypanel-agent stop || true
-            elif command -v systemctl >/dev/null 2>&1; then systemctl stop hypanel-agent.service || true
+            elif command -v systemctl >/dev/null 2>&1; then
+                if systemctl cat hypanel-agent.service >/dev/null 2>&1; then
+                    systemctl stop hypanel-agent.service || fail "could not stop hypanel-agent.service"
+                    systemctl is-active --quiet hypanel-agent.service && fail "hypanel-agent.service is still running"
+                fi
             elif command -v rc-service >/dev/null 2>&1; then rc-service hypanel-agent stop || true
             fi ;;
         Darwin) launchctl bootout "$MACOS_SERVICE_DOMAIN" "$MACOS_PLIST" >/dev/null 2>&1 || true ;;
@@ -384,18 +429,36 @@ service_start() {
         Darwin) launchctl bootstrap "$MACOS_SERVICE_DOMAIN" "$MACOS_PLIST" ;;
     esac
 }
+service_is_running() {
+    case "$OS" in
+        Linux)
+            if [ "$IS_OPENWRT" = 1 ]; then /etc/init.d/hypanel-agent running >/dev/null 2>&1
+            elif command -v systemctl >/dev/null 2>&1; then systemctl is-active --quiet hypanel-agent.service
+            elif command -v rc-service >/dev/null 2>&1; then rc-service hypanel-agent status >/dev/null 2>&1
+            else return 1
+            fi ;;
+        Darwin) launchctl print "$MACOS_SERVICE_DOMAIN/com.hypanel.agent" >/dev/null 2>&1 ;;
+    esac
+}
 
 service_stop
 mkdir "$REENROLL_BACKUP"
 chmod 700 "$REENROLL_BACKUP"
-for state_file in credentials.json state.json command-state.json usage-state.json; do
-    if [ -e "$DATA_DIR/$state_file" ]; then mv "$DATA_DIR/$state_file" "$REENROLL_BACKUP/$state_file"; fi
-done
+if [ "$HAS_CREDENTIALS" = 0 ] || [ "$FORCE_REENROLL" = 1 ]; then
+    for state_file in credentials.json state.json command-state.json usage-state.json agent-update-state.json; do
+        if [ -e "$DATA_DIR/$state_file" ]; then mv "$DATA_DIR/$state_file" "$REENROLL_BACKUP/$state_file"; fi
+    done
+    if [ -d "$DATA_DIR/services" ]; then mv "$DATA_DIR/services" "$REENROLL_BACKUP/services"; fi
+fi
 HAD_OLD=0
 if [ -e "$INSTALL_ROOT" ]; then mv "$INSTALL_ROOT" "$BACKUP_INSTALL"; HAD_OLD=1; fi
 mv "$STAGED_INSTALL" "$INSTALL_ROOT"
-chmod 755 "$INSTALL_ROOT"
-[ -n "$AGENT_USER" ] && chown "$AGENT_USER" "$INSTALL_ROOT" "$AGENT_PATH"
+if [ -n "$AGENT_USER" ]; then
+    chmod 750 "$INSTALL_ROOT"
+    chown "$AGENT_USER:$AGENT_USER" "$INSTALL_ROOT" "$AGENT_PATH"
+else
+    chmod 755 "$INSTALL_ROOT"
+fi
 
 case "$OS" in
     Linux)
@@ -414,12 +477,21 @@ EOF
 Description=HyPanel Agent
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 [Service]
 Type=simple
 EnvironmentFile=$BOOTSTRAP_ENV
 ExecStart=$AGENT_PATH
+WorkingDirectory=$DATA_DIR
 Restart=on-failure
 RestartSec=5
+KillSignal=SIGTERM
+KillMode=control-group
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
 User=$AGENT_USER
 Group=$AGENT_USER
 [Install]
@@ -458,6 +530,8 @@ esac
 if ! service_start; then
     note "new agent failed to start; restoring previous binary"
     rm -rf "$INSTALL_ROOT"
+    rm -rf "$DATA_DIR/services"
+    rm -f "$DATA_DIR/agent-update-state.json"
     for state_file in "$REENROLL_BACKUP"/*; do [ -e "$state_file" ] && mv "$state_file" "$DATA_DIR/"; done
     rmdir "$REENROLL_BACKUP"
     [ "$HAD_OLD" = 1 ] && mv "$BACKUP_INSTALL" "$INSTALL_ROOT" && service_start || true
@@ -465,8 +539,14 @@ if ! service_start; then
 fi
 
 elapsed=0
+stable=0
 while [ "$elapsed" -lt 30 ]; do
-    if [ -s "$DATA_DIR/credentials.json" ]; then
+    if [ -s "$DATA_DIR/credentials.json" ] && service_is_running; then
+        stable=$((stable + 1))
+    else
+        stable=0
+    fi
+    if [ "$stable" -ge 3 ]; then
         {
             printf 'HYPANEL_DATA_DIR="%s"\n' "$(escape_env "$DATA_DIR")"
             write_proxy_env
@@ -474,7 +554,11 @@ while [ "$elapsed" -lt 30 ]; do
         chmod 600 "$BOOTSTRAP_ENV"
         rm -rf "$REENROLL_BACKUP"
         rm -rf "$BACKUP_INSTALL"
-        note "enrollment completed successfully"
+        if [ "$HAS_CREDENTIALS" = 1 ] && [ "$FORCE_REENROLL" = 0 ]; then
+            note "same-node reinstall completed; existing identity and state were preserved"
+        else
+            note "enrollment completed successfully"
+        fi
         exit 0
     fi
     sleep 1
@@ -484,7 +568,8 @@ done
 note "agent did not create credentials.json within 30 seconds; restoring previous binary"
 service_stop
 rm -rf "$INSTALL_ROOT"
-rm -f "$DATA_DIR/credentials.json" "$DATA_DIR/state.json" "$DATA_DIR/command-state.json" "$DATA_DIR/usage-state.json"
+rm -rf "$DATA_DIR/services"
+rm -f "$DATA_DIR/credentials.json" "$DATA_DIR/state.json" "$DATA_DIR/command-state.json" "$DATA_DIR/usage-state.json" "$DATA_DIR/agent-update-state.json"
 for state_file in "$REENROLL_BACKUP"/*; do [ -e "$state_file" ] && mv "$state_file" "$DATA_DIR/"; done
 rmdir "$REENROLL_BACKUP"
 if [ "$HAD_OLD" = 1 ]; then mv "$BACKUP_INSTALL" "$INSTALL_ROOT"; service_start || true; fi

@@ -21,6 +21,7 @@ public sealed class AgentUpdater(
     private static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan SelfTestTimeout = TimeSpan.FromSeconds(20);
     private const long MaximumExtractedBinarySize = 512L * 1024 * 1024;
+    private const long MaximumArchiveSize = 512L * 1024 * 1024;
     private int _applying;
 
     public async Task RecoverAsync(CancellationToken cancellationToken)
@@ -89,10 +90,13 @@ public sealed class AgentUpdater(
             var stagedPath = StagedExecutablePath(installPath);
             try
             {
+                DiskSpace.Require(Path.GetDirectoryName(installPath)!, offer.Size);
                 logger.LogInformation("Downloading Agent update {Version} for {Rid}.", offer.Version, offer.Rid);
                 await DownloadAsync(offer, credentials, archivePath, cancellationToken);
                 logger.LogInformation("Extracting verified Agent update {Version}.", offer.Version);
                 await ExtractAgentAsync(archivePath, stagedPath, cancellationToken);
+                DiskSpace.Require(Path.GetDirectoryName(installPath)!,
+                    checked(new FileInfo(stagedPath).Length * 2));
                 logger.LogInformation("Running self-test for Agent update {Version}.", offer.Version);
                 await RunSelfTestAsync(stagedPath, offer, cancellationToken);
                 state = state with { Status = AgentUpdateStatus.Staged };
@@ -123,7 +127,7 @@ public sealed class AgentUpdater(
         else if (!SemanticVersion.TryParse(offer.Version, out _)) error = "version_invalid";
         else if (offer.Rid != BuildInfo.RuntimeIdentifier) error = "rid_mismatch";
         else if (!IsSafeFileName(offer.FileName) || offer.FileName != ExpectedFileName(offer)) error = "filename_invalid";
-        else if (offer.Size <= 0) error = "size_invalid";
+        else if (offer.Size is <= 0 or > MaximumArchiveSize) error = "size_invalid";
         else if (!IsSha256(offer.Sha256)) error = "sha256_invalid";
         return error.Length == 0;
     }
@@ -345,7 +349,12 @@ public sealed class AgentUpdater(
         && value == Path.GetFileName(value) && !value.Contains('/') && !value.Contains('\\') && !value.Contains('\0');
     private static bool IsSha256(string value) => value.Length == 64 && value.All(character =>
         character is >= '0' and <= '9' or >= 'a' and <= 'f');
-    private static string SafeError(Exception exception) => exception is InvalidDataException ? exception.Message : "update_failed";
+    private static string SafeError(Exception exception) => exception switch
+    {
+        InvalidDataException => exception.Message,
+        IOException ioException when (ioException.HResult & 0xffff) is 28 or 112 => "insufficient_space",
+        _ => "update_failed"
+    };
     private static string Quote(string value) => '"' + value.Replace("\"", "\\\"", StringComparison.Ordinal) + '"';
     internal static string PreviousPath(string installPath) => installPath + ".previous";
     internal static string NextPath(string installPath) => installPath + ".next";

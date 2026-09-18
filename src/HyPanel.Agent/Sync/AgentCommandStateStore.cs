@@ -19,9 +19,22 @@ public sealed class AgentCommandStateStore(AgentEnrollmentOptions options)
             return new AgentCommandStoreState([], []);
         }
 
-        var bytes = await File.ReadAllBytesAsync(StatePath, cancellationToken);
-        return JsonSerializer.Deserialize(bytes, AgentSyncJsonSerializerContext.Default.AgentCommandStoreState)
-            ?? throw new InvalidOperationException("The Agent command state file is invalid.");
+        try
+        {
+            var bytes = await File.ReadAllBytesAsync(StatePath, cancellationToken);
+            var state = JsonSerializer.Deserialize(bytes, AgentSyncJsonSerializerContext.Default.AgentCommandStoreState)
+                ?? throw new JsonException("The Agent command state file is empty.");
+            if (state.PendingResults is null || state.RecentCompletedIds is null ||
+                state.PendingResults.Any(result => result.CommandId == Guid.Empty) ||
+                state.RecentCompletedIds.Any(id => id == Guid.Empty))
+                throw new InvalidDataException("The Agent command state file is invalid.");
+            return state;
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidDataException)
+        {
+            AtomicFile.Quarantine(StatePath);
+            return new AgentCommandStoreState([], []);
+        }
     }
 
     public Task SaveAsync(AgentCommandStoreState state, CancellationToken cancellationToken) =>

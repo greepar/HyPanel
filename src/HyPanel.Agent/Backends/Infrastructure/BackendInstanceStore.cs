@@ -25,10 +25,18 @@ public sealed class BackendInstanceStore(AgentEnrollmentOptions options)
     {
         var metadata = Path.Combine(GetInstanceDirectory(serviceId), MetadataFileName);
         if (!File.Exists(metadata)) return null;
-        var bytes = await File.ReadAllBytesAsync(metadata, cancellationToken);
-        return JsonSerializer.Deserialize(bytes,
-                   BackendInfrastructureJsonSerializerContext.Default.BackendInstanceMetadata)
-               ?? throw new InvalidDataException("Service desired-state metadata is invalid.");
+        try
+        {
+            var bytes = await File.ReadAllBytesAsync(metadata, cancellationToken);
+            return JsonSerializer.Deserialize(bytes,
+                       BackendInfrastructureJsonSerializerContext.Default.BackendInstanceMetadata)
+                   ?? throw new JsonException("Service desired-state metadata is empty.");
+        }
+        catch (JsonException)
+        {
+            AtomicFile.Quarantine(metadata);
+            return null;
+        }
     }
 
     public async Task<string> SaveConfigAsync(ServiceDesiredState desiredState, RenderedBackendConfig config,
@@ -37,10 +45,35 @@ public sealed class BackendInstanceStore(AgentEnrollmentOptions options)
         var directory = GetInstanceDirectory(desiredState.ServiceId);
         ValidateConfig(desiredState, config);
         Directory.CreateDirectory(directory);
-        var configPath = ManagedPath(directory, config.FileName);
-        await WriteAtomicAsync(directory, config.FileName, config.Content, cancellationToken);
-        var metadata = new BackendInstanceMetadata(desiredState, config.FileName, config.Sha256, DateTimeOffset.UtcNow);
-        await WriteMetadataAsync(directory, metadata, cancellationToken);
+        RestrictDirectory(directory);
+        var previous = await TryLoadAsync(desiredState.ServiceId, cancellationToken);
+        var storedName = $"{config.Sha256[..16]}-{config.FileName}";
+        var configPath = ManagedPath(directory, storedName);
+        try
+        {
+            await WriteAtomicAsync(directory, storedName, config.Content, cancellationToken);
+            var metadata = new BackendInstanceMetadata(desiredState, storedName, config.Sha256, DateTimeOffset.UtcNow);
+            await WriteMetadataAsync(directory, metadata, cancellationToken);
+        }
+        catch
+        {
+            if (previous?.ConfigFileName != storedName && File.Exists(configPath)) File.Delete(configPath);
+            throw;
+        }
+
+        if (previous is not null && previous.ConfigFileName != storedName)
+        {
+            var oldConfig = ManagedPath(directory, previous.ConfigFileName);
+            try
+            {
+                if (File.Exists(oldConfig)) File.Delete(oldConfig);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // The new metadata/config pair is already committed. A stale secret-protected
+                // config is safer than reporting the successful commit as failed.
+            }
+        }
         return configPath;
     }
 
@@ -53,6 +86,7 @@ public sealed class BackendInstanceStore(AgentEnrollmentOptions options)
         if (!File.Exists(config)) throw new FileNotFoundException("Current service config does not exist.", config);
         var snapshot = Path.Combine(directory, LastKnownGoodDirectory);
         Directory.CreateDirectory(snapshot);
+        RestrictDirectory(snapshot);
         await WriteAtomicAsync(snapshot, metadata.ConfigFileName,
             await File.ReadAllBytesAsync(config, cancellationToken), cancellationToken);
         await WriteMetadataAsync(snapshot, metadata, cancellationToken);
@@ -119,7 +153,13 @@ public sealed class BackendInstanceStore(AgentEnrollmentOptions options)
     private static bool IsSafeFileName(string value) => !string.IsNullOrWhiteSpace(value) &&
                                                         Path.GetFileName(value) == value && value.All(character =>
                                                             char.IsAsciiLetterOrDigit(character) ||
-                                                            character is '.' or '-' or '_');
+                                                             character is '.' or '-' or '_');
+
+    private static void RestrictDirectory(string path)
+    {
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+    }
 
     private static string ManagedPath(string directory, string name)
     {

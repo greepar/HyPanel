@@ -178,6 +178,8 @@ Running
 Stopping
 Failed
 Updating
+Restarting
+Backoff
 ```
 
 Include a concise error code/message for failure without leaking secrets.

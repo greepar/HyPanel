@@ -25,6 +25,8 @@ public sealed class BackendProcessSupervisor(ILogger<BackendProcessSupervisor> l
         try
         {
             if (managed.Process is { HasExited: false }) return managed.Status(ServiceRuntimeStatus.Running);
+            managed.Process?.Dispose();
+            managed.Process = null;
             ValidateSpec(spec);
             var startInfo = new ProcessStartInfo(spec.FileName)
             {
@@ -79,7 +81,10 @@ public sealed class BackendProcessSupervisor(ILogger<BackendProcessSupervisor> l
             var process = managed.Process;
             if (process is null || process.HasExited) return managed.Status(ServiceRuntimeStatus.Stopped);
             managed.IntentionalStop = true;
-            _ = process.CloseMainWindow();
+            if (OperatingSystem.IsWindows())
+                _ = process.CloseMainWindow();
+            else
+                _ = UnixSignal.TryTerminate(process.Id);
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(timeout);
             try
