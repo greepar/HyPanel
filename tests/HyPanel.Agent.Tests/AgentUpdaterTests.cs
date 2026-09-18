@@ -62,6 +62,7 @@ public sealed class AgentUpdaterTests
         File.WriteAllText(AgentUpdater.PreviousPath(state.InstallPath), "old");
         File.WriteAllText(AgentUpdater.StagedExecutablePath(state.InstallPath), "staged");
         File.WriteAllText(AgentUpdater.StagingArchivePath(state.InstallPath), "archive");
+        File.WriteAllText(AgentUpdater.RollbackArmedPath(state.InstallPath), "armed");
         var updater = CreateUpdater(store, new StaticHandler(Array.Empty<byte>()));
 
         await updater.MarkSyncSucceededAsync(CancellationToken.None);
@@ -70,6 +71,7 @@ public sealed class AgentUpdaterTests
         Assert.IsFalse(File.Exists(AgentUpdater.PreviousPath(state.InstallPath)));
         Assert.IsFalse(File.Exists(AgentUpdater.StagedExecutablePath(state.InstallPath)));
         Assert.IsFalse(File.Exists(AgentUpdater.StagingArchivePath(state.InstallPath)));
+        Assert.IsFalse(File.Exists(AgentUpdater.RollbackArmedPath(state.InstallPath)));
     }
 
     [TestMethod]

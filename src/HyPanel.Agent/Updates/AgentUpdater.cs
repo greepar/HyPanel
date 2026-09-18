@@ -361,6 +361,7 @@ public sealed class AgentUpdater(
     internal static string NextPath(string installPath) => installPath + ".next";
     internal static string StagingArchivePath(string installPath) => installPath + ".update-archive";
     internal static string StagedExecutablePath(string installPath) => installPath + ".staged";
+    internal static string RollbackArmedPath(string installPath) => installPath + ".rollback-armed";
     internal static void ReplacePreservingOld(string source, string target, string previous)
     {
         TryDelete(previous);
@@ -390,6 +391,7 @@ public sealed class AgentUpdater(
         TryDelete(StagingArchivePath(installPath));
         TryDelete(StagedExecutablePath(installPath));
         TryDelete(NextPath(installPath));
+        TryDelete(RollbackArmedPath(installPath));
         TryDelete(installPath + ".update-helper.exe");
     }
     internal static void TryDelete(string path) { try { File.Delete(path); } catch (IOException) { } catch (UnauthorizedAccessException) { } }

@@ -366,6 +366,12 @@ critical-state corruption from producing an unbounded Agent crash loop. Broader 
 `ProtectSystem=strict`, `PrivateDevices`, or restricted address families is not enabled because the Agent must write
 its install/DataDir, inspect host metrics, download artifacts, and launch network-facing Backend processes.
 
+The Linux unit also has a fixed-path update guard. An update normally uses `execv` and never involves systemd. If the
+replacement exits before it can run updater recovery, the first systemd restart arms the guard and retries once; a
+second failed start atomically restores `.previous` before start-limit is reached. A verified sync removes the guard and
+all staging files. The guard reads only HyPanel's fixed update-state and executable sibling paths and accepts no remote
+arguments.
+
 Agent stop/restart deliberately stops its supervised Backend children through the systemd control group. On startup,
 the Agent reads the last fully applied desired state and recreates each enabled Backend. HyPanel does not adopt unknown
 or detached processes from PID files: PID reuse cannot be validated safely across all supported Backends, and an

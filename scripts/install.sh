@@ -31,7 +31,7 @@ if [ "$MODE" != install ]; then
     note "stopping and disabling hypanel-agent.service"
     if systemctl cat hypanel-agent.service >/dev/null 2>&1; then
         systemctl stop hypanel-agent.service || fail "could not stop hypanel-agent.service"
-        systemctl is-active --quiet hypanel-agent.service && fail "hypanel-agent.service is still running"
+        if systemctl is-active --quiet hypanel-agent.service; then fail "hypanel-agent.service is still running"; fi
     elif pgrep -f '^/opt/hypanel/agent/HyPanel.Agent$' >/dev/null 2>&1; then
         fail "Agent is running without the expected systemd unit; stop it before uninstalling"
     fi
@@ -410,7 +410,7 @@ service_stop() {
             elif command -v systemctl >/dev/null 2>&1; then
                 if systemctl cat hypanel-agent.service >/dev/null 2>&1; then
                     systemctl stop hypanel-agent.service || fail "could not stop hypanel-agent.service"
-                    systemctl is-active --quiet hypanel-agent.service && fail "hypanel-agent.service is still running"
+                    if systemctl is-active --quiet hypanel-agent.service; then fail "hypanel-agent.service is still running"; fi
                 fi
             elif command -v rc-service >/dev/null 2>&1; then rc-service hypanel-agent stop || true
             fi ;;
@@ -482,6 +482,7 @@ StartLimitBurst=5
 [Service]
 Type=simple
 EnvironmentFile=$BOOTSTRAP_ENV
+ExecStartPre=/bin/sh -c 'if [ -f $AGENT_PATH.previous ] && grep -q '"'"'"status":"RestartPending"'"'"' $DATA_DIR/agent-update-state.json 2>/dev/null; then if [ -f $AGENT_PATH.rollback-armed ]; then mv -f $AGENT_PATH $AGENT_PATH.failed && mv -f $AGENT_PATH.previous $AGENT_PATH && rm -f $AGENT_PATH.rollback-armed; else : > $AGENT_PATH.rollback-armed; fi; fi'
 ExecStart=$AGENT_PATH
 WorkingDirectory=$DATA_DIR
 Restart=on-failure
