@@ -1,49 +1,86 @@
-import type { Service, ServiceForm, ServicePayload } from './domain'
+import type { BackendDefinition, BackendField, Service, ServiceForm, ServicePayload } from './domain'
 
-export type BackendType = ServiceForm['backendType']
-export type BackendDefinition = { name: string; core: string; protocol: string; description: string; badge: string }
-
-export const backends: Record<BackendType, BackendDefinition> = {
+// Display-only placeholders so existing views paint correctly before the server definitions arrive. Forms and payloads
+// always come from the server-provided definitions, so a new backend never requires a frontend change.
+const displayFallback: Record<string, { name: string; core: string; protocol: string; description: string; badge: string }> = {
   hysteria2: { name: 'Hysteria 2 官方服务端', core: 'Hysteria 2', protocol: 'Hysteria 2 / QUIC', description: '适合高延迟或不稳定网络。', badge: 'HY2' },
   xray: { name: 'Xray REALITY', core: 'Xray-core', protocol: 'VLESS + TCP + REALITY', description: 'VLESS Vision 与 REALITY 握手。', badge: 'XR' },
   mihomo: { name: 'Mihomo Shadowsocks', core: 'Mihomo', protocol: 'Shadowsocks 2022', description: 'Shadowsocks 2022 入站，支持 UDP。', badge: 'MI' },
   'sing-box': { name: 'sing-box Shadowsocks', core: 'sing-box', protocol: 'Shadowsocks 2022', description: 'Shadowsocks 2022 入站，支持 UDP。', badge: 'SB' },
 }
 
-export const backendFor = (value: string) => backends[value as BackendType] ?? { name: value, core: value, protocol: '未知协议', description: '未知后端', badge: '?' }
-export const emptyService = (type: BackendType = 'hysteria2'): ServiceForm => type === 'hysteria2'
-  ? { backendType: type, name: '', version: '2.12.2', listenHost: '0.0.0.0', port: '443', certificateId: '', authPassword: '', masqueradeUrl: 'https://example.com/', obfsPassword: '', upMbps: '100', downMbps: '100' }
-  : type === 'xray'
-    ? { backendType: type, name: '', version: '26.3.27', listenHost: '0.0.0.0', port: '443', realityPrivateKey: '', realityPublicKey: '', shortId: '', serverName: '', destination: '', fingerprint: 'chrome' }
-    : { backendType: type, name: '', version: type === 'mihomo' ? '1.19.30' : '1.14.0', listenHost: '0.0.0.0', port: type === 'mihomo' ? '24446' : '24447', password: '' }
+let definitions: BackendDefinition[] = []
+
+export const setBackendDefinitions = (value: BackendDefinition[]) => { definitions = value }
+export const backendDefinitions = () => definitions
+
+export function backendFor(value: string): BackendDefinition {
+  const found = definitions.find(item => item.backendType === value)
+  if (found) return found
+  const fallback = displayFallback[value]
+  return {
+    backendType: value,
+    name: fallback?.name ?? value,
+    core: fallback?.core ?? value,
+    protocol: fallback?.protocol ?? '未知协议',
+    description: fallback?.description ?? '未知后端',
+    badge: fallback?.badge ?? '?',
+    defaultVersion: null,
+    fields: [],
+  }
+}
 
 export function parseConfig(json: string): Record<string, unknown> {
   try { return JSON.parse(json) as Record<string, unknown> } catch { return {} }
 }
 
-export function formFor(service: Service): ServiceForm {
-  const c = parseConfig(service.configJson)
-  const base = { name: service.name, version: service.backendVersion, listenHost: String(c.listenHost ?? '0.0.0.0'), port: String(c.listenPort ?? 443) }
-  if (service.backendType === 'xray') return { ...emptyService('xray'), ...base, realityPrivateKey: String(c.realityPrivateKey ?? ''), realityPublicKey: String(c.realityPublicKey ?? ''), shortId: String(c.shortId ?? ''), serverName: String(c.serverName ?? ''), destination: String(c.destination ?? ''), fingerprint: String(c.fingerprint ?? 'chrome') } as ServiceForm
-  if (service.backendType === 'mihomo' || service.backendType === 'sing-box') return { ...emptyService(service.backendType), ...base, password: String(c.password ?? '') } as ServiceForm
-  return { ...emptyService(), ...base, certificateId: String(c.certificateId ?? ''), authPassword: String(c.authPassword ?? ''), masqueradeUrl: String(c.masqueradeUrl ?? ''), obfsPassword: String(c.obfsPassword ?? ''), upMbps: String(c.upMbps ?? 100), downMbps: String(c.downMbps ?? 100) } as ServiceForm
+export function emptyService(definition: BackendDefinition): ServiceForm {
+  const values: Record<string, string> = {}
+  for (const field of definition.fields) if (field.defaultValue != null) values[field.key] = field.defaultValue
+  return { backendType: definition.backendType, name: '', version: definition.defaultVersion ?? '', values }
 }
 
-export function payloadFor(form: ServiceForm): ServicePayload {
-  const common = { listenHost: form.listenHost.trim(), listenPort: Number(form.port) }
-  if (!form.name.trim() || !form.version.trim() || !common.listenHost || !Number.isInteger(common.listenPort) || common.listenPort < 1 || common.listenPort > 65535) throw new Error('请完整填写名称、版本和有效端口。')
-  let config: Record<string, unknown>
-  if (form.backendType === 'hysteria2') {
-    if (!form.certificateId || !form.authPassword || !form.masqueradeUrl.trim() || Number(form.upMbps) <= 0 || Number(form.downMbps) <= 0) throw new Error('请完整填写 Hysteria 2 证书、认证和带宽配置。')
-    config = { ...common, certificateId: form.certificateId, authPassword: form.authPassword, masqueradeUrl: form.masqueradeUrl, ...(form.obfsPassword ? { obfsPassword: form.obfsPassword } : {}), upMbps: Number(form.upMbps), downMbps: Number(form.downMbps) }
-  } else if (form.backendType === 'xray') {
-    if (!form.realityPrivateKey || !form.realityPublicKey.trim() || !form.shortId.trim() || !form.serverName.trim() || !form.destination.trim()) throw new Error('请完整填写 Xray REALITY 配置。')
-    config = { ...common, flow: 'xtls-rprx-vision', realityPrivateKey: form.realityPrivateKey, realityPublicKey: form.realityPublicKey, shortId: form.shortId, serverName: form.serverName, destination: form.destination, fingerprint: form.fingerprint }
-  } else {
-    if (!form.password) throw new Error('请填写 Shadowsocks 2022 密钥。')
-    config = { ...common, method: '2022-blake3-aes-256-gcm', password: form.password, udp: true }
+export function formFor(service: Service, definition: BackendDefinition): ServiceForm {
+  const config = parseConfig(service.configJson)
+  const values: Record<string, string> = {}
+  for (const field of definition.fields) {
+    if (field.configKey == null) continue
+    const raw = config[field.configKey]
+    values[field.key] = raw == null ? '' : String(raw)
+  }
+  return { backendType: service.backendType, name: service.name, version: service.backendVersion, values }
+}
+
+export function payloadFor(form: ServiceForm, definition: BackendDefinition): ServicePayload {
+  if (!form.name.trim()) throw new Error('请填写服务名称。')
+  if (!form.version.trim()) throw new Error('请填写后端版本。')
+  const config: Record<string, unknown> = {}
+  for (const field of definition.fields) {
+    if (field.configKey == null) continue
+    if (field.kind === 'fixed') { config[field.configKey] = fixedValue(field); continue }
+    const raw = (form.values[field.key] ?? '').trim()
+    if (!raw) {
+      if (field.required) throw new Error(`请填写${field.label}。`)
+      continue
+    }
+    if (field.kind === 'number') {
+      const value = Number(raw)
+      if (!Number.isFinite(value)) throw new Error(`请填写有效的${field.label}。`)
+      if (field.min != null && value < field.min) throw new Error(`${field.label}不能小于 ${field.min}。`)
+      if (field.max != null && value > field.max) throw new Error(`${field.label}不能大于 ${field.max}。`)
+      if (field.min != null && field.max != null && !Number.isInteger(value)) throw new Error(`${field.label}必须是整数。`)
+      config[field.configKey] = value
+      continue
+    }
+    config[field.configKey] = raw
   }
   return { name: form.name.trim(), backendType: form.backendType, backendVersion: form.version.trim(), configSchemaVersion: 1, configJson: JSON.stringify(config) }
+}
+
+function fixedValue(field: BackendField): unknown {
+  if (field.fixedKind === 'boolean') return field.fixed === 'true'
+  if (field.fixedKind === 'number') return Number(field.fixed)
+  return field.fixed
 }
 
 export const serviceFacts = (service: Service) => {
@@ -51,5 +88,6 @@ export const serviceFacts = (service: Service) => {
   const listen = `${String(c.listenHost ?? '0.0.0.0')}:${String(c.listenPort ?? '—')}`
   if (service.backendType === 'hysteria2') return [listen, `${c.upMbps ?? '?'} / ${c.downMbps ?? '?'} Mbps`, c.obfsPassword ? 'Salamander 混淆' : '无混淆']
   if (service.backendType === 'xray') return [listen, String(c.serverName ?? '未设置 SNI'), 'Vision + REALITY']
-  return [listen, String(c.method ?? 'Shadowsocks 2022'), c.udp === false ? '仅 TCP' : 'TCP + UDP']
+  if (service.backendType === 'mihomo' || service.backendType === 'sing-box') return [listen, String(c.method ?? 'Shadowsocks 2022'), c.udp === false ? '仅 TCP' : 'TCP + UDP']
+  return [listen, '自定义后端', '']
 }

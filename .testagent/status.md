@@ -5,12 +5,17 @@
 - Core backup/restore tests: PASS, 17/17. Covers WAL snapshot data, manifest/list metadata, retention, active download,
   traversal, oversized/invalid/incomplete/duplicate/SHA-corrupt archives, newer schema, MasterKey mismatch, corrupt
   credential/certificate key, same-schema restore, schema 11 migration and migration-failure emergency rollback.
-- Full tests: PASS, Shared 21 + Server 133 + Agent 151 = 305.
+- Full tests: PASS, Shared 21 + Server 134 + Agent 151 = 306.
 - Release solution build: PASS, 0 warnings / 0 errors.
 - Web production build: PASS.
 - Server NativeAOT: PASS for linux-x64 and linux-arm64.
 - `git diff --check`: PASS.
-- Production mutation/restore acceptance: pending formal release rollout.
+- Production mutation/restore acceptance: PASS on official `v0.4.7`. A live API backup restored Node, HY2/Xray,
+  encrypted Xray credential and certificate key, subscription, 8,888,888 usage bytes and settings after deliberate
+  mutation; Agent reconnect/listener convergence passed. Wrong-MasterKey CLI validation returned
+  `master_key_mismatch` and left the production DB SHA256 unchanged. Temporary resources were cleaned.
+- Phase 23 focused tests: PASS, 31/31 embedded-Web and backup/restore tests. Fresh DB desktop/mobile browser journey
+  verified Node/install and Settings certificate/backup paths; 390px Settings width is 390px with no horizontal overflow.
 
 ---
 

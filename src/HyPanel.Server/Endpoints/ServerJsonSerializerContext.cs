@@ -2,6 +2,7 @@ namespace HyPanel.Server.Endpoints;
 using HyPanel.Server.Updates;
 using HyPanel.Server.Persistence;
 using HyPanel.Server.Backup;
+using HyPanel.Server.Backends;
 
 using System.Text.Json.Serialization;
 using HyPanel.Shared.Contracts;
@@ -63,4 +64,8 @@ using HyPanel.Shared.Contracts;
 [JsonSerializable(typeof(RestoreRequest))]
 [JsonSerializable(typeof(RestoreResponse))]
 [JsonSerializable(typeof(BackupErrorResponse))]
+[JsonSerializable(typeof(BackendDefinitionResponse))]
+[JsonSerializable(typeof(BackendDefinitionResponse[]))]
+[JsonSerializable(typeof(BackendFieldDefinition))]
+[JsonSerializable(typeof(BackendDefaultsResponse))]
 internal sealed partial class ServerJsonSerializerContext : JsonSerializerContext;

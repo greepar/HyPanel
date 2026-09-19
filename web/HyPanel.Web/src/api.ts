@@ -1,4 +1,4 @@
-import type { Backup, BackupValidation, Certificate, GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Template, Usage, User, UserForm } from './domain'
+import type { BackendDefinition, Backup, BackupValidation, Certificate, GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Template, Usage, User, UserForm } from './domain'
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message) }
@@ -51,6 +51,29 @@ export class ApiClient {
   serverUpdate = () => this.request<ServerUpdate>('/api/admin/v1/server-update')
   updateServer = () => this.request<{ version: string }>('/api/admin/v1/server-update', { method: 'POST' })
   settings = () => this.request<GlobalSettings>('/api/admin/v1/settings')
+  backends = async (): Promise<BackendDefinition[]> => {
+    const raw = await this.request<{
+      backendType: string
+      displayName: string
+      core: string
+      protocol: string
+      description: string
+      badge: string
+      defaultVersion: string | null
+      fields: BackendDefinition['fields']
+    }[]>('/api/admin/v1/backends')
+    return raw.map(item => ({
+      backendType: item.backendType,
+      name: item.displayName,
+      core: item.core,
+      protocol: item.protocol,
+      description: item.description,
+      badge: item.badge,
+      defaultVersion: item.defaultVersion,
+      fields: item.fields,
+    }))
+  }
+  generateBackendDefaults = (backendType: string) => this.request<{ backendType: string; values: Record<string, string> }>(`/api/admin/v1/backends/${encodeURIComponent(backendType)}/defaults`, { method: 'POST' })
   updateSettings = (value: Pick<GlobalSettings, 'agentUpdateDefaultPolicy' | 'backendUpdateDefaultPolicy' | 'githubMirrorBaseUrl'>) => this.request('/api/admin/v1/settings', { method: 'PUT', body: JSON.stringify(value) })
   certificates = () => this.request<Certificate[]>('/api/admin/v1/certificates')
   createCertificate = (value: { name: string; certificatePem: string; privateKeyPem: string }) => this.request<Certificate>('/api/admin/v1/certificates', { method: 'POST', body: JSON.stringify(value) })

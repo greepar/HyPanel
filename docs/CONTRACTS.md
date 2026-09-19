@@ -405,3 +405,26 @@ Details? (only when safe)
 ```
 
 Do not expose stack traces or backend secrets to normal clients.
+
+## 12. Backend field definitions
+
+The Server is the single source of truth for how a service instance is configured. `GET /api/admin/v1/backends`
+(Admin-only) returns one definition per supported backend:
+
+```text
+backendType, displayName, core, protocol, description, badge, defaultVersion, fields[]
+field: key, configKey, label, kind(text|password|number|select|certificate|fixed),
+       required, secret, generate, defaultValue, placeholder, options[], fixed, fixedKind,
+       min, max, section
+```
+
+Invariants:
+
+- `configKey` matches the provider's config JSON key exactly; the frontend never invents configuration keys.
+- `defaultVersion` is the latest cached release for that backend, falling back to a compile-time version.
+- `fixed` fields are written verbatim into the config with the JSON type named by `fixedKind`.
+- `POST /api/admin/v1/backends/{backendType}/defaults` returns freshly generated values for that backend's generatable
+  secrets. It is Admin-only and never persists anything; the operator still submits the values with the service.
+- REALITY private/public keys form one pair and are always generated together. The private key is the canonical clamped
+  RFC 7748 scalar so it matches the official Xray tooling; the Server derives the public key locally.
+- Adding a backend requires only Server-side provider/catalog work; the web client renders new fields without a change.

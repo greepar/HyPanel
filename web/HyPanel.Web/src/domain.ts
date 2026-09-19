@@ -119,8 +119,34 @@ export type NodeIdentity = Pick<Node, 'id' | 'displayName'>
 export type ServiceRef = Service & { nodeId: string; nodeName: string }
 export type UserForm = { username: string; password: string; role: Role; enabled: boolean; trafficLimitBytes: string; expiresAtUtc: string }
 
-export type HyForm = { backendType: 'hysteria2'; name: string; version: string; listenHost: string; port: string; certificateId: string; authPassword: string; masqueradeUrl: string; obfsPassword: string; upMbps: string; downMbps: string }
-export type XrayForm = { backendType: 'xray'; name: string; version: string; listenHost: string; port: string; realityPrivateKey: string; realityPublicKey: string; shortId: string; serverName: string; destination: string; fingerprint: string }
-export type ShadowsocksForm = { backendType: 'mihomo' | 'sing-box'; name: string; version: string; listenHost: string; port: string; password: string }
-export type ServiceForm = HyForm | XrayForm | ShadowsocksForm
+export type BackendFieldKind = 'text' | 'password' | 'number' | 'certificate' | 'select' | 'fixed'
+export type BackendField = {
+  key: string
+  configKey: string | null
+  label: string
+  kind: BackendFieldKind
+  required: boolean
+  secret: boolean
+  generate: boolean
+  defaultValue: string | null
+  placeholder: string | null
+  options: string[]
+  fixed: string | null
+  fixedKind: 'string' | 'number' | 'boolean' | null
+  min: number | null
+  max: number | null
+  section: string
+}
+export type BackendDefinition = {
+  backendType: string
+  name: string
+  core: string
+  protocol: string
+  description: string
+  badge: string
+  defaultVersion: string | null
+  fields: BackendField[]
+}
+
+export type ServiceForm = { backendType: string; name: string; version: string; values: Record<string, string> }
 export type ServicePayload = { name: string; backendType: string; backendVersion: string; configSchemaVersion: 1; configJson: string }

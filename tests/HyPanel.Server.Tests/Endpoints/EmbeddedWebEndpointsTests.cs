@@ -21,6 +21,17 @@ public sealed class EmbeddedWebEndpointsTests
         StringAssert.Contains(policy, "img-src 'self' data:");
         StringAssert.Contains(policy, "frame-ancestors 'none'");
     }
+
+    [TestMethod]
+    public void ApplyIndexCacheHeaders_PreventsStaleUiAfterServerUpdate()
+    {
+        var context = new DefaultHttpContext();
+
+        EmbeddedWebEndpoints.ApplyIndexCacheHeaders(context.Response);
+
+        Assert.AreEqual("no-store", context.Response.Headers.CacheControl);
+        Assert.AreEqual("no-cache", context.Response.Headers.Pragma);
+    }
     [TestMethod]
     public void EmbeddedWebResources_ContainIndexAndReferencedAssets()
     {

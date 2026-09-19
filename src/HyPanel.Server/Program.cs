@@ -96,6 +96,7 @@ public static class Program
         AdminNodesEndpoints.Map(app);
         AdminServicesEndpoints.Map(app);
         AdminCertificatesEndpoints.Map(app);
+        AdminBackendEndpoints.Map(app);
         AdminServiceTemplateEndpoints.Map(app);
         AdminObservationEndpoints.Map(app);
         AdminHealthSummaryEndpoints.Map(app);

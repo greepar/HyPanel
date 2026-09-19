@@ -14,7 +14,10 @@ internal static class EmbeddedWebEndpoints
     public static void Map(IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/", static (HttpContext context) =>
-            WriteResourceAsync(context, IndexResourceName, "text/html; charset=utf-8"));
+        {
+            ApplyIndexCacheHeaders(context.Response);
+            return WriteResourceAsync(context, IndexResourceName, "text/html; charset=utf-8");
+        });
         endpoints.MapGet("/assets/{file}", static (string file, HttpContext context) =>
             WriteAssetAsync(context, file));
     }
@@ -58,6 +61,12 @@ internal static class EmbeddedWebEndpoints
         response.Headers["Referrer-Policy"] = "no-referrer";
         response.Headers["Content-Security-Policy"] =
             "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+    }
+
+    internal static void ApplyIndexCacheHeaders(HttpResponse response)
+    {
+        response.Headers.CacheControl = "no-store";
+        response.Headers.Pragma = "no-cache";
     }
 
     internal static bool IsSafeAssetFileName(string file) =>

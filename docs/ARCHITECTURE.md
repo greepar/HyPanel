@@ -491,3 +491,12 @@ HTTPS
 ```
 
 Scale architecture only when real usage demonstrates a bottleneck.
+
+### Backend-driven configuration surface
+
+The Server exposes a compile-time backend catalog through the Admin API: per-backend metadata plus typed field
+descriptors that name the exact provider config keys. The Preact editor renders those descriptors instead of hardcoding
+forms, so a new backend is added entirely server-side. New services request freshly generated defaults for generatable
+secrets; the Server generates Hysteria2 passwords, Shadowsocks 2022 keys, and Xray REALITY key pairs locally. REALITY
+uses an RFC 7748 X25519 implementation because the BCL has no X25519 API, and its output is verified against the
+official `xray x25519` tooling. Generation returns values only to the requesting Admin and stores nothing.

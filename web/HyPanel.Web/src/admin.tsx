@@ -1,17 +1,18 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { ApiClient } from "./api";
+import { ApiError, type ApiClient } from "./api";
 import {
   backendFor,
-  backends,
   emptyService,
   formFor,
   parseConfig,
   payloadFor,
   serviceFacts,
-  type BackendType,
+  setBackendDefinitions,
 } from "./backend";
 import type {
   AppRoute,
+  BackendDefinition,
+  BackendField,
   Backup,
   BackupValidation,
   Certificate,
@@ -394,7 +395,9 @@ function NodesPage({ api, setError }: PageProps) {
       const result = await api.installCommand(node.id, platform);
       setInstall({ node, platform, command: result.command });
     } catch (reason) {
-      setError(messageFor(reason, "无法生成安装命令"));
+      setError(reason instanceof ApiError && reason.status === 400
+        ? "无法生成安装命令。请使用 HTTPS 访问 Panel，并确认反向代理传递了 X-Forwarded-Proto。"
+        : messageFor(reason, "无法生成安装命令"));
     } finally {
       setBusy(false);
     }
@@ -968,7 +971,9 @@ function NodeSettings({
       await navigator.clipboard.writeText(result.command);
       setError("重新安装命令已复制。");
     } catch (reason) {
-      setError(messageFor(reason, "无法生成重新安装命令"));
+      setError(reason instanceof ApiError && reason.status === 400
+        ? "无法生成重新安装命令。请使用 HTTPS 访问 Panel，并确认反向代理传递了 X-Forwarded-Proto。"
+        : messageFor(reason, "无法生成重新安装命令"));
     }
   };
   const update = async () => {
@@ -1062,10 +1067,9 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [editor, setEditor] = useState<{
-    service: Service | null;
-    form: ServiceForm;
-  } | null>(null);
+  const [editor, setEditor] = useState<{ service: Service | null } | null>(
+    null,
+  );
   const [selected, setSelected] = useState<string[]>([]);
   const loadServices = async (id: string, signal?: AbortSignal) => {
     setLoading(true);
@@ -1092,7 +1096,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
     return () => controller.abort();
   }, [nodeId]);
   const save = async (form: ServiceForm, service: Service | null) => {
-    const payload = payloadFor(form);
+    const payload = payloadFor(form, backendFor(form.backendType));
     const path = `/api/admin/v1/nodes/${nodeId}/services${service ? `/${service.id}` : ""}`;
     const body = service
       ? {
@@ -1165,7 +1169,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
         <button
           className="button button-primary"
           type="button"
-          onClick={() => setEditor({ service: null, form: emptyService() })}
+          onClick={() => setEditor({ service: null })}
         >
           添加服务
         </button>
@@ -1219,7 +1223,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
                       : [...current, service.id],
                   )
                 }
-                edit={() => setEditor({ service, form: formFor(service) })}
+                edit={() => setEditor({ service })}
                 remove={() => void remove(service)}
               enabled={(value) => void enabled(service, value)}
               refresh={() => loadServices(nodeId)}
@@ -1238,7 +1242,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
                 className="button button-primary"
                 type="button"
                 onClick={() =>
-                  setEditor({ service: null, form: emptyService() })
+                  setEditor({ service: null })
                 }
               >
                 添加服务
@@ -1249,7 +1253,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
       )}
       {editor && (
         <ServiceEditor
-          value={editor}
+          service={editor.service}
           api={api}
           save={save}
           close={() => setEditor(null)}
@@ -1658,33 +1662,87 @@ function DiagnosticsModal({
 }
 
 function ServiceEditor({
-  value,
+  service,
   api,
   save,
   close,
   setError,
 }: {
-  value: { service: Service | null; form: ServiceForm };
+  service: Service | null;
   api: ApiClient;
   save: (form: ServiceForm, service: Service | null) => Promise<void>;
   close: () => void;
   setError: (value: string) => void;
 }) {
-  const [form, setForm] = useState(value.form);
+  const [definitions, setDefinitions] = useState<BackendDefinition[]>([]);
+  const [form, setForm] = useState<ServiceForm | null>(null);
   const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [busy, setBusy] = useState(false);
-  const backend = backendFor(form.backendType);
+  const [generating, setGenerating] = useState(false);
+  const generate = async (definition: BackendDefinition) => {
+    setGenerating(true);
+    try {
+      const result = await api.generateBackendDefaults(definition.backendType);
+      setForm((current) =>
+        current && current.backendType === definition.backendType
+          ? { ...current, values: { ...current.values, ...result.values } }
+          : current,
+      );
+    } catch (reason) {
+      setError(messageFor(reason, "无法生成默认密钥"));
+    } finally {
+      setGenerating(false);
+    }
+  };
   useEffect(() => {
-    if (form.backendType !== "hysteria2") return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const all = await api.backends();
+        if (cancelled) return;
+        setBackendDefinitions(all);
+        setDefinitions(all);
+        const definition = service
+          ? all.find((item) => item.backendType === service.backendType)
+          : all[0];
+        if (!definition) {
+          setError("当前没有可用的后端定义。");
+          return;
+        }
+        if (service) {
+          setForm(formFor(service, definition));
+        } else {
+          setForm(emptyService(definition));
+          void generate(definition);
+        }
+      } catch (reason) {
+        setError(messageFor(reason, "无法加载后端定义"));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  useEffect(() => {
+    if (form?.backendType !== "hysteria2") return;
     void api.certificates().then(setCertificates).catch(reason => setError(messageFor(reason, "无法加载证书")));
-  }, [form.backendType]);
+  }, [form?.backendType]);
   const change = (key: string, next: string) =>
-    setForm({ ...form, [key]: next } as ServiceForm);
+    setForm((current) =>
+      current
+        ? { ...current, values: { ...current.values, [key]: next } }
+        : current,
+    );
+  const switchBackend = (definition: BackendDefinition) => {
+    setForm(emptyService(definition));
+    void generate(definition);
+  };
   const submit = async (event: Event) => {
     event.preventDefault();
+    if (!form) return;
     setBusy(true);
     try {
-      await save(form, value.service);
+      await save(form, service);
     } catch (reason) {
       setError(messageFor(reason, "无法保存服务"));
     } finally {
@@ -1692,11 +1750,12 @@ function ServiceEditor({
     }
   };
   const saveTemplate = async () => {
+    if (!form) return;
     setBusy(true);
     try {
       await api.request("/api/admin/v1/service-templates", {
         method: "POST",
-        body: JSON.stringify(payloadFor(form)),
+        body: JSON.stringify(payloadFor(form, backendFor(form.backendType))),
       });
       setError("服务模板已保存。");
     } catch (reason) {
@@ -1705,52 +1764,122 @@ function ServiceEditor({
       setBusy(false);
     }
   };
-  const field = (
-    key: string,
-    label: string,
-    required = false,
-    type = /password|privatekey/i.test(key) ? "password" : "text",
-  ) =>
-    key === "clientId" || key === "clientEmail" ? null : (
-      <label>
+  const renderField = (field: BackendField) => {
+    if (!form) return null;
+    if (field.kind === "fixed") {
+      const display =
+        field.fixedKind === "boolean"
+          ? field.fixed === "true"
+            ? "启用"
+            : "禁用"
+          : field.fixed;
+      return (
+        <div className="fixed-setting" key={field.key}>
+          <span>{field.label}</span>
+          <strong>{display}</strong>
+        </div>
+      );
+    }
+    if (field.kind === "certificate") {
+      return (
+        <label key={field.key}>
+          证书
+          <select
+            required={field.required}
+            value={form.values[field.key] ?? ""}
+            onChange={(event) => change(field.key, event.currentTarget.value)}
+          >
+            <option value="">选择证书</option>
+            {certificates.map((certificate) => (
+              <option key={certificate.id} value={certificate.id}>
+                {certificate.name} · 到期 {formatDate(certificate.expiresAtUtc)}
+              </option>
+            ))}
+          </select>
+        </label>
+      );
+    }
+    if (field.kind === "select") {
+      return (
+        <label key={field.key}>
+          {field.label}
+          <select
+            required={field.required}
+            value={form.values[field.key] ?? ""}
+            onChange={(event) => change(field.key, event.currentTarget.value)}
+          >
+            {field.options.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+      );
+    }
+    const type =
+      field.kind === "number" ? "number" : field.kind === "password" ? "password" : "text";
+    const label =
+      service && field.secret ? `${field.label}（保留当前占位值即可沿用）` : field.label;
+    return (
+      <label key={field.key}>
         {label}
         <input
-          required={required}
+          required={field.required}
           type={type}
-          value={String(form[key as keyof ServiceForm] ?? "")}
-          onInput={(event) => change(key, event.currentTarget.value)}
+          value={form.values[field.key] ?? ""}
+          placeholder={field.placeholder ?? undefined}
+          onInput={(event) => change(field.key, event.currentTarget.value)}
         />
       </label>
     );
+  };
+  if (!form || !definitions.length)
+    return (
+      <Modal
+        title={service ? `编辑 ${service.name}` : "添加服务"}
+        close={close}
+      >
+        <Loading />
+      </Modal>
+    );
+  const definition = backendFor(form.backendType);
+  const listenFields = definition.fields.filter(
+    (field) => field.section === "listen",
+  );
+  const protocolFields = definition.fields.filter(
+    (field) => field.section !== "listen",
+  );
+  const hasGenerated = protocolFields.some((field) => field.generate);
   return (
     <Modal
-      title={value.service ? `编辑 ${value.service.name}` : "添加服务"}
-      description={`${backend.core} · ${backend.protocol}`}
+      title={service ? `编辑 ${service.name}` : "添加服务"}
+      description={`${definition.core} · ${definition.protocol}`}
       close={close}
     >
       <form className="service-editor" onSubmit={(event) => void submit(event)}>
-        {!value.service && (
+        {!service && (
           <fieldset>
             <legend>后端类型</legend>
             <div className="backend-picker">
-              {(Object.keys(backends) as BackendType[]).map((type) => (
+              {definitions.map((item) => (
                 <label
                   className={
-                    form.backendType === type
+                    form.backendType === item.backendType
                       ? "backend-option selected"
                       : "backend-option"
                   }
-                  key={type}
+                  key={item.backendType}
                 >
                   <input
                     type="radio"
-                    checked={form.backendType === type}
-                    onChange={() => setForm(emptyService(type))}
+                    checked={form.backendType === item.backendType}
+                    onChange={() => switchBackend(item)}
                   />
-                  <span className="backend-mark">{backends[type].badge}</span>
+                  <span className="backend-mark">{item.badge}</span>
                   <span>
-                    <strong>{backends[type].core}</strong>
-                    <small>{backends[type].protocol}</small>
+                    <strong>{item.core}</strong>
+                    <small>{item.protocol}</small>
                   </span>
                 </label>
               ))}
@@ -1760,74 +1889,48 @@ function ServiceEditor({
         <fieldset>
           <legend>基本与监听</legend>
           <div className="form-grid">
-            {field("name", "服务名称", true)}
-            {field("version", "后端版本", true)}
-            {field("listenHost", "监听地址", true)}
-            {field("port", "监听端口", true, "number")}
+            <label>
+              服务名称
+              <input
+                required
+                value={form.name}
+                onInput={(event) =>
+                  setForm({ ...form, name: event.currentTarget.value })
+                }
+              />
+            </label>
+            <label>
+              后端版本
+              <input
+                required
+                value={form.version}
+                onInput={(event) =>
+                  setForm({ ...form, version: event.currentTarget.value })
+                }
+              />
+            </label>
+            {listenFields.map(renderField)}
           </div>
         </fieldset>
         <fieldset>
           <legend>协议配置</legend>
-          <div className="form-grid">
-            {form.backendType === "hysteria2" && (
-              <>
-                <label>证书<select required value={form.certificateId} onChange={event => change("certificateId", event.currentTarget.value)}><option value="">选择证书</option>{certificates.map(certificate => <option key={certificate.id} value={certificate.id}>{certificate.name} · 到期 {formatDate(certificate.expiresAtUtc)}</option>)}</select></label>
-                {field(
-                  "authPassword",
-                  value.service
-                    ? "认证密码（保留当前占位值即可沿用）"
-                    : "认证密码",
-                  true,
-                )}
-                {field("masqueradeUrl", "伪装地址", true)}
-                {field("obfsPassword", "Salamander 混淆密码")}
-                {field("upMbps", "上行 Mbps", true, "number")}
-                {field("downMbps", "下行 Mbps", true, "number")}
-              </>
-            )}
-            {form.backendType === "xray" && (
-              <>
-                {field("clientId", "客户端 UUID", true)}
-                {field("clientEmail", "客户端标识")}
-                {field(
-                  "realityPrivateKey",
-                  value.service
-                    ? "REALITY 私钥（保留当前占位值即可沿用）"
-                    : "REALITY 私钥",
-                  true,
-                )}
-                {field("realityPublicKey", "REALITY 公钥", true)}
-                {field("shortId", "Short ID", true)}
-                {field("serverName", "服务器名称 / SNI", true)}
-                {field("destination", "伪装目标", true)}
-                {field("fingerprint", "浏览器指纹", true)}
-              </>
-            )}
-            {(form.backendType === "mihomo" ||
-              form.backendType === "sing-box") && (
-              <>
-                {field(
-                  "password",
-                  value.service
-                    ? "Shadowsocks 密钥（保留当前占位值即可沿用）"
-                    : "Shadowsocks 密钥",
-                  true,
-                )}
-                <div className="fixed-setting">
-                  <span>加密方法</span>
-                  <strong>2022-blake3-aes-256-gcm</strong>
-                </div>
-                <div className="fixed-setting">
-                  <span>传输</span>
-                  <strong>TCP + UDP</strong>
-                </div>
-              </>
-            )}
-          </div>
+          {hasGenerated && (
+            <div className="service-editor-actions">
+              <button
+                className="button button-secondary"
+                type="button"
+                disabled={busy || generating}
+                onClick={() => void generate(definition)}
+              >
+                {generating ? "生成中…" : "重新生成默认密钥"}
+              </button>
+            </div>
+          )}
+          <div className="form-grid">{protocolFields.map(renderField)}</div>
         </fieldset>
         <footer>
           <div>
-            {!value.service && (
+            {!service && (
               <button
                 className="button button-secondary"
                 type="button"
@@ -1846,7 +1949,10 @@ function ServiceEditor({
             >
               取消
             </button>
-            <button className="button button-primary" disabled={busy}>
+            <button
+              className="button button-primary"
+              disabled={busy || generating}
+            >
               {busy ? "正在保存…" : "保存服务"}
             </button>
           </div>

@@ -1079,6 +1079,105 @@ Planned slices:
 ### HP-2003 — Backup / Restore production acceptance
 - Owner: architect (Sol)
 - Depends on: HP-2002
-- Status: IN PROGRESS — PRODUCTION ACCEPTANCE PENDING
+- Status: DONE — PRODUCTION ACCEPTED
 - Scope: focused/full tests, Linux x64/arm64 Server NativeAOT, Web build, real state mutation/restore/reconnect/convergence
   and wrong-MasterKey rejection with the current database unchanged.
+- Result: `v0.4.7` Release run `35428824474` published all NativeAOT assets and GHCR manifests; the US Server self-updated
+  from `0.4.6`. A live schema-12 backup captured Node, running managed-certificate HY2, Xray, User, independent Xray
+  credential, subscription token hash, 8,888,888 usage bytes and non-default settings. After recognizable mutations,
+  API restore restarted the Server, created a 0600 emergency archive and restored every value; the UK Agent reconnected
+  and both listeners remained converged. A wrong-MasterKey CLI preflight returned `master_key_mismatch` with the
+  production DB SHA256 unchanged. Temporary User/Xray/usage/settings/backups were removed; the Phase 19R HY2 remains.
+
+## Phase 21 — User-facing documentation
+
+### HP-2100 — Rewrite project README and operator guidance
+- Owner: architect (Sol)
+- Depends on: HP-2003
+- Status: DONE
+- Scope: product overview, Docker/bare-metal Quick Start, enrollment, supported Services, update ownership, disaster
+  recovery security, Linux troubleshooting, development and license guidance matching shipped behavior.
+- Result: README is now a user-facing project homepage with a runnable GHCR Compose example, secret generation and
+  first-run flow, honest current Backend profiles/capabilities, update ownership, managed-certificate guidance,
+  Web/CLI disaster recovery, prominent archive + separately stored MasterKey warning, Linux commands, practical
+  failure guidance, platform evidence limits, development commands and GPL-3.0 license link.
+
+## Phase 22 — Backend capability audit
+
+### HP-2200 — Audit official multi-user and traffic capabilities
+- Owner: architect (Sol)
+- Depends on: HP-2100
+- Status: DONE — RESEARCH ONLY
+- Scope: verify current official Hysteria2, Mihomo and sing-box capabilities and record only deterministic config,
+  stable identity mapping and reliable Agent-side collection candidates; no implementation in this phase.
+- Result: `docs/BACKEND_CAPABILITY_AUDIT.md` records official sources and a conservative matrix. Hysteria2 2.12.3 has
+  deterministic userpass IDs plus authenticated per-ID cumulative traffic and is approved for implementation planning.
+  Mihomo SS2022 has no stable per-user identity/stat contract and remains single-user. sing-box SS2022 has users but
+  V2Ray user stats are build-conditional, so executable-level proof is required before claiming traffic capability.
+
+### HP-2201 — Implement Hysteria2 per-user identity and traffic
+- Owner: architect (Sol)
+- Depends on: HP-2200
+- Status: TODO
+- Scope: deterministic `hypanel-{UserId:N}` userpass entries, independent encrypted passwords, loopback-only protected
+  Traffic Stats API and cumulative counter ingestion through the existing idempotent usage pipeline.
+
+### HP-2202 — Gate sing-box capability on official artifact behavior
+- Owner: architect (Sol)
+- Depends on: HP-2200
+- Status: TODO — PROTOTYPE FIRST
+- Scope: prove exact release artifact API inclusion, users[] identity, TCP/UDP counters and reset/restart behavior. If
+  stats are unreliable, implement at most MultiUser and keep PerUserTraffic/TrafficStats false.
+
+### HP-2203 — Keep Mihomo SS2022 single-user
+- Owner: architect (Sol)
+- Depends on: HP-2200
+- Status: DECIDED — NO IMPLEMENTATION
+- Scope: do not manufacture user isolation or traffic from shared passwords, logs, connections or estimates.
+
+## Phase 23 — Product journey polish
+
+### HP-2300 — Validate and polish the first-admin journey
+- Owner: architect (Sol)
+- Depends on: HP-2003, HP-2100
+- Status: DONE
+- Scope: fresh DB through Admin, Node/install, Service/certificate, User/grant/subscription/traffic and backup; preserve
+  the visual system and fix only observed hierarchy, wording, empty-state and dangerous-action friction.
+- Result: Fresh DB browser acceptance confirmed clear Overview/Node empty states, natural Node explanation, direct
+  create→one-time install flow, Settings certificates and backup/validated restore confirmation. Production rollout
+  exposed stale entry HTML after self-update; `/` now sends `no-store/no-cache` while hashed assets remain unchanged.
+  Plain-HTTP enrollment failure now explains HTTPS and `X-Forwarded-Proto` instead of blaming form input. No broad UI
+  redesign or internal identifier exposure was added.
+
+## Phase 24 — Backend-driven service editor
+
+### HP-2400 — Serve backend field definitions from the Server
+- Owner: architect (Sol)
+- Depends on: HP-2300
+- Status: DONE
+- Scope: expose the compile-time backend catalog over Admin API so the service editor renders fields from the Server and
+  adding a backend never requires a frontend release.
+- Result: `GET /api/admin/v1/backends` returns per-backend metadata (name/core/protocol/badge, latest version from the
+  artifact catalog) plus typed field descriptors (text/password/number/select/certificate/fixed, required, secret,
+  generate, defaults, options, min/max, section). Configuration keys match provider config JSON exactly. Covered by
+  AOT source-generated JSON and 2 endpoint tests.
+
+### HP-2401 — Generate secure random defaults incl. REALITY key pair
+- Owner: architect (Sol)
+- Depends on: HP-2400
+- Status: DONE
+- Scope: `POST /api/admin/v1/backends/{type}/defaults` returns fresh secrets; REALITY key pair must be valid without
+  shipping an Xray binary on the Server.
+- Result: Hysteria2 gets Base64Url auth/obfs passwords, Shadowsocks gets a 32-byte Base64 key, Xray gets a clamped
+  X25519 REALITY key pair plus a hex Short ID. X25519 is a BCL-free RFC 7748 Montgomery ladder tested against the
+  published vectors and cross-checked against the official `xray x25519 -i` output (derived public key matched).
+
+### HP-2402 — Schema-driven service editor and defaults in the UI
+- Owner: architect (Sol)
+- Depends on: HP-2401
+- Status: DONE (code + type/web/AOT gates) — UI browser acceptance pending
+- Scope: render the service editor from the Server definitions, prefill generated secrets for new services, allow
+  explicit regeneration, and keep existing behaviour/validation.
+- Result: Preact editor now renders backend picker, listen and protocol fields from the definition, auto-requests
+  generated defaults for new services, offers “重新生成默认密钥”, and builds payload/validation from the schema
+  (including numeric bounds). `tsc`/Vite build, full 314 tests and Server linux-x64 NativeAOT publish pass.
