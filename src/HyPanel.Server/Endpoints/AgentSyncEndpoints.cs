@@ -48,6 +48,7 @@ internal static class AgentSyncEndpoints
         }
 
         var metricSnapshotJson = JsonSerializer.Serialize(request.Metrics, HyPanelJsonSerializerContext.Default.NodeMetrics);
+        var publicIpv4 = request.PublicIpv4 ?? PublicIpv4From(httpRequest.HttpContext.Connection.RemoteIpAddress);
         if (!await repository.TryUpdateAgentSyncAsync(
                 agent.AgentId,
                 request.AgentVersion.Trim(),
@@ -58,7 +59,7 @@ internal static class AgentSyncEndpoints
                 request.CommandResults,
                 cancellationToken,
                 request.UsageBatches,
-                request.PublicIpv4))
+                publicIpv4))
         {
             return Results.Unauthorized();
         }
@@ -216,9 +217,22 @@ internal static class AgentSyncEndpoints
     }
 
     internal static bool IsValidPublicIpv4(string? value) => value is null ||
-        IPAddress.TryParse(value, out var address) &&
-        address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
-        string.Equals(value, address.ToString(), StringComparison.Ordinal);
+        IPAddress.TryParse(value, out var address) && PublicIpv4From(address) == value;
+
+    internal static string? PublicIpv4From(IPAddress? address)
+    {
+        if (address is null) return null;
+        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        if (address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) return null;
+        var bytes = address.GetAddressBytes();
+        if (bytes[0] is 0 or 10 or 127 || bytes[0] >= 224 ||
+            bytes[0] == 100 && bytes[1] is >= 64 and <= 127 ||
+            bytes[0] == 169 && bytes[1] == 254 ||
+            bytes[0] == 172 && bytes[1] is >= 16 and <= 31 ||
+            bytes[0] == 192 && bytes[1] == 168)
+            return null;
+        return address.ToString();
+    }
 
     private static bool IsValidUpdateReport(AgentUpdateReport? report, string reportedRid, DateTimeOffset nowUtc) => report is null
         || report.UpdateId != Guid.Empty && Enum.IsDefined(report.Status)

@@ -1201,5 +1201,6 @@ Planned slices:
   produce a usable subscription without requiring an immediate manual public-endpoint entry.
 - Result: Agent queries the fixed HTTPS endpoint `https://4.qwq.lu` with a three-second timeout, 64-byte bound,
   canonical IPv4 validation, six-hour success cache and non-fatal failure cache. Schema 13 retains the latest valid
-  address; subscriptions prefer manual endpoints and otherwise use the observed IP plus `listenPort`. Hysteria2 remains
-  explicit because its certificate/SNI cannot be inferred safely.
+  address; authenticated sync connection IPv4 is a compatibility fallback for older Agents. Subscriptions prefer manual
+  endpoints and otherwise use the observed IP plus `listenPort`. Hysteria2 remains explicit because its certificate/SNI
+  cannot be inferred safely.
