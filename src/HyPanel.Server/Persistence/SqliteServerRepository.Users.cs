@@ -432,14 +432,20 @@ internal sealed partial class SqliteServerRepository
         var services = new List<SubscriptionServiceRecord>();
         await using var cmd = c.CreateCommand();
         cmd.CommandText = """
-                           SELECT s.id,s.name,s.backend_type,s.config_json,p.host,p.port,p.tls_server_name,p.updated_at_utc,
-                                  k.nonce,k.ciphertext,k.tag
+                           SELECT s.id,s.name,s.backend_type,s.config_json,
+                                  COALESCE(p.host,a.public_ipv4),
+                                  COALESCE(p.port,CAST(json_extract(s.config_json,'$.listenPort') AS INTEGER)),
+                                  p.tls_server_name,COALESCE(p.updated_at_utc,a.last_seen_at_utc),
+                                   k.nonce,k.ciphertext,k.tag
                            FROM user_service_bindings b
                            JOIN service_instances s ON s.id=b.service_id
-                           JOIN service_public_endpoints p ON p.service_id=s.id
+                           LEFT JOIN agents a ON a.node_id=s.node_id
+                           LEFT JOIN service_public_endpoints p ON p.service_id=s.id
                            JOIN user_service_credentials k ON k.user_id=b.user_id AND k.service_id=b.service_id
                            WHERE b.user_id=@user AND s.enabled=1 AND k.status='Active'
-                          ORDER BY s.name,s.id;
+                             AND (p.host IS NOT NULL OR (a.public_ipv4 IS NOT NULL AND s.backend_type<>'hysteria2'))
+                             AND COALESCE(p.port,CAST(json_extract(s.config_json,'$.listenPort') AS INTEGER)) BETWEEN 1 AND 65535
+                           ORDER BY s.name,s.id;
                           """;
         cmd.Parameters.AddWithValue("@user", userId);
         await using var r = await cmd.ExecuteReaderAsync(ct);

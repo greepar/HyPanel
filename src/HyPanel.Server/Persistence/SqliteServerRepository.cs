@@ -168,10 +168,10 @@ internal sealed partial class SqliteServerRepository(
         await using var connection = await connectionFactory.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-                              SELECT id, node_id, enrolled_at_utc, last_seen_at_utc, reported_version,
-                                     reported_platform, applied_revision, latest_metric_snapshot_json
-                              FROM agents WHERE id = @id;
-                              """;
+                               SELECT id, node_id, enrolled_at_utc, last_seen_at_utc, reported_version,
+                                      reported_platform, applied_revision, latest_metric_snapshot_json, public_ipv4
+                               FROM agents WHERE id = @id;
+                               """;
         command.Parameters.AddWithValue("@id", id.ToString("D"));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? ReadAgent(reader) : null;
@@ -239,7 +239,7 @@ internal sealed partial class SqliteServerRepository(
                                      a.id, a.last_seen_at_utc, a.reported_version, a.reported_platform, a.applied_revision,
                                       a.latest_metric_snapshot_json, n.agent_update_policy, n.desired_agent_version,
                                       n.agent_update_id, a.update_status, a.update_target_version,
-                                      a.update_started_at_utc, a.update_error
+                                       a.update_started_at_utc, a.update_error, a.public_ipv4
                               FROM nodes n
                               LEFT JOIN agents a ON a.node_id = n.id
                               ORDER BY n.created_at_utc, n.id;
@@ -263,7 +263,8 @@ internal sealed partial class SqliteServerRepository(
                 reader.IsDBNull(12) ? null : reader.GetString(12),
                 reader.IsDBNull(13) ? null : reader.GetString(13),
                 reader.IsDBNull(14) ? null : SqliteValue.ToDateTimeOffset(reader.GetString(14)),
-                reader.IsDBNull(15) ? null : reader.GetString(15)));
+                reader.IsDBNull(15) ? null : reader.GetString(15),
+                reader.IsDBNull(16) ? null : reader.GetString(16)));
         }
 
         return observations;
@@ -454,7 +455,8 @@ internal sealed partial class SqliteServerRepository(
         IReadOnlyList<ServiceRuntimeState> serviceStates,
         IReadOnlyList<AgentCommandResult> commandResults,
         CancellationToken cancellationToken,
-        IReadOnlyList<UsageBatch>? usageBatches = null)
+        IReadOnlyList<UsageBatch>? usageBatches = null,
+        string? publicIpv4 = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(reportedVersion);
         ArgumentException.ThrowIfNullOrWhiteSpace(reportedPlatform);
@@ -473,9 +475,10 @@ internal sealed partial class SqliteServerRepository(
                                           UPDATE agents
                                           SET last_seen_at_utc = @lastSeenAtUtc,
                                               reported_version = @reportedVersion,
-                                              reported_platform = @reportedPlatform,
-                                              applied_revision = @appliedRevision,
-                                              latest_metric_snapshot_json = @latestMetricSnapshotJson
+                                               reported_platform = @reportedPlatform,
+                                               applied_revision = @appliedRevision,
+                                               latest_metric_snapshot_json = @latestMetricSnapshotJson,
+                                               public_ipv4 = COALESCE(@publicIpv4, public_ipv4)
                                           WHERE id = @id;
                                           """;
                 updateAgent.Parameters.AddWithValue("@id", agentId.ToString("D"));
@@ -485,6 +488,7 @@ internal sealed partial class SqliteServerRepository(
                 updateAgent.Parameters.AddWithValue("@appliedRevision", appliedRevision);
                 updateAgent.Parameters.AddWithValue("@latestMetricSnapshotJson",
                     SqliteValue.ToDbValue(latestMetricSnapshotJson));
+                updateAgent.Parameters.AddWithValue("@publicIpv4", SqliteValue.ToDbValue(publicIpv4));
                 if (await updateAgent.ExecuteNonQueryAsync(cancellationToken) != 1)
                 {
                     await transaction.RollbackAsync(cancellationToken);
@@ -1412,7 +1416,8 @@ internal sealed partial class SqliteServerRepository(
         SqliteValue.ToDateTimeOffset(reader.GetString(2)),
         reader.IsDBNull(3) ? null : SqliteValue.ToDateTimeOffset(reader.GetString(3)),
         reader.IsDBNull(4) ? null : reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5),
-        reader.GetInt64(6), reader.IsDBNull(7) ? null : reader.GetString(7));
+        reader.GetInt64(6), reader.IsDBNull(7) ? null : reader.GetString(7),
+        reader.IsDBNull(8) ? null : reader.GetString(8));
 
     private static AgentCommandRecord ReadAgentCommand(SqliteDataReader reader) => new(
         SqliteValue.ToGuid(reader.GetString(0)), SqliteValue.ToGuid(reader.GetString(1)), reader.GetString(2),

@@ -1181,3 +1181,25 @@ Planned slices:
 - Result: Preact editor now renders backend picker, listen and protocol fields from the definition, auto-requests
   generated defaults for new services, offers “重新生成默认密钥”, and builds payload/validation from the schema
   (including numeric bounds). `tsc`/Vite build, full 314 tests and Server linux-x64 NativeAOT publish pass.
+
+### HP-2403 — Permit privileged Backend listen ports under systemd
+- Owner: architect (Sol)
+- Depends on: HP-1801, HP-2402
+- Status: DONE (code) — existing-node repair acceptance pending
+- Scope: retain the dedicated unprivileged Agent account while allowing managed Backend children to bind ports below
+  1024 on production systemd nodes.
+- Result: Production `sg-v` Xray logs proved TCP 443 failed with `bind: permission denied` while the identical config
+  ran on 8443. The installer unit now bounds and supplies only `CAP_NET_BIND_SERVICE`; `NoNewPrivileges`, cgroup process
+  ownership and all other restrictions remain. Existing installations must rerun the installer repair path to refresh
+  the unit before moving a service back to 443.
+
+### HP-2404 — Discover Agent public IPv4 for subscription fallback
+- Owner: architect (Sol)
+- Depends on: HP-2402
+- Status: DONE (code + focused tests) — production rollout pending
+- Scope: let an Agent discover and report its own outward-facing IPv4 so a newly granted Xray/Shadowsocks service can
+  produce a usable subscription without requiring an immediate manual public-endpoint entry.
+- Result: Agent queries the fixed HTTPS endpoint `https://4.qwq.lu` with a three-second timeout, 64-byte bound,
+  canonical IPv4 validation, six-hour success cache and non-fatal failure cache. Schema 13 retains the latest valid
+  address; subscriptions prefer manual endpoints and otherwise use the observed IP plus `listenPort`. Hysteria2 remains
+  explicit because its certificate/SNI cannot be inferred safely.

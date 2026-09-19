@@ -39,6 +39,7 @@ public static class Program
         builder.Services.AddSingleton<AgentUpdateStateStore>();
         builder.Services.AddSingleton<AgentUpdater>();
         builder.Services.AddSingleton<NodeMetricsCollector>();
+        builder.Services.AddSingleton<PublicIpv4Resolver>();
         builder.Services.AddSingleton<IBackendProvider, Hysteria2Provider>();
         builder.Services.AddSingleton<IBackendProvider, XrayProvider>();
         builder.Services.AddSingleton<IBackendProvider, MihomoProvider>();

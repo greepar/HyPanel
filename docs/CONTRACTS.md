@@ -80,6 +80,7 @@ ServiceRuntimeStates
 UsageBatches
 CommandResults
 AgentUpdateReport?
+PublicIpv4? (canonical IPv4 discovered by the Agent)
 ```
 
 Response should eventually include:
@@ -93,6 +94,11 @@ Optional sync interval/config
 ```
 
 Do not resend a large desired-state blob if the Agent is already on the current revision unless there is a concrete reason.
+
+The Agent resolves its outward-facing IPv4 from the fixed HTTPS endpoint `https://4.qwq.lu`, with a short timeout,
+bounded response, strict canonical IPv4 parsing and multi-hour success caching. Discovery failure is non-fatal and does
+not clear the Server's last valid observation. A manually configured Service public endpoint always overrides this
+observation; otherwise Xray and Shadowsocks subscriptions use the observed IP with the configured listen port.
 
 ### 4.1 Agent update
 

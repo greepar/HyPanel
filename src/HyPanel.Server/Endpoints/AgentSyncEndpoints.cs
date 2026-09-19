@@ -1,5 +1,6 @@
 namespace HyPanel.Server.Endpoints;
 
+using System.Net;
 using System.Text.Json;
 using System.Text;
 using HyPanel.Server.Persistence;
@@ -56,7 +57,8 @@ internal static class AgentSyncEndpoints
                 request.Services,
                 request.CommandResults,
                 cancellationToken,
-                request.UsageBatches))
+                request.UsageBatches,
+                request.PublicIpv4))
         {
             return Results.Unauthorized();
         }
@@ -177,6 +179,7 @@ internal static class AgentSyncEndpoints
             || request.UsageBatches is null
             || request.UsageBatches.Count > 32
             || !IsValidMetrics(request.Metrics, nowUtc)
+            || !IsValidPublicIpv4(request.PublicIpv4)
             || !IsValidUpdateReport(request.AgentUpdate, request.Platform, nowUtc))
         {
             return false;
@@ -211,6 +214,11 @@ internal static class AgentSyncEndpoints
 
         return true;
     }
+
+    internal static bool IsValidPublicIpv4(string? value) => value is null ||
+        IPAddress.TryParse(value, out var address) &&
+        address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+        string.Equals(value, address.ToString(), StringComparison.Ordinal);
 
     private static bool IsValidUpdateReport(AgentUpdateReport? report, string reportedRid, DateTimeOffset nowUtc) => report is null
         || report.UpdateId != Guid.Empty && Enum.IsDefined(report.Status)

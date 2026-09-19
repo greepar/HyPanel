@@ -23,7 +23,8 @@ internal sealed record AdminNodeObservationResponse(
     string? LatestAgentVersion,
     string? DesiredAgentVersion,
     string AgentUpdateStatus,
-    string? AgentUpdateError);
+    string? AgentUpdateError,
+    string? PublicIpv4);
 
 internal sealed record SetAgentUpdatePolicyRequest(string Policy);
 internal sealed record RequestAgentUpdateResponse(Guid UpdateId, string Version);

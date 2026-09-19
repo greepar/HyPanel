@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 12;
+    public const long CurrentSchemaVersion = 13;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -17,6 +17,7 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
     private const long BackendUpdateSchemaVersion = 10;
     private const long GlobalSettingsSchemaVersion = 11;
     private const long CertificatesSchemaVersion = 12;
+    private const long AgentPublicIpv4SchemaVersion = 13;
 
     public async Task MigrateAsync(CancellationToken cancellationToken)
     {
@@ -354,6 +355,19 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             insertMigration.Transaction = transaction;
             insertMigration.CommandText = "INSERT INTO schema_migrations (version,applied_at_utc) VALUES (@version,@at);";
             insertMigration.Parameters.AddWithValue("@version", CertificatesSchemaVersion);
+            insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+            await insertMigration.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, AgentPublicIpv4SchemaVersion, cancellationToken))
+        {
+            await ExecuteAsync(connection, transaction,
+                "ALTER TABLE agents ADD COLUMN public_ipv4 TEXT NULL;", cancellationToken);
+            await using var insertMigration = connection.CreateCommand();
+            insertMigration.Transaction = transaction;
+            insertMigration.CommandText =
+                "INSERT INTO schema_migrations (version,applied_at_utc) VALUES (@version,@at);";
+            insertMigration.Parameters.AddWithValue("@version", AgentPublicIpv4SchemaVersion);
             insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
             await insertMigration.ExecuteNonQueryAsync(cancellationToken);
         }

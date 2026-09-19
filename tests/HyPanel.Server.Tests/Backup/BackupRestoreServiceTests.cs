@@ -277,7 +277,8 @@ public sealed class BackupRestoreServiceTests
         await using (var connection = await fixture.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "DROP TABLE certificates; DELETE FROM schema_migrations WHERE version=12;";
+            command.CommandText =
+                "ALTER TABLE agents DROP COLUMN public_ipv4; DROP TABLE certificates; DELETE FROM schema_migrations WHERE version IN (12,13);";
             await command.ExecuteNonQueryAsync();
         }
         SqliteConnection.ClearAllPools();
@@ -306,7 +307,8 @@ public sealed class BackupRestoreServiceTests
         await using (var connection = await fixture.OpenConnectionAsync())
         await using (var mutation = connection.CreateCommand())
         {
-            mutation.CommandText = "DELETE FROM schema_migrations WHERE version=12; DELETE FROM nodes;";
+            mutation.CommandText =
+                "ALTER TABLE agents DROP COLUMN public_ipv4; DELETE FROM schema_migrations WHERE version IN (12,13); DELETE FROM nodes;";
             await mutation.ExecuteNonQueryAsync();
         }
         SqliteConnection.ClearAllPools();
@@ -318,7 +320,8 @@ public sealed class BackupRestoreServiceTests
         await using (var connection = await fixture.OpenConnectionAsync())
         await using (var restoreVersion = connection.CreateCommand())
         {
-            restoreVersion.CommandText = "INSERT INTO schema_migrations(version,applied_at_utc) VALUES (12,@now);";
+            restoreVersion.CommandText =
+                "INSERT INTO schema_migrations(version,applied_at_utc) VALUES (12,@now),(13,@now);";
             restoreVersion.Parameters.AddWithValue("@now", fixture.Time.GetUtcNow().ToString("O"));
             await restoreVersion.ExecuteNonQueryAsync();
         }

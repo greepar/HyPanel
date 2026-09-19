@@ -361,8 +361,10 @@ owned by that account. Backend processes run as the same restricted account. Thi
 privilege boundary until a Backend demonstrates a concrete need for one.
 
 The systemd unit uses `Type=simple`, `Restart=on-failure`, a five-second restart delay, `SIGTERM`, a 30-second stop
-timeout, `KillMode=control-group`, `NoNewPrivileges`, `PrivateTmp`, and owner-only umask. Start rate limiting prevents
-critical-state corruption from producing an unbounded Agent crash loop. Broader sandboxing such as
+timeout, `KillMode=control-group`, `NoNewPrivileges`, `PrivateTmp`, and owner-only umask. Its capability bounding and
+ambient sets contain only `CAP_NET_BIND_SERVICE`, allowing managed Backend children to bind configured privileged ports
+without running the Agent as root. Start rate limiting prevents critical-state corruption from producing an unbounded
+Agent crash loop. Broader sandboxing such as
 `ProtectSystem=strict`, `PrivateDevices`, or restricted address families is not enabled because the Agent must write
 its install/DataDir, inspect host metrics, download artifacts, and launch network-facing Backend processes.
 
@@ -457,6 +459,12 @@ For cumulative per-user backend counters, the Agent persists the last observatio
 direction)` alongside pending retry-safe batches. A larger observation emits only the delta. A lower observation is a
 backend counter reset and establishes a new baseline without emitting historical bytes again. Baseline advancement and
 pending batch persistence are one atomic Agent state-file update, so Agent restart and sync retry cannot double count.
+
+The Agent also discovers its outward-facing IPv4 through the fixed HTTPS endpoint `https://4.qwq.lu`. It strictly
+accepts one canonical IPv4 from a bounded response, caches success for six hours, and reports it during ordinary sync.
+The Server retains the last valid address and uses it only as an Xray/Shadowsocks subscription fallback when no manual
+Service public endpoint exists. Manual host/port configuration remains authoritative, and Hysteria2 still requires an
+explicit endpoint because certificate/SNI ownership cannot be inferred safely from an IP address.
 
 Xray v1 uses its official simplified local API configuration with loopback-only `StatsService`, an empty `stats`
 object, and level-0 `statsUserUplink`/`statsUserDownlink`. Desired users render as distinct VLESS clients whose email is

@@ -10,7 +10,8 @@ internal sealed record AgentRecord(
     string? ReportedVersion,
     string? ReportedPlatform,
     long AppliedRevision,
-    string? LatestMetricSnapshotJson);
+    string? LatestMetricSnapshotJson,
+    string? PublicIpv4 = null);
 
 internal sealed record EnrollmentTokenRecord(
     Guid Id,
@@ -56,7 +57,8 @@ internal sealed record NodeObservationRecord(
     string? UpdateStatus = null,
     string? UpdateTargetVersion = null,
     DateTimeOffset? UpdateStartedAtUtc = null,
-    string? UpdateError = null);
+    string? UpdateError = null,
+    string? PublicIpv4 = null);
 
 internal sealed record AgentUpdateTargetRecord(
     Guid NodeId,

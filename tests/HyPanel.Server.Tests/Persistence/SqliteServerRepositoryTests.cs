@@ -35,7 +35,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -60,6 +60,7 @@ public sealed class SqliteServerRepositoryTests
             await ReadColumnNamesAsync(connection, "service_templates"));
         CollectionAssert.Contains(await ReadColumnNamesAsync(connection, "user_service_credentials"), "ciphertext");
         CollectionAssert.Contains(await ReadColumnNamesAsync(connection, "certificates"), "key_ciphertext");
+        CollectionAssert.Contains(await ReadColumnNamesAsync(connection, "agents"), "public_ipv4");
     }
 
     [TestMethod]
@@ -822,6 +823,39 @@ public sealed class SqliteServerRepositoryTests
         Assert.AreEqual(StatusCodes.Status200OK, emptyContext.Response.StatusCode);
         Assert.AreEqual(0, emptyContext.Response.Body.Length);
         Assert.IsNotNull(empty.User);
+    }
+
+    [TestMethod]
+    public async Task PublicSubscription_UsesReportedIpv4WhenManualEndpointIsMissing()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        var agentId = await CreateAgentAsync(fixture, nodeId, "auto-endpoint-token", "auto-endpoint-secret");
+        var service = XrayService(CreateService(nodeId, Guid.NewGuid(), "automatic endpoint")) with
+        {
+            ConfigJson =
+                "{\"listenPort\":8443,\"flow\":\"xtls-rprx-vision\",\"realityPublicKey\":\"public-key\",\"shortId\":\"a1b2\",\"serverName\":\"sni.example\",\"fingerprint\":\"chrome\"}"
+        };
+        await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
+        var user = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Auto", "auto", "password-hash",
+            "User", true, null, null, "auto-token", CancellationToken.None);
+        Assert.IsTrue(await fixture.Repository.BindServiceAsync(user.User.Id, service.Id, CancellationToken.None));
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "1.0.0", "linux-x64", 0, null,
+            [], [], CancellationToken.None, publicIpv4: "203.0.113.42"));
+
+        var mihomo = await RenderSubscriptionAsync(fixture, "auto-token", "mihomo");
+
+        StringAssert.Contains(mihomo, "server: \"203.0.113.42\"");
+        StringAssert.Contains(mihomo, "port: 8443");
+        Assert.AreEqual("203.0.113.42",
+            (await fixture.Repository.GetNodeObservationsAsync(CancellationToken.None)).Single().PublicIpv4);
+
+        Assert.IsTrue(await fixture.Repository.SetServicePublicEndpointAsync(nodeId,
+            new ServicePublicEndpointRecord(service.Id, "manual.example", 443, null, fixture.Time.GetUtcNow()),
+            CancellationToken.None));
+        mihomo = await RenderSubscriptionAsync(fixture, "auto-token", "mihomo");
+        StringAssert.Contains(mihomo, "server: \"manual.example\"");
+        StringAssert.Contains(mihomo, "port: 443");
     }
 
     [TestMethod]

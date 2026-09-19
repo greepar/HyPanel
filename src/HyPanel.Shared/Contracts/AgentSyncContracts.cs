@@ -8,7 +8,8 @@ public sealed record AgentSyncRequest(
     IReadOnlyList<ServiceRuntimeState> Services,
     IReadOnlyList<UsageBatch> UsageBatches,
     IReadOnlyList<AgentCommandResult> CommandResults,
-    AgentUpdateReport? AgentUpdate = null);
+    AgentUpdateReport? AgentUpdate = null,
+    string? PublicIpv4 = null);
 
 public sealed record AgentSyncResponse(
     long DesiredRevision,

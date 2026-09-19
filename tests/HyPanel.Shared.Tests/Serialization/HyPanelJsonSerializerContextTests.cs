@@ -81,12 +81,13 @@ public sealed class HyPanelJsonSerializerContextTests
                     observedAt.AddSeconds(2),
                     null,
                     null)
-            ]);
+            ], PublicIpv4: "203.0.113.42");
 
         var json = JsonSerializer.Serialize(request, HyPanelJsonSerializerContext.Default.AgentSyncRequest);
         var result = JsonSerializer.Deserialize(json, HyPanelJsonSerializerContext.Default.AgentSyncRequest);
 
         Assert.IsNotNull(result);
+        Assert.AreEqual("203.0.113.42", result.PublicIpv4);
         StringAssert.Contains(json, "\"appliedRevision\"");
         StringAssert.Contains(json, "\"status\":\"Succeeded\"");
         Assert.AreEqual(request.AgentVersion, result.AgentVersion);
