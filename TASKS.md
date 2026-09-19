@@ -1204,3 +1204,12 @@ Planned slices:
   address; authenticated sync connection IPv4 is a compatibility fallback for older Agents. Subscriptions prefer manual
   endpoints and otherwise use the observed IP plus `listenPort`. Hysteria2 remains explicit because its certificate/SNI
   cannot be inferred safely.
+
+### HP-2405 — Keep served installers aligned with the active release
+- Owner: architect (Sol)
+- Depends on: HP-1805
+- Status: DONE (code + focused tests) — production rollout pending
+- Scope: prevent `/install.sh` and `/install.ps1` from remaining on an old release after Server self-update.
+- Result: Release synchronization now downloads bounded installer scripts from the current release and atomically
+  publishes them even when all Agent archives are already cached. This fixes same-node repair being served an obsolete
+  installer that always required an enrollment token.

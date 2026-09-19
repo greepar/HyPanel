@@ -14,6 +14,8 @@ internal sealed class ReleaseSyncWorker(
     SqliteServerRepository? repository = null) : BackgroundService
 {
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(5);
+    private const int MaximumInstallerSize = 1024 * 1024;
+    private static readonly string[] InstallerFileNames = ["install.sh", "install.ps1"];
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -42,8 +44,8 @@ internal sealed class ReleaseSyncWorker(
             HyPanelJsonSerializerContext.Default.AgentReleaseManifest, cancellationToken)
             ?? throw new InvalidDataException("Remote release manifest is empty.");
         ReleaseCatalog.Validate(manifest);
-        if (catalog.Manifest?.Version == manifest.Version && manifest.Assets.All(asset =>
-                catalog.TryGetAssetPath(asset.FileName, out _))) return;
+        var assetsCurrent = catalog.Manifest?.Version == manifest.Version && manifest.Assets.All(asset =>
+            catalog.TryGetAssetPath(asset.FileName, out _));
 
         Directory.CreateDirectory(catalog.ReleasesDirectory);
         var temporaryDirectory = Path.Combine(catalog.ReleasesDirectory, ".sync-" + Guid.NewGuid().ToString("N"));
@@ -51,28 +53,86 @@ internal sealed class ReleaseSyncWorker(
         try
         {
             var baseUri = new Uri(manifestUri, ".");
-            foreach (var asset in manifest.Assets)
+            var checksums = await DownloadChecksumsAsync(client, new Uri(baseUri, "SHA256SUMS"), cancellationToken);
+            foreach (var fileName in InstallerFileNames)
+                await DownloadBoundedAsync(client, new Uri(baseUri, fileName),
+                    Path.Combine(temporaryDirectory, fileName), checksums[fileName], cancellationToken);
+            if (!assetsCurrent)
             {
-                var assetUri = new Uri(baseUri, Uri.EscapeDataString(asset.FileName));
-                await DownloadVerifiedAsync(client, assetUri, Path.Combine(temporaryDirectory, asset.FileName), asset,
-                    cancellationToken);
+                foreach (var asset in manifest.Assets)
+                {
+                    var assetUri = new Uri(baseUri, Uri.EscapeDataString(asset.FileName));
+                    await DownloadVerifiedAsync(client, assetUri, Path.Combine(temporaryDirectory, asset.FileName), asset,
+                        cancellationToken);
+                }
+                foreach (var asset in manifest.Assets)
+                    File.Move(Path.Combine(temporaryDirectory, asset.FileName),
+                        Path.Combine(catalog.ReleasesDirectory, asset.FileName), overwrite: true);
+                var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(manifest,
+                    HyPanelJsonSerializerContext.Default.AgentReleaseManifest);
+                var versionedManifest = Path.Combine(catalog.ReleasesDirectory, $"manifest-{manifest.Version}.json");
+                var temporaryVersionedManifest = versionedManifest + ".tmp";
+                await File.WriteAllBytesAsync(temporaryVersionedManifest, manifestBytes, cancellationToken);
+                File.Move(temporaryVersionedManifest, versionedManifest, overwrite: true);
+                var temporaryManifest = Path.Combine(catalog.ReleasesDirectory, ".manifest.json.tmp");
+                await File.WriteAllBytesAsync(temporaryManifest, manifestBytes, cancellationToken);
+                File.Move(temporaryManifest, Path.Combine(catalog.ReleasesDirectory, "manifest.json"), overwrite: true);
             }
-            foreach (var asset in manifest.Assets)
-                File.Move(Path.Combine(temporaryDirectory, asset.FileName),
-                    Path.Combine(catalog.ReleasesDirectory, asset.FileName), overwrite: true);
-            var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(manifest,
-                HyPanelJsonSerializerContext.Default.AgentReleaseManifest);
-            var versionedManifest = Path.Combine(catalog.ReleasesDirectory, $"manifest-{manifest.Version}.json");
-            var temporaryVersionedManifest = versionedManifest + ".tmp";
-            await File.WriteAllBytesAsync(temporaryVersionedManifest, manifestBytes, cancellationToken);
-            File.Move(temporaryVersionedManifest, versionedManifest, overwrite: true);
-            var temporaryManifest = Path.Combine(catalog.ReleasesDirectory, ".manifest.json.tmp");
-            await File.WriteAllBytesAsync(temporaryManifest, manifestBytes, cancellationToken);
-            File.Move(temporaryManifest, Path.Combine(catalog.ReleasesDirectory, "manifest.json"), overwrite: true);
+            foreach (var fileName in InstallerFileNames)
+                File.Move(Path.Combine(temporaryDirectory, fileName),
+                    Path.Combine(catalog.ReleasesDirectory, fileName), overwrite: true);
             catalog.Reload();
-            logger.LogInformation("Cached Agent release {Version}.", manifest.Version);
+            logger.LogInformation("Cached Agent release metadata and installers for {Version}.", manifest.Version);
         }
         finally { Directory.Delete(temporaryDirectory, recursive: true); }
+    }
+
+    private static async Task<Dictionary<string, string>> DownloadChecksumsAsync(HttpClient client, Uri uri,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync(uri, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        if (response.Content.Headers.ContentLength is <= 0 or > MaximumInstallerSize)
+            throw new InvalidDataException("Release checksums size is invalid.");
+        var value = await response.Content.ReadAsStringAsync(cancellationToken);
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var line in value.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var fields = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (fields.Length != 2 || fields[0].Length != 64 ||
+                fields[0].Any(character => character is not (>= '0' and <= '9' or >= 'a' and <= 'f')))
+                throw new InvalidDataException("Release checksums are invalid.");
+            result[fields[1].TrimStart('*')] = fields[0];
+        }
+        if (InstallerFileNames.Any(fileName => !result.ContainsKey(fileName)))
+            throw new InvalidDataException("Release installer checksum is missing.");
+        return result;
+    }
+
+    private static async Task DownloadBoundedAsync(HttpClient client, Uri uri, string path, string expectedSha256,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        if (response.Content.Headers.ContentLength is <= 0 or > MaximumInstallerSize)
+            throw new InvalidDataException("Release installer size is invalid.");
+        await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var output = File.Create(path);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[16384];
+        var total = 0;
+        while (true)
+        {
+            var read = await input.ReadAsync(buffer, cancellationToken);
+            if (read == 0) break;
+            total = checked(total + read);
+            if (total > MaximumInstallerSize) throw new InvalidDataException("Release installer is too large.");
+            hash.AppendData(buffer, 0, read);
+            await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+        }
+        if (total == 0) throw new InvalidDataException("Release installer is empty.");
+        if (!Convert.ToHexString(hash.GetHashAndReset()).Equals(expectedSha256, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Release installer verification failed.");
     }
 
     private static async Task DownloadVerifiedAsync(HttpClient client, Uri uri, string path, AgentReleaseAsset asset,
