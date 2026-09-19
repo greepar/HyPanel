@@ -104,6 +104,45 @@ public sealed class ReconciliationInfrastructureTests
     }
 
     [TestMethod]
+    public async Task BackendInstanceStore_TlsAsset_WritesProtectedFilesAndRedactsMetadata()
+    {
+        var store = new BackendInstanceStore(new AgentEnrollmentOptions(null, null, dataDirectory));
+        var fingerprint = new string('a', 64);
+        var desired = Service("tls", "tcp") with
+        {
+            TlsCertificate = new TlsCertificateAsset(Guid.NewGuid(), fingerprint,
+                "-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----\n",
+                "-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----\n")
+        };
+
+        await store.EnsureTlsAssetAsync(desired, CancellationToken.None);
+        await store.SaveConfigAsync(desired, new RenderedBackendConfig("config.json", "{}"u8.ToArray(),
+            Convert.ToHexString(SHA256.HashData("{}"u8)).ToLowerInvariant()), CancellationToken.None);
+
+        var tls = Path.Combine(store.GetInstanceDirectory(desired.ServiceId), "tls", fingerprint);
+        Assert.AreEqual("-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----\n",
+            await File.ReadAllTextAsync(Path.Combine(tls, "cert.pem")));
+        Assert.AreEqual("-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----\n",
+            await File.ReadAllTextAsync(Path.Combine(tls, "key.pem")));
+        var metadata = await File.ReadAllTextAsync(Path.Combine(store.GetInstanceDirectory(desired.ServiceId),
+            "desired.json"));
+        Assert.IsFalse(metadata.Contains("PRIVATE KEY", StringComparison.Ordinal));
+        Assert.IsFalse(metadata.Contains("CERTIFICATE", StringComparison.Ordinal));
+        var stale = Path.Combine(store.GetInstanceDirectory(desired.ServiceId), "tls", new string('b', 64));
+        Directory.CreateDirectory(stale);
+        await store.PruneTlsAssetsAsync(desired.ServiceId, CancellationToken.None);
+        Assert.IsFalse(Directory.Exists(stale));
+        Assert.IsTrue(Directory.Exists(tls));
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.AreEqual(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead |
+                            UnixFileMode.OtherRead, File.GetUnixFileMode(Path.Combine(tls, "cert.pem")));
+            Assert.AreEqual(UnixFileMode.UserRead | UnixFileMode.UserWrite,
+                File.GetUnixFileMode(Path.Combine(tls, "key.pem")));
+        }
+    }
+
+    [TestMethod]
     public async Task ApplyAsync_DuplicateEnabledUdpPort_IsolatesConflictingServiceWithoutAdvancingRevision()
     {
         await using var fixture = await ReconcilerFixture.CreateAsync(dataDirectory, new FakeProvider());

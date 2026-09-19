@@ -5,6 +5,7 @@ export type AppRoute = AdminRoute | 'subscription'
 export type Role = 'Admin' | 'User'
 export type ServerUpdate = { currentVersion: string; latestVersion: string | null; deploymentMode: 'BareMetal' | 'Docker'; updateAvailable: boolean; status: string; error: string | null }
 export type GlobalSettings = { agentUpdateDefaultPolicy: 'Manual' | 'Auto'; backendUpdateDefaultPolicy: 'Manual' | 'Auto'; githubMirrorBaseUrl: string | null; agentReleaseVersion: string | null; backendReleases: Record<string, string>; server: ServerUpdate; dataDirectory: string; databaseSizeBytes: number }
+export type Certificate = { id: string; name: string; createdAtUtc: string; notBeforeUtc: string; expiresAtUtc: string; fingerprint: string; subject: string; san: string[]; usedBy: number }
 
 export type User = {
   id: string
@@ -116,7 +117,7 @@ export type NodeIdentity = Pick<Node, 'id' | 'displayName'>
 export type ServiceRef = Service & { nodeId: string; nodeName: string }
 export type UserForm = { username: string; password: string; role: Role; enabled: boolean; trafficLimitBytes: string; expiresAtUtc: string }
 
-export type HyForm = { backendType: 'hysteria2'; name: string; version: string; listenHost: string; port: string; certificatePath: string; privateKeyPath: string; authPassword: string; masqueradeUrl: string; obfsPassword: string; upMbps: string; downMbps: string }
+export type HyForm = { backendType: 'hysteria2'; name: string; version: string; listenHost: string; port: string; certificateId: string; authPassword: string; masqueradeUrl: string; obfsPassword: string; upMbps: string; downMbps: string }
 export type XrayForm = { backendType: 'xray'; name: string; version: string; listenHost: string; port: string; realityPrivateKey: string; realityPublicKey: string; shortId: string; serverName: string; destination: string; fingerprint: string }
 export type ShadowsocksForm = { backendType: 'mihomo' | 'sing-box'; name: string; version: string; listenHost: string; port: string; password: string }
 export type ServiceForm = HyForm | XrayForm | ShadowsocksForm

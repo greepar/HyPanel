@@ -16,6 +16,7 @@ using HyPanel.Shared.Contracts;
 [JsonSerializable(typeof(ServiceDesiredState[]))]
 [JsonSerializable(typeof(BackendUser))]
 [JsonSerializable(typeof(BackendUser[]))]
+[JsonSerializable(typeof(TlsCertificateAsset))]
 [JsonSerializable(typeof(BackendArtifact))]
 [JsonSerializable(typeof(BackendArtifact[]))]
 [JsonSerializable(typeof(ServiceRuntimeState))]

@@ -131,11 +131,13 @@ public sealed class ServiceReconciler(
                 {
                     var recoveryState = await BuildRecoveryStateAsync(previous.DesiredState, desiredState,
                         cancellationToken);
-                    await stateStore.SaveAsync(new AgentLocalState(previous.AppliedRevision, recoveryState),
+                    await stateStore.SaveAsync(new AgentLocalState(previous.AppliedRevision,
+                            WithoutTlsMaterial(recoveryState)),
                         cancellationToken);
                 }
                 else
-                    await stateStore.SaveAsync(new AgentLocalState(desiredState.Revision, desiredState), cancellationToken);
+                    await stateStore.SaveAsync(new AgentLocalState(desiredState.Revision,
+                        WithoutTlsMaterial(desiredState)), cancellationToken);
                 return failed
                     ? new ApplyResult(false, firstErrorCode ?? "apply_failed",
                         SafeMessage(firstErrorCode ?? "apply_failed"))
@@ -251,6 +253,7 @@ public sealed class ServiceReconciler(
     private async Task ApplyServiceAsync(ServicePlan plan, List<Guid> changed, CancellationToken cancellationToken)
     {
         await usageStateStore.EnsureBaselinesAsync(plan.Desired.ServiceId, plan.Desired.Users, cancellationToken);
+        await instanceStore.EnsureTlsAssetAsync(plan.Desired, cancellationToken);
         var prior = await instanceStore.TryLoadAsync(plan.Desired.ServiceId, cancellationToken);
         var isChanged = prior is null || prior.ConfigSha256 != plan.Config.Sha256 ||
                         prior.DesiredState.Enabled != plan.Desired.Enabled ||
@@ -325,6 +328,7 @@ public sealed class ServiceReconciler(
 
         runtimeStates[plan.Desired.ServiceId] = State(plan.Desired.ServiceId, ServiceRuntimeStatus.Running,
             plan.Desired.BackendVersion, plan.Config.Sha256, null, null);
+        await instanceStore.PruneTlsAssetsAsync(plan.Desired.ServiceId, cancellationToken);
         recoveryStates.TryRemove(plan.Desired.ServiceId, out _);
         reportedFailures.TryRemove(plan.Desired.ServiceId, out _);
     }
@@ -403,6 +407,7 @@ public sealed class ServiceReconciler(
                 var spec = await provider.CreateProcessSpecAsync(
                     CreateContext(metadata.DesiredState, metadata.ConfigFileName, binaryPath), cancellationToken);
                 await processSupervisor.StartAsync(serviceId, spec, cancellationToken);
+                await instanceStore.PruneTlsAssetsAsync(serviceId, cancellationToken);
             }
             catch (Exception)
             {
@@ -499,6 +504,11 @@ public sealed class ServiceReconciler(
             .ToArray();
         return new NodeDesiredState(previous?.Revision ?? 0, services, artifacts);
     }
+
+    private static NodeDesiredState WithoutTlsMaterial(NodeDesiredState state) => state with
+    {
+        Services = state.Services.Select(BackendInstanceStore.WithoutTlsMaterial).ToArray()
+    };
 
     private BackendInstanceContext
         CreateContext(ServiceDesiredState desired, string configFileName, string binaryPath) =>

@@ -28,3 +28,13 @@
 6. Add endpoint tests for manual, retry, policy and batch update behavior.
 7. Run a Linux process-level E2E harness with two stamped Agent binaries and a local fake Panel.
 8. Run focused tests after each phase, then full build/test, Web build and representative Linux NativeAOT publish.
+
+---
+
+## Phase 19 test plan
+
+- Migrate `Hysteria2ProviderTests` to certificateId plus `TlsCertificateAsset`; assert fingerprint paths.
+- Extend reconciliation infrastructure tests for TLS file modes and metadata redaction.
+- Add certificate validation/protector tests with generated self-signed certificates.
+- Add repository integration tests for encrypted storage and replacement revision increments.
+- Run focused Agent/Server tests, then full solution tests and review assertions.

@@ -53,3 +53,18 @@ Acceptance checklist:
 - Interrupted download/staging/apply/restart states recover deterministically without an update loop.
 - Linux harness runs an old Agent through download, replacement, restart and a successful new-version sync.
 - Windows helper planning/path/token validation is testable on non-Windows CI.
+
+---
+
+## Phase 19 test scope
+
+- Agent: Hysteria2 certificateId/fingerprint rendering, TLS file permissions, and PEM exclusion from state metadata.
+- Server: PEM/key validation, encrypted private-key persistence, list response secrecy, replacement revision behavior.
+- Existing conventions: MSTest, SDK-style projects, focused repository fixtures, NativeAOT source-generated JSON.
+
+## Acceptance checklist
+
+- Matching valid PEM/key accepted; malformed, mismatched, not-yet-valid, and expired inputs rejected.
+- Private key encrypted at rest and absent from normal API/read DTOs.
+- Agent writes cert 0644, key 0600, references fingerprint path, and does not persist PEM in desired metadata.
+- Certificate replacement increments every referencing Node revision and keeps unrelated Nodes unchanged.

@@ -48,6 +48,8 @@ internal static class AdminServicesEndpoints
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
         if (!TryValidateCreate(request, out var name, out var backendType, out var version, out var configJson))
             return Results.BadRequest();
+        if (!await HasValidCertificateAsync(backendType, configJson, repository, cancellationToken))
+            return Results.BadRequest();
         var now = timeProvider.GetUtcNow();
         var result = await repository.CreateServiceAsync(
             new ServiceInstanceRecord(Guid.NewGuid(), nodeId, name, backendType, version, true,
@@ -70,6 +72,8 @@ internal static class AdminServicesEndpoints
         if (existing is null) return Results.NotFound();
         if (!TryValidateUpdate(request, out var name, out var version, out var configJson)) return Results.BadRequest();
         if (!TryMergeRedactedSecrets(existing.ConfigJson, configJson, out configJson)) return Results.BadRequest();
+        if (!await HasValidCertificateAsync(existing.BackendType, configJson, repository, cancellationToken))
+            return Results.BadRequest();
         var now = timeProvider.GetUtcNow();
         var result = await repository.UpdateServiceAsync(
             new ServiceInstanceRecord(serviceId, nodeId, name, existing.BackendType, version, request.Enabled,
@@ -205,6 +209,20 @@ internal static class AdminServicesEndpoints
     {
         backendType = value?.Trim().ToLowerInvariant() ?? string.Empty;
         return backendType is "hysteria2" or "xray" or "mihomo" or "sing-box";
+    }
+
+    internal static async Task<bool> HasValidCertificateAsync(string backendType, string configJson,
+        SqliteServerRepository repository, CancellationToken ct)
+    {
+        if (backendType != "hysteria2") return true;
+        try
+        {
+            using var document = JsonDocument.Parse(configJson);
+            return document.RootElement.TryGetProperty("certificateId", out var property) &&
+                   Guid.TryParse(property.GetString(), out var id) &&
+                   await repository.GetCertificateWithKeyAsync(id, ct) is not null;
+        }
+        catch (JsonException) { return false; }
     }
 
     private static bool TryValidateUpdate(UpdateServiceRequest request, out string name, out string version,

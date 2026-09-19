@@ -32,7 +32,7 @@ public sealed class Hysteria2Provider : IBackendProvider
             return ValueTask.FromResult(Invalid("unsupported_schema", "Unsupported Hysteria2 configuration schema."));
         }
 
-        if (!TryParseConfig(desiredState.ConfigJson, out var config) || !IsValidConfig(config))
+        if (!TryParseConfig(desiredState.ConfigJson, out var config) || !IsValidConfig(config, desiredState))
         {
             return ValueTask.FromResult(Invalid("invalid_config", "Invalid Hysteria2 configuration."));
         }
@@ -53,12 +53,12 @@ public sealed class Hysteria2Provider : IBackendProvider
 
         if (desiredState.ConfigSchemaVersion != 1 ||
             !TryParseConfig(desiredState.ConfigJson, out var config) ||
-            !IsValidConfig(config))
+            !IsValidConfig(config, desiredState))
         {
             throw new InvalidOperationException("Hysteria2 configuration is invalid.");
         }
 
-        var yaml = RenderYaml(config);
+        var yaml = RenderYaml(config, desiredState.TlsCertificate?.Fingerprint);
         var content = Encoding.UTF8.GetBytes(yaml);
         var sha256 = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
 
@@ -129,12 +129,10 @@ public sealed class Hysteria2Provider : IBackendProvider
         }
     }
 
-    private static bool IsValidConfig(Hysteria2Config config) =>
+    private static bool IsValidConfig(Hysteria2Config config, ServiceDesiredState desiredState) =>
         IsValidListenHost(config.ListenHost) &&
         config.ListenPort is >= 1 and <= 65_535 &&
-        IsAbsolutePath(config.CertificatePath) &&
-        IsAbsolutePath(config.PrivateKeyPath) &&
-        !PathsEqual(config.CertificatePath!, config.PrivateKeyPath!) &&
+        HasValidCertificate(config, desiredState) &&
         HasValidSecretLength(config.AuthPassword) &&
         IsAbsoluteHttpsUri(config.MasqueradeUrl) &&
         (config.ObfsPassword is null || HasValidSecretLength(config.ObfsPassword)) &&
@@ -177,13 +175,22 @@ public sealed class Hysteria2Provider : IBackendProvider
         return true;
     }
 
+    private static bool IsSha256(string value) => value.Length == 64 && value.All(character =>
+        character is >= '0' and <= '9' or >= 'a' and <= 'f');
+
+    private static bool HasValidCertificate(Hysteria2Config config, ServiceDesiredState desiredState)
+    {
+        if (config.CertificateId != Guid.Empty && desiredState.TlsCertificate is { } tls)
+            return tls.CertificateId == config.CertificateId && IsSha256(tls.Fingerprint);
+        return IsAbsolutePath(config.CertificatePath) && IsAbsolutePath(config.PrivateKeyPath) &&
+               !PathsEqual(config.CertificatePath!, config.PrivateKeyPath!);
+    }
+
     private static bool IsAbsolutePath(string? path) =>
         !string.IsNullOrWhiteSpace(path) && Path.IsPathFullyQualified(path);
 
     private static bool PathsEqual(string first, string second) =>
-        string.Equals(
-            Path.GetFullPath(first),
-            Path.GetFullPath(second),
+        string.Equals(Path.GetFullPath(first), Path.GetFullPath(second),
             OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     private static bool HasValidSecretLength(string? value) =>
@@ -194,7 +201,7 @@ public sealed class Hysteria2Provider : IBackendProvider
         uri.Scheme == Uri.UriSchemeHttps &&
         !string.IsNullOrEmpty(uri.Host);
 
-    private static string RenderYaml(Hysteria2Config config)
+    private static string RenderYaml(Hysteria2Config config, string? fingerprint)
     {
         var listenAddress = config.ListenHost!.Contains(':')
             ? $"[{config.ListenHost}]:{config.ListenPort}"
@@ -203,8 +210,10 @@ public sealed class Hysteria2Provider : IBackendProvider
         var yaml = new StringBuilder();
         yaml.Append("listen: ").Append(QuoteYaml(listenAddress)).AppendLine();
         yaml.AppendLine("tls:");
-        yaml.Append("  cert: ").Append(QuoteYaml(config.CertificatePath!)).AppendLine();
-        yaml.Append("  key: ").Append(QuoteYaml(config.PrivateKeyPath!)).AppendLine();
+        var certificatePath = fingerprint is null ? config.CertificatePath! : $"tls/{fingerprint}/cert.pem";
+        var privateKeyPath = fingerprint is null ? config.PrivateKeyPath! : $"tls/{fingerprint}/key.pem";
+        yaml.Append("  cert: ").Append(QuoteYaml(certificatePath)).AppendLine();
+        yaml.Append("  key: ").Append(QuoteYaml(privateKeyPath)).AppendLine();
         yaml.AppendLine("auth:");
         yaml.Append("  type: ").Append(QuoteYaml("password")).AppendLine();
         yaml.Append("  password: ").Append(QuoteYaml(config.AuthPassword!)).AppendLine();

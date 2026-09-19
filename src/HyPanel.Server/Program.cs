@@ -77,11 +77,14 @@ public static class Program
         await app.Services.GetRequiredService<SqliteMigrationRunner>().MigrateAsync(CancellationToken.None);
         await app.Services.GetRequiredService<SqliteServerRepository>()
             .InitializeProxyCredentialsAsync(CancellationToken.None);
+        await app.Services.GetRequiredService<SqliteServerRepository>()
+            .InitializeCertificatesAsync(CancellationToken.None);
 
         app.MapGet("/health", static () =>
             Results.Json(HealthResponse.Instance, HealthJsonSerializerContext.Default.HealthResponse));
         AdminNodesEndpoints.Map(app);
         AdminServicesEndpoints.Map(app);
+        AdminCertificatesEndpoints.Map(app);
         AdminServiceTemplateEndpoints.Map(app);
         AdminObservationEndpoints.Map(app);
         AdminHealthSummaryEndpoints.Map(app);

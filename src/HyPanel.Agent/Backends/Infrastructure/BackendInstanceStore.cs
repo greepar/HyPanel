@@ -52,7 +52,8 @@ public sealed class BackendInstanceStore(AgentEnrollmentOptions options)
         try
         {
             await WriteAtomicAsync(directory, storedName, config.Content, cancellationToken);
-            var metadata = new BackendInstanceMetadata(desiredState, storedName, config.Sha256, DateTimeOffset.UtcNow);
+            var metadata = new BackendInstanceMetadata(WithoutTlsMaterial(desiredState), storedName, config.Sha256,
+                DateTimeOffset.UtcNow);
             await WriteMetadataAsync(directory, metadata, cancellationToken);
         }
         catch
@@ -75,6 +76,52 @@ public sealed class BackendInstanceStore(AgentEnrollmentOptions options)
             }
         }
         return configPath;
+    }
+
+    public async Task EnsureTlsAssetAsync(ServiceDesiredState desiredState, CancellationToken cancellationToken)
+    {
+        if (desiredState.TlsCertificate is not { } tls) return;
+        if (!IsSha256(tls.Fingerprint)) throw new InvalidDataException("TLS certificate fingerprint is invalid.");
+        var directory = Path.Combine(GetInstanceDirectory(desiredState.ServiceId), "tls", tls.Fingerprint);
+        var certPath = Path.Combine(directory, "cert.pem");
+        var keyPath = Path.Combine(directory, "key.pem");
+        if (tls.CertificatePem is null || tls.PrivateKeyPem is null)
+        {
+            if (!File.Exists(certPath) || !File.Exists(keyPath))
+                throw new InvalidDataException("TLS certificate material is unavailable.");
+            return;
+        }
+        Directory.CreateDirectory(directory);
+        RestrictDirectory(directory);
+        await WriteAtomicAsync(directory, "cert.pem", System.Text.Encoding.UTF8.GetBytes(tls.CertificatePem),
+            cancellationToken);
+        await WriteAtomicAsync(directory, "key.pem", System.Text.Encoding.UTF8.GetBytes(tls.PrivateKeyPem),
+            cancellationToken);
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(certPath, UnixFileMode.UserRead | UnixFileMode.UserWrite |
+                                           UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+    }
+
+    public static ServiceDesiredState WithoutTlsMaterial(ServiceDesiredState state) => state.TlsCertificate is null
+        ? state
+        : state with { TlsCertificate = state.TlsCertificate with { CertificatePem = null, PrivateKeyPem = null } };
+
+    public async Task PruneTlsAssetsAsync(Guid serviceId, CancellationToken cancellationToken)
+    {
+        var keep = new HashSet<string>(StringComparer.Ordinal);
+        var current = await TryLoadAsync(serviceId, cancellationToken);
+        if (current?.DesiredState.TlsCertificate is { } tls) keep.Add(tls.Fingerprint);
+        var snapshot = Path.Combine(GetInstanceDirectory(serviceId), LastKnownGoodDirectory, MetadataFileName);
+        if (File.Exists(snapshot))
+        {
+            var value = JsonSerializer.Deserialize(await File.ReadAllBytesAsync(snapshot, cancellationToken),
+                BackendInfrastructureJsonSerializerContext.Default.BackendInstanceMetadata);
+            if (value?.DesiredState.TlsCertificate is { } previous) keep.Add(previous.Fingerprint);
+        }
+        var root = Path.Combine(GetInstanceDirectory(serviceId), "tls");
+        if (!Directory.Exists(root)) return;
+        foreach (var directory in Directory.EnumerateDirectories(root))
+            if (!keep.Contains(Path.GetFileName(directory))) Directory.Delete(directory, recursive: true);
     }
 
     public async Task SaveLastKnownGoodAsync(Guid serviceId, CancellationToken cancellationToken)
@@ -154,6 +201,9 @@ public sealed class BackendInstanceStore(AgentEnrollmentOptions options)
                                                         Path.GetFileName(value) == value && value.All(character =>
                                                             char.IsAsciiLetterOrDigit(character) ||
                                                              character is '.' or '-' or '_');
+
+    private static bool IsSha256(string value) => value.Length == 64 && value.All(character =>
+        character is >= '0' and <= '9' or >= 'a' and <= 'f');
 
     private static void RestrictDirectory(string path)
     {

@@ -159,7 +159,11 @@ ConfigSchemaVersion
 Config payload
 Users[] with UserId and backend credential when the provider supports multi-user identity
 ControlPort? reserved by the Server for a loopback-only backend management API
+TlsCertificate? certificate ID, SHA256 fingerprint, and PEM material only for authenticated Agent sync
 ```
+
+TLS private-key PEM is never returned by normal Admin/User APIs and is removed before Agent desired state is persisted
+to generic JSON state. The Agent stores it only in the service-private TLS directory with owner-only permissions.
 
 The Agent must never apply a desired revision partially and then report it as fully applied.
 

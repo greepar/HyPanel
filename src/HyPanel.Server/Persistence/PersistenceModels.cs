@@ -84,6 +84,9 @@ internal sealed record BackendUpdateTargetRecord(Guid NodeId, Guid ServiceId, st
     string DesiredVersion, string ReportedRid, string Policy);
 internal sealed record GlobalSettingsRecord(string AgentUpdateDefaultPolicy, string BackendUpdateDefaultPolicy,
     string? GithubMirrorBaseUrl, DateTimeOffset UpdatedAtUtc);
+internal sealed record CertificateRecord(Guid Id, string Name, string CertificatePem, DateTimeOffset CreatedAtUtc,
+    DateTimeOffset NotBeforeUtc, DateTimeOffset ExpiresAtUtc, string Fingerprint, string Subject, string San,
+    int UsedBy, string? PrivateKeyPem = null);
 
 internal sealed record ServiceRuntimeStateRecord(
     Guid ServiceId,

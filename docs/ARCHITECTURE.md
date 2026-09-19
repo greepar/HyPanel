@@ -405,6 +405,18 @@ Global settings are a SQLite singleton. Update defaults are copied only when a n
 the default does not silently rewrite existing resources. The optional GitHub mirror is an HTTPS base URL applied only
 to compile-time-controlled official GitHub URLs. It cannot turn release workers into arbitrary URL downloaders.
 
+### Certificate assets
+
+The Server stores uploaded certificate PEM plus AES-256-GCM encrypted private-key PEM. Encryption uses the persistent
+master key with a certificate-specific AAD namespace; ordinary APIs expose only metadata. Hysteria2 service config
+binds a `CertificateId`, never a Server filesystem path. Authenticated Agent desired state carries the selected material.
+
+The Agent writes immutable fingerprint-addressed files under `services/<id>/tls/<sha256>/`: public certificate 0644,
+private key 0600. Rendered Hysteria2 config uses relative paths into that directory. Generic `state.json` and
+`desired.json` retain only certificate ID/fingerprint, so PEM material is not copied into runtime caches. Rotation bumps
+every referencing Node revision; write/validation/start failure rolls the service back to the previous config and TLS
+fingerprint.
+
 ## 9. Usage accounting
 
 Providers normalize backend-specific counters into a shared usage representation.

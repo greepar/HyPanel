@@ -37,6 +37,8 @@ internal static class AdminServiceTemplateEndpoints
         if (!TryValidate(request.Name, request.BackendType, request.BackendVersion, request.ConfigSchemaVersion,
                 request.ConfigJson, out var name, out var normalizedName, out var backendType, out var version,
                 out var config)) return Results.BadRequest();
+        if (!await AdminServicesEndpoints.HasValidCertificateAsync(backendType, config, repository, ct))
+            return Results.BadRequest();
         var now = timeProvider.GetUtcNow();
         var template = new ServiceTemplateRecord(Guid.NewGuid(), name, normalizedName, backendType, version,
             request.ConfigSchemaVersion, config, now, now);
@@ -58,6 +60,8 @@ internal static class AdminServiceTemplateEndpoints
         if (!TryValidate(request.Name, request.BackendType, request.BackendVersion, request.ConfigSchemaVersion,
                 request.ConfigJson, out var name, out var normalizedName, out var backendType, out var version,
                 out var config)) return Results.BadRequest();
+        if (!await AdminServicesEndpoints.HasValidCertificateAsync(backendType, config, repository, ct))
+            return Results.BadRequest();
         var updated = existing with
         {
             Name = name, NormalizedName = normalizedName, BackendType = backendType,
@@ -88,6 +92,10 @@ internal static class AdminServiceTemplateEndpoints
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
         if (!AdminNodesEndpoints.TryNormalize(request.Name, MaximumNameLength, out var name))
             return Results.BadRequest();
+        var template = await repository.GetServiceTemplateAsync(templateId, ct);
+        if (template is null) return Results.NotFound();
+        if (!await AdminServicesEndpoints.HasValidCertificateAsync(template.BackendType, template.ConfigJson,
+                repository, ct)) return Results.BadRequest();
         var result = await repository.CreateServiceFromTemplateAsync(nodeId, templateId, name, ct);
         return result.Service is null
             ? Results.NotFound()

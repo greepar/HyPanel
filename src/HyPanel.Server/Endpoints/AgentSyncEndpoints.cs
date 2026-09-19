@@ -95,9 +95,17 @@ internal static class AgentSyncEndpoints
                     ? (await repository.GetServiceCredentialsAsync(service.Id, true, cancellationToken))
                         .Select(item => new BackendUser(item.UserId, item.Credential)).ToArray()
                     : Array.Empty<BackendUser>();
+                TlsCertificateAsset? tls = null;
+                if (service.BackendType == "hysteria2" && TryCertificateId(service.ConfigJson, out var certificateId))
+                {
+                    var certificate = await repository.GetCertificateWithKeyAsync(certificateId, cancellationToken);
+                    if (certificate is not null)
+                        tls = new TlsCertificateAsset(certificate.Id, certificate.Fingerprint,
+                            certificate.CertificatePem, certificate.PrivateKeyPem);
+                }
                 desiredServices.Add(new ServiceDesiredState(service.Id, service.Name, service.BackendType,
                     service.BackendVersion, service.Enabled, service.ConfigSchemaVersion, service.ConfigJson, users,
-                    service.BackendType == "xray" ? controlPort++ : null));
+                    service.BackendType == "xray" ? controlPort++ : null, tls));
             }
             var artifacts = DistinctArtifacts(desired.Value.Services.Where(service => service.Enabled)
                 .Select(service => backendArtifactCatalog.FindArtifact(service.BackendType, service.BackendVersion,
@@ -119,6 +127,18 @@ internal static class AgentSyncEndpoints
                 .Cast<BackendArtifact>()
                 .DistinctBy(static artifact => (artifact.BackendType, artifact.Version, artifact.Rid))
                 .ToArray();
+
+    private static bool TryCertificateId(string json, out Guid id)
+    {
+        id = Guid.Empty;
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.TryGetProperty("certificateId", out var value) &&
+                   Guid.TryParse(value.GetString(), out id);
+        }
+        catch (JsonException) { return false; }
+    }
 
     internal static async Task<AgentUpdateDescriptor?> GetAgentUpdateAsync(Guid agentId, AgentSyncRequest request,
         SqliteServerRepository repository, ReleaseCatalog catalog, CancellationToken cancellationToken)

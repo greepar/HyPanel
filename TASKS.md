@@ -1010,3 +1010,33 @@ Planned slices:
   one-hour Panel outage, permission/secret audit, three-hour soak, real reboot, and published Agent update success/failure
   recovery passed. `linux-x64` and `linux-arm64` NativeAOT publish passed. Official Server and Agent now run `0.4.5`.
   ARM64 runtime hardware remains unavailable and is recorded as a platform evidence gap, not a Phase 18 blocker.
+
+## Phase 19 — Hysteria2 certificate management
+
+### HP-1900 — Certificate asset storage and API
+- Owner: architect (Sol)
+- Depends on: HP-1803
+- Status: DONE
+- Result: Added schema v12 certificate assets with unique name/fingerprint metadata and AES-256-GCM encrypted private
+  keys under a certificate-specific AAD namespace. Admin list/upload/replace APIs validate PEM/key matching, validity
+  interval, subject, SAN and SHA256 fingerprint. Normal responses never return certificate or private-key PEM; Server
+  startup fails explicitly if encrypted certificate keys exist without the configured master key.
+
+### HP-1901 — Hysteria2 binding and Agent TLS lifecycle
+- Owner: architect (Sol)
+- Depends on: HP-1900
+- Status: DONE
+- Result: Hysteria2 config binds `CertificateId` instead of Server filesystem paths. Authenticated desired state carries
+  only the selected material. Agent writes fingerprint-addressed TLS assets under the service-private directory (cert
+  0644, key 0600), renders relative paths, and strips PEM from generic state/metadata JSON. Replacement increments every
+  referencing Node revision and uses existing config rollback/backoff behavior.
+
+### HP-1902 — Certificate UI and production acceptance
+- Owner: architect (Sol)
+- Depends on: HP-1900, HP-1901
+- Status: DONE
+- Result: Settings now lists/uploads/replaces certificates and HY2 service forms select a managed asset. Ubuntu/AlmaLinux
+  acceptance verified encrypted SQLite storage, API secrecy, real HY2 startup, permission modes, successful rotation,
+  mismatched-key rejection without revision change, read-only TLS write failure preserving the old PID/config/listener,
+  and automatic convergence after permissions recovered. Production was restored to official 0.4.5/schema11 after the
+  isolated acceptance; Phase 19 code remains ready for the next release.

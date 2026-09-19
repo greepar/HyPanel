@@ -15,6 +15,7 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
     private const long UserServiceCredentialsSchemaVersion = 9;
     private const long BackendUpdateSchemaVersion = 10;
     private const long GlobalSettingsSchemaVersion = 11;
+    private const long CertificatesSchemaVersion = 12;
 
     public async Task MigrateAsync(CancellationToken cancellationToken)
     {
@@ -326,6 +327,33 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             insertMigration.CommandText = "INSERT INTO schema_migrations (version, applied_at_utc) VALUES (@version, @appliedAtUtc);";
             insertMigration.Parameters.AddWithValue("@version", GlobalSettingsSchemaVersion);
             insertMigration.Parameters.AddWithValue("@appliedAtUtc", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+            await insertMigration.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, CertificatesSchemaVersion, cancellationToken))
+        {
+            await ExecuteAsync(connection, transaction, """
+                CREATE TABLE certificates (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    normalized_name TEXT NOT NULL UNIQUE COLLATE BINARY,
+                    certificate_pem TEXT NOT NULL,
+                    key_nonce BLOB NOT NULL CHECK (length(key_nonce)=12),
+                    key_ciphertext BLOB NOT NULL,
+                    key_tag BLOB NOT NULL CHECK (length(key_tag)=16),
+                    created_at_utc TEXT NOT NULL,
+                    not_before_utc TEXT NOT NULL,
+                    expires_at_utc TEXT NOT NULL,
+                    fingerprint TEXT NOT NULL UNIQUE,
+                    subject TEXT NOT NULL,
+                    san TEXT NOT NULL
+                );
+                """, cancellationToken);
+            await using var insertMigration = connection.CreateCommand();
+            insertMigration.Transaction = transaction;
+            insertMigration.CommandText = "INSERT INTO schema_migrations (version,applied_at_utc) VALUES (@version,@at);";
+            insertMigration.Parameters.AddWithValue("@version", CertificatesSchemaVersion);
+            insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
             await insertMigration.ExecuteNonQueryAsync(cancellationToken);
         }
 

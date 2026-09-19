@@ -131,3 +131,13 @@
 - Same-node re-enrollment: PASS; existing Agent identity is retained while its secret and observations are atomically
   rotated/reset. Installer rollback preserves prior binary and state on failed enrollment.
 - Offline runtime presentation: PASS; the historical offline `uk-agent` service renders `未知`, not stale `运行中`.
+
+---
+
+## Phase 19 certificate test status
+
+- Certificate validation: matching PEM/key accepted; mismatch, expired, and not-yet-valid rejected.
+- Storage: private key ciphertext differs from plaintext and decrypts with the persistent master key; missing key is fatal.
+- Agent: fingerprint paths, cert 0644/key 0600, PEM exclusion from state/metadata and bounded TLS version retention verified.
+- Production acceptance: real HY2 start, rotation, invalid-key rejection, read-only write preservation and automatic retry passed.
+- Final gate: Shared 21, Server 116, Agent 151; Release/Web/NativeAOT x64+arm64 passed.

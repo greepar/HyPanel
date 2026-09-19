@@ -16,6 +16,8 @@ internal sealed class Hysteria2Config
 
     public int ListenPort { get; init; }
 
+    public Guid CertificateId { get; init; }
+
     public string? CertificatePath { get; init; }
 
     public string? PrivateKeyPath { get; init; }

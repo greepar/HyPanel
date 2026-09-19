@@ -65,6 +65,40 @@ internal sealed class ProxyCredentialProtector
         }
     }
 
+    public ProtectedCredential ProtectCertificateKey(Guid certificateId, string privateKeyPem) =>
+        ProtectCore(privateKeyPem, Encoding.UTF8.GetBytes($"hypanel:certificate-key:v1:{certificateId:D}"));
+
+    public string UnprotectCertificateKey(Guid certificateId, ProtectedCredential value) =>
+        UnprotectCore(value, Encoding.UTF8.GetBytes($"hypanel:certificate-key:v1:{certificateId:D}"));
+
+    private ProtectedCredential ProtectCore(string value, byte[] associatedData)
+    {
+        var nonce = RandomNumberGenerator.GetBytes(12);
+        var plaintext = Encoding.UTF8.GetBytes(value);
+        var ciphertext = new byte[plaintext.Length];
+        var tag = new byte[16];
+        using var aes = new AesGcm(RequireKey(), tag.Length);
+        aes.Encrypt(nonce, plaintext, ciphertext, tag, associatedData);
+        CryptographicOperations.ZeroMemory(plaintext);
+        return new ProtectedCredential(nonce, ciphertext, tag);
+    }
+
+    private string UnprotectCore(ProtectedCredential value, byte[] associatedData)
+    {
+        var plaintext = new byte[value.Ciphertext.Length];
+        try
+        {
+            using var aes = new AesGcm(RequireKey(), value.Tag.Length);
+            aes.Decrypt(value.Nonce, value.Ciphertext, value.Tag, plaintext, associatedData);
+            return Encoding.UTF8.GetString(plaintext);
+        }
+        catch (CryptographicException exception)
+        {
+            throw new InvalidOperationException("A certificate key could not be decrypted with the configured master key.", exception);
+        }
+        finally { CryptographicOperations.ZeroMemory(plaintext); }
+    }
+
     private byte[] RequireKey() => key ?? throw new InvalidOperationException(
         $"{ConfigurationKey} is required before proxy credentials can be created or read. Set HYPANEL_MASTER_KEY or HyPanel__Security__MasterKey to a persistent 32-byte Base64 secret.");
 

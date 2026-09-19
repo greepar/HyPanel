@@ -12,7 +12,7 @@ export const backends: Record<BackendType, BackendDefinition> = {
 
 export const backendFor = (value: string) => backends[value as BackendType] ?? { name: value, core: value, protocol: '未知协议', description: '未知后端', badge: '?' }
 export const emptyService = (type: BackendType = 'hysteria2'): ServiceForm => type === 'hysteria2'
-  ? { backendType: type, name: '', version: '2.12.2', listenHost: '0.0.0.0', port: '443', certificatePath: '', privateKeyPath: '', authPassword: '', masqueradeUrl: 'https://example.com/', obfsPassword: '', upMbps: '100', downMbps: '100' }
+  ? { backendType: type, name: '', version: '2.12.2', listenHost: '0.0.0.0', port: '443', certificateId: '', authPassword: '', masqueradeUrl: 'https://example.com/', obfsPassword: '', upMbps: '100', downMbps: '100' }
   : type === 'xray'
     ? { backendType: type, name: '', version: '26.3.27', listenHost: '0.0.0.0', port: '443', realityPrivateKey: '', realityPublicKey: '', shortId: '', serverName: '', destination: '', fingerprint: 'chrome' }
     : { backendType: type, name: '', version: type === 'mihomo' ? '1.19.30' : '1.14.0', listenHost: '0.0.0.0', port: type === 'mihomo' ? '24446' : '24447', password: '' }
@@ -26,7 +26,7 @@ export function formFor(service: Service): ServiceForm {
   const base = { name: service.name, version: service.backendVersion, listenHost: String(c.listenHost ?? '0.0.0.0'), port: String(c.listenPort ?? 443) }
   if (service.backendType === 'xray') return { ...emptyService('xray'), ...base, realityPrivateKey: String(c.realityPrivateKey ?? ''), realityPublicKey: String(c.realityPublicKey ?? ''), shortId: String(c.shortId ?? ''), serverName: String(c.serverName ?? ''), destination: String(c.destination ?? ''), fingerprint: String(c.fingerprint ?? 'chrome') } as ServiceForm
   if (service.backendType === 'mihomo' || service.backendType === 'sing-box') return { ...emptyService(service.backendType), ...base, password: String(c.password ?? '') } as ServiceForm
-  return { ...emptyService(), ...base, certificatePath: String(c.certificatePath ?? ''), privateKeyPath: String(c.privateKeyPath ?? ''), authPassword: String(c.authPassword ?? ''), masqueradeUrl: String(c.masqueradeUrl ?? ''), obfsPassword: String(c.obfsPassword ?? ''), upMbps: String(c.upMbps ?? 100), downMbps: String(c.downMbps ?? 100) } as ServiceForm
+  return { ...emptyService(), ...base, certificateId: String(c.certificateId ?? ''), authPassword: String(c.authPassword ?? ''), masqueradeUrl: String(c.masqueradeUrl ?? ''), obfsPassword: String(c.obfsPassword ?? ''), upMbps: String(c.upMbps ?? 100), downMbps: String(c.downMbps ?? 100) } as ServiceForm
 }
 
 export function payloadFor(form: ServiceForm): ServicePayload {
@@ -34,8 +34,8 @@ export function payloadFor(form: ServiceForm): ServicePayload {
   if (!form.name.trim() || !form.version.trim() || !common.listenHost || !Number.isInteger(common.listenPort) || common.listenPort < 1 || common.listenPort > 65535) throw new Error('请完整填写名称、版本和有效端口。')
   let config: Record<string, unknown>
   if (form.backendType === 'hysteria2') {
-    if (!form.certificatePath.trim() || !form.privateKeyPath.trim() || !form.authPassword || !form.masqueradeUrl.trim() || Number(form.upMbps) <= 0 || Number(form.downMbps) <= 0) throw new Error('请完整填写 Hysteria 2 证书、认证和带宽配置。')
-    config = { ...common, certificatePath: form.certificatePath, privateKeyPath: form.privateKeyPath, authPassword: form.authPassword, masqueradeUrl: form.masqueradeUrl, ...(form.obfsPassword ? { obfsPassword: form.obfsPassword } : {}), upMbps: Number(form.upMbps), downMbps: Number(form.downMbps) }
+    if (!form.certificateId || !form.authPassword || !form.masqueradeUrl.trim() || Number(form.upMbps) <= 0 || Number(form.downMbps) <= 0) throw new Error('请完整填写 Hysteria 2 证书、认证和带宽配置。')
+    config = { ...common, certificateId: form.certificateId, authPassword: form.authPassword, masqueradeUrl: form.masqueradeUrl, ...(form.obfsPassword ? { obfsPassword: form.obfsPassword } : {}), upMbps: Number(form.upMbps), downMbps: Number(form.downMbps) }
   } else if (form.backendType === 'xray') {
     if (!form.realityPrivateKey || !form.realityPublicKey.trim() || !form.shortId.trim() || !form.serverName.trim() || !form.destination.trim()) throw new Error('请完整填写 Xray REALITY 配置。')
     config = { ...common, flow: 'xtls-rprx-vision', realityPrivateKey: form.realityPrivateKey, realityPublicKey: form.realityPublicKey, shortId: form.shortId, serverName: form.serverName, destination: form.destination, fingerprint: form.fingerprint }

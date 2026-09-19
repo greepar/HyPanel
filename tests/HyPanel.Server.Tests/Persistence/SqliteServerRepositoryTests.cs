@@ -35,7 +35,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -59,6 +59,64 @@ public sealed class SqliteServerRepositoryTests
             },
             await ReadColumnNamesAsync(connection, "service_templates"));
         CollectionAssert.Contains(await ReadColumnNamesAsync(connection, "user_service_credentials"), "ciphertext");
+        CollectionAssert.Contains(await ReadColumnNamesAsync(connection, "certificates"), "key_ciphertext");
+    }
+
+    [TestMethod]
+    public async Task Certificates_PrivateKeyIsEncryptedAndReplacementIncrementsReferencingNode()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var id = Guid.NewGuid();
+        var node = Guid.NewGuid();
+        var unrelatedNode = Guid.NewGuid();
+        await fixture.Repository.CreateNodeAsync(node, "cert-node", CancellationToken.None);
+        await fixture.Repository.CreateNodeAsync(unrelatedNode, "unrelated-node", CancellationToken.None);
+        var value = new CertificateRecord(id, "example", "CERT", fixture.Time.GetUtcNow(), fixture.Time.GetUtcNow(),
+            fixture.Time.GetUtcNow().AddDays(30), new string('a', 64), "CN=example", "DNS:example.com", 0, "PRIVATE");
+        Assert.IsTrue(await fixture.Repository.CreateCertificateAsync(value, CancellationToken.None));
+        await using (var c = await fixture.OpenConnectionAsync())
+        await using (var cmd = c.CreateCommand())
+        {
+            cmd.CommandText = "SELECT key_ciphertext FROM certificates WHERE id=@id;";
+            cmd.Parameters.AddWithValue("@id", id.ToString("D"));
+            var encrypted = (byte[])(await cmd.ExecuteScalarAsync())!;
+            Assert.AreNotEqual("PRIVATE", Encoding.UTF8.GetString(encrypted));
+        }
+        var loaded = await fixture.Repository.GetCertificateWithKeyAsync(id, CancellationToken.None);
+        Assert.AreEqual("PRIVATE", loaded!.PrivateKeyPem);
+        var now = fixture.Time.GetUtcNow();
+        var config = JsonSerializer.Serialize(new { certificateId = id });
+        await fixture.Repository.CreateServiceAsync(new ServiceInstanceRecord(Guid.NewGuid(), node, "hy2", "hysteria2",
+            "2.12.3", true, 1, config, now, now), CancellationToken.None);
+        var before = (await fixture.Repository.GetNodeAsync(node, CancellationToken.None))!.DesiredRevision;
+        var unrelatedBefore = (await fixture.Repository.GetNodeAsync(unrelatedNode, CancellationToken.None))!.DesiredRevision;
+        Assert.IsTrue(await fixture.Repository.ReplaceCertificateAsync(value with { Fingerprint = new string('b', 64) },
+            CancellationToken.None));
+        Assert.AreEqual(before + 1,
+            (await fixture.Repository.GetNodeAsync(node, CancellationToken.None))!.DesiredRevision);
+        Assert.AreEqual(unrelatedBefore,
+            (await fixture.Repository.GetNodeAsync(unrelatedNode, CancellationToken.None))!.DesiredRevision);
+    }
+
+    [TestMethod]
+    public async Task InitializeCertificatesAsync_EncryptedCertificateWithoutMasterKey_FailsExplicitly()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var id = Guid.NewGuid();
+        var now = fixture.Time.GetUtcNow();
+        Assert.IsTrue(await fixture.Repository.CreateCertificateAsync(new CertificateRecord(id, "cert", "CERT", now,
+            now, now.AddDays(1), new string('c', 64), "CN=test", "", 0, "PRIVATE"), CancellationToken.None));
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:HyPanel"] = fixture.ConnectionString
+        }).Build();
+        var repository = new SqliteServerRepository(new SqliteConnectionFactory(configuration), fixture.Time,
+            new ProxyCredentialProtector(configuration));
+
+        var exception = await Assert.ThrowsExceptionAsync<InvalidOperationException>(() =>
+            repository.InitializeCertificatesAsync(CancellationToken.None));
+
+        StringAssert.Contains(exception.Message, "MasterKey");
     }
 
     [TestMethod]
@@ -1346,6 +1404,7 @@ public sealed class SqliteServerRepositoryTests
         public SqliteMigrationRunner Migrations { get; }
 
         public SqliteServerRepository Repository { get; }
+        public string ConnectionString => $"Data Source={Path.Combine(_directory, "server.db")}";
 
         public static async Task<TestDatabase> CreateAsync()
         {

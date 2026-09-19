@@ -12,6 +12,7 @@ import {
 } from "./backend";
 import type {
   AppRoute,
+  Certificate,
   HealthSummary,
   GlobalSettings,
   Node,
@@ -80,10 +81,11 @@ export function AdminApp({
 
 function SettingsPage({ api, setError }: PageProps) {
   const [settings, setSettings] = useState<GlobalSettings | null>(null);
+  const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [loading, setLoading] = useState(true);
   const load = async () => {
     setLoading(true);
-    try { setSettings(await api.settings()); }
+    try { const [nextSettings, nextCertificates] = await Promise.all([api.settings(), api.certificates()]); setSettings(nextSettings); setCertificates(nextCertificates); }
     catch (reason) { setError(messageFor(reason, "无法加载设置")); }
     finally { setLoading(false); }
   };
@@ -107,10 +109,46 @@ function SettingsPage({ api, setError }: PageProps) {
           {server.deploymentMode === "Docker" ? <Notice>发现新镜像时运行 <code>docker compose pull &amp;&amp; docker compose up -d</code>。</Notice> : <div className="section-toolbar"><button className="button button-primary" type="button" disabled={!server.updateAvailable || server.status === "Downloading" || server.status === "Applying"} onClick={() => void update()}>更新 Server</button></div>}
         </section>
         <section className="card panel"><SectionTitle title="更新默认值" description="仅应用于之后创建的 Node 和 Service" /><div className="modal-form"><label>Agent 默认策略<select value={settings.agentUpdateDefaultPolicy} onChange={event => setSettings({ ...settings, agentUpdateDefaultPolicy: event.currentTarget.value as "Manual" | "Auto" })}><option value="Manual">Manual</option><option value="Auto">Auto</option></select></label><label>Backend 默认策略<select value={settings.backendUpdateDefaultPolicy} onChange={event => setSettings({ ...settings, backendUpdateDefaultPolicy: event.currentTarget.value as "Manual" | "Auto" })}><option value="Manual">Manual</option><option value="Auto">Auto</option></select></label><label>GitHub Mirror Base URL<input placeholder="留空使用 GitHub 官方源" value={settings.githubMirrorBaseUrl ?? ""} onInput={event => setSettings({ ...settings, githubMirrorBaseUrl: event.currentTarget.value || null })} /></label><button className="button button-primary" type="button" onClick={() => void save()}>保存设置</button></div></section>
-        <section className="card panel"><SectionTitle title="Release 与数据" description="受控的官方发布来源" /><dl className="facts-list"><div><dt>Agent Release</dt><dd>{settings.agentReleaseVersion ?? "Unavailable"}</dd></div>{Object.entries(settings.backendReleases).map(([name, version]) => <div key={name}><dt>{name}</dt><dd>{version}</dd></div>)}<div><dt>数据目录</dt><dd>{settings.dataDirectory}</dd></div><div><dt>数据库</dt><dd>{formatBytes(settings.databaseSizeBytes)}</dd></div></dl></section>
-      </div>
+         <section className="card panel"><SectionTitle title="Release 与数据" description="受控的官方发布来源" /><dl className="facts-list"><div><dt>Agent Release</dt><dd>{settings.agentReleaseVersion ?? "Unavailable"}</dd></div>{Object.entries(settings.backendReleases).map(([name, version]) => <div key={name}><dt>{name}</dt><dd>{version}</dd></div>)}<div><dt>数据目录</dt><dd>{settings.dataDirectory}</dd></div><div><dt>数据库</dt><dd>{formatBytes(settings.databaseSizeBytes)}</dd></div></dl></section>
+         <CertificatePanel api={api} certificates={certificates} setCertificates={setCertificates} setError={setError} />
+       </div>
     </Page>
   );
+}
+
+type CertificateDraft = { name: string };
+
+function CertificatePanel({ api, certificates, setCertificates, setError }: { api: ApiClient; certificates: Certificate[]; setCertificates: (value: Certificate[]) => void; setError: (value: string) => void }) {
+  const empty: CertificateDraft = { name: "" };
+  const [draft, setDraft] = useState<CertificateDraft>(empty);
+  const certificatePem = useRef<HTMLTextAreaElement>(null);
+  const privateKeyPem = useRef<HTMLTextAreaElement>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const change = (key: keyof CertificateDraft, value: string) => setDraft(current => ({ ...current, [key]: value }));
+  const clear = () => { setDraft(empty); setEditing(null); if (certificatePem.current) certificatePem.current.value = ""; if (privateKeyPem.current) privateKeyPem.current.value = ""; };
+  const submit = async (event: Event) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      const body = { name: draft.name, certificatePem: certificatePem.current?.value ?? "", privateKeyPem: privateKeyPem.current?.value ?? "" };
+      const certificate = editing ? await api.replaceCertificate(editing, body) : await api.createCertificate(body);
+      setCertificates(editing ? certificates.map(item => item.id === certificate.id ? certificate : item) : [...certificates, certificate]);
+      clear();
+      setError(editing ? "证书已替换。" : "证书已上传。");
+    } catch (reason) { setError(messageFor(reason, editing ? "无法替换证书" : "无法上传证书")); }
+    finally { setBusy(false); }
+  };
+  const edit = (certificate: Certificate) => { setEditing(certificate.id); setDraft({ name: certificate.name }); };
+  return <section className="card panel certificate-panel">
+    <SectionTitle title="TLS 证书" description="集中管理证书，并在 Hysteria 2 服务中按 ID 选择。" />
+    {certificates.length ? <div className="certificate-list">{certificates.map(certificate => <article className="certificate-row" key={certificate.id}><div><strong>{certificate.name}</strong><small>{certificate.subject} · {certificate.san.join(", ") || "无 SAN"}</small><small>有效期至 {formatDate(certificate.expiresAtUtc)} · 使用中 {certificate.usedBy} 个服务</small></div><button className="button button-secondary" type="button" onClick={() => edit(certificate)}>替换</button></article>)}</div> : <p className="muted">还没有上传证书。</p>}
+    <form className="certificate-form" onSubmit={event => void submit(event)}>
+      <h3>{editing ? "替换证书" : "上传证书"}</h3>
+      <div className="form-grid"><label>名称<input required value={draft.name} onInput={event => change("name", event.currentTarget.value)} /></label><label>证书 PEM<textarea required ref={certificatePem} placeholder={editing ? "粘贴新的证书 PEM" : "-----BEGIN CERTIFICATE-----"} /></label><label>私钥 PEM<textarea required ref={privateKeyPem} placeholder={editing ? "粘贴新的私钥 PEM" : "-----BEGIN PRIVATE KEY-----"} /></label></div>
+      <div className="row-actions"><button className="button button-primary" type="submit" disabled={busy}>{busy ? "提交中…" : editing ? "替换证书" : "上传证书"}</button>{editing && <button className="button button-secondary" type="button" onClick={clear}>取消</button>}</div>
+    </form>
+  </section>;
 }
 
 function OverviewPage({ api, setError }: PageProps) {
@@ -1578,8 +1616,13 @@ function ServiceEditor({
   setError: (value: string) => void;
 }) {
   const [form, setForm] = useState(value.form);
+  const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [busy, setBusy] = useState(false);
   const backend = backendFor(form.backendType);
+  useEffect(() => {
+    if (form.backendType !== "hysteria2") return;
+    void api.certificates().then(setCertificates).catch(reason => setError(messageFor(reason, "无法加载证书")));
+  }, [form.backendType]);
   const change = (key: string, next: string) =>
     setForm({ ...form, [key]: next } as ServiceForm);
   const submit = async (event: Event) => {
@@ -1673,8 +1716,7 @@ function ServiceEditor({
           <div className="form-grid">
             {form.backendType === "hysteria2" && (
               <>
-                {field("certificatePath", "证书路径", true)}
-                {field("privateKeyPath", "私钥路径", true)}
+                <label>证书<select required value={form.certificateId} onChange={event => change("certificateId", event.currentTarget.value)}><option value="">选择证书</option>{certificates.map(certificate => <option key={certificate.id} value={certificate.id}>{certificate.name} · 到期 {formatDate(certificate.expiresAtUtc)}</option>)}</select></label>
                 {field(
                   "authPassword",
                   value.service

@@ -10,8 +10,8 @@ namespace HyPanel.Agent.Tests.Backends;
 [TestClass]
 public sealed class Hysteria2ProviderTests
 {
-    private const string CertificatePath = "/etc/hysteria/server.crt";
-    private const string PrivateKeyPath = "/etc/hysteria/server.key";
+    private static readonly Guid CertificateId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    private const string Fingerprint = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private const string AuthPassword = "auth-secret-123";
     private const string ObfsPassword = "obfs-secret-123";
     private readonly Hysteria2Provider provider = new();
@@ -35,8 +35,8 @@ public sealed class Hysteria2ProviderTests
 
         Assert.AreEqual("config.yaml", rendered.FileName);
         StringAssert.Contains(yaml, "listen: \"203.0.113.10:443\"");
-        StringAssert.Contains(yaml, "  cert: \"/etc/hysteria/server.crt\"");
-        StringAssert.Contains(yaml, "  key: \"/etc/hysteria/server.key\"");
+        StringAssert.Contains(yaml, $"  cert: \"tls/{Fingerprint}/cert.pem\"");
+        StringAssert.Contains(yaml, $"  key: \"tls/{Fingerprint}/key.pem\"");
         StringAssert.Contains(yaml, "  up: \"100 mbps\"");
         StringAssert.Contains(yaml, "  down: \"200 mbps\"");
         StringAssert.Contains(yaml, "    url: \"https://example.com/\"");
@@ -53,6 +53,21 @@ public sealed class Hysteria2ProviderTests
     }
 
     [TestMethod]
+    public async Task RenderConfigAsync_LegacyPersistedPaths_RemainRestorable()
+    {
+        var json = CreateConfigJson().Replace($"\"certificateId\":\"{CertificateId:D}\"",
+            "\"certificatePath\":\"/etc/hysteria/server.crt\",\"privateKeyPath\":\"/etc/hysteria/server.key\"",
+            StringComparison.Ordinal);
+        var desired = CreateDesiredState(configJson: json) with { TlsCertificate = null };
+
+        var rendered = await provider.RenderConfigAsync(desired, CancellationToken.None);
+
+        var yaml = Encoding.UTF8.GetString(rendered.Content.Span);
+        StringAssert.Contains(yaml, "cert: \"/etc/hysteria/server.crt\"");
+        StringAssert.Contains(yaml, "key: \"/etc/hysteria/server.key\"");
+    }
+
+    [TestMethod]
     public async Task RenderConfigAsync_InvalidConfig_DoesNotExposeSecretInException()
     {
         var exception = await Assert.ThrowsExceptionAsync<InvalidOperationException>(async () =>
@@ -63,8 +78,8 @@ public sealed class Hysteria2ProviderTests
     }
 
     [DataTestMethod]
-    [DataRow("unknown property", "{\"listenHost\":\"203.0.113.10\",\"listenPort\":443,\"certificatePath\":\"/etc/hysteria/server.crt\",\"privateKeyPath\":\"/etc/hysteria/server.key\",\"authPassword\":\"auth-secret-123\",\"masqueradeUrl\":\"https://example.com/\",\"upMbps\":100,\"downMbps\":200,\"unexpected\":true}")]
-    [DataRow("duplicate property", "{\"listenHost\":\"203.0.113.10\",\"listenHost\":\"203.0.113.11\",\"listenPort\":443,\"certificatePath\":\"/etc/hysteria/server.crt\",\"privateKeyPath\":\"/etc/hysteria/server.key\",\"authPassword\":\"auth-secret-123\",\"masqueradeUrl\":\"https://example.com/\",\"upMbps\":100,\"downMbps\":200}")]
+    [DataRow("unknown property", "{\"listenHost\":\"203.0.113.10\",\"listenPort\":443,\"certificateId\":\"11111111-1111-1111-1111-111111111111\",\"authPassword\":\"auth-secret-123\",\"masqueradeUrl\":\"https://example.com/\",\"upMbps\":100,\"downMbps\":200,\"unexpected\":true}")]
+    [DataRow("duplicate property", "{\"listenHost\":\"203.0.113.10\",\"listenHost\":\"203.0.113.11\",\"listenPort\":443,\"certificateId\":\"11111111-1111-1111-1111-111111111111\",\"authPassword\":\"auth-secret-123\",\"masqueradeUrl\":\"https://example.com/\",\"upMbps\":100,\"downMbps\":200}")]
     [DataRow("malformed JSON", "not-json")]
     public async Task ValidateAsync_MalformedOrUnsupportedJson_IsRejected(string _, string json)
     {
@@ -78,9 +93,7 @@ public sealed class Hysteria2ProviderTests
     [DataRow("hostname", 1, "\"listenHost\":\"example.com\"")]
     [DataRow("port below range", 1, "\"listenPort\":0")]
     [DataRow("port above range", 1, "\"listenPort\":65536")]
-    [DataRow("relative certificate path", 1, "\"certificatePath\":\"server.crt\"")]
-    [DataRow("relative key path", 1, "\"privateKeyPath\":\"server.key\"")]
-    [DataRow("same certificate and key", 1, "\"privateKeyPath\":\"/etc/hysteria/server.crt\"")]
+    [DataRow("empty certificate", 1, "\"certificateId\":\"00000000-0000-0000-0000-000000000000\"")]
     [DataRow("short auth secret", 1, "\"authPassword\":\"short\"")]
     [DataRow("short obfs secret", 1, "\"obfsPassword\":\"short\"")]
     [DataRow("HTTP masquerade", 1, "\"masqueradeUrl\":\"http://example.com/\"")]
@@ -180,10 +193,12 @@ public sealed class Hysteria2ProviderTests
         string? listenHost = null,
         int listenPort = 443,
         string? configJson = null) =>
-        new(Guid.NewGuid(), "test", "hysteria2", "2.7.1", true, schemaVersion, configJson ?? CreateConfigJson(listenHost, listenPort));
+        new(Guid.NewGuid(), "test", "hysteria2", "2.7.1", true, schemaVersion,
+            configJson ?? CreateConfigJson(listenHost, listenPort), TlsCertificate: new TlsCertificateAsset(
+                CertificateId, Fingerprint, "certificate", "private-key"));
 
     private static string CreateConfigJson(string? listenHost = null, int listenPort = 443) =>
-        $$"""{"listenHost":"{{listenHost ?? "203.0.113.10"}}","listenPort":{{listenPort}},"certificatePath":"{{CertificatePath}}","privateKeyPath":"{{PrivateKeyPath}}","authPassword":"{{AuthPassword}}","masqueradeUrl":"https://example.com/","obfsPassword":"{{ObfsPassword}}","upMbps":100,"downMbps":200}""";
+        $$"""{"listenHost":"{{listenHost ?? "203.0.113.10"}}","listenPort":{{listenPort}},"certificateId":"{{CertificateId:D}}","authPassword":"{{AuthPassword}}","masqueradeUrl":"https://example.com/","obfsPassword":"{{ObfsPassword}}","upMbps":100,"downMbps":200}""";
 
     private static BackendInstanceContext CreateInstanceContext(string directory, string binaryPath, string configPath) =>
         new(CreateDesiredState(), directory, binaryPath, configPath);

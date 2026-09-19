@@ -72,7 +72,14 @@ public sealed record ServiceDesiredState(
     int ConfigSchemaVersion,
     string ConfigJson,
     IReadOnlyList<BackendUser>? Users = null,
-    int? ControlPort = null);
+    int? ControlPort = null,
+    TlsCertificateAsset? TlsCertificate = null);
+
+public sealed record TlsCertificateAsset(
+    Guid CertificateId,
+    string Fingerprint,
+    string? CertificatePem,
+    string? PrivateKeyPem);
 
 public sealed record BackendUser(
     Guid UserId,
