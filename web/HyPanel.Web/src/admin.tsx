@@ -12,6 +12,8 @@ import {
 } from "./backend";
 import type {
   AppRoute,
+  Backup,
+  BackupValidation,
   Certificate,
   HealthSummary,
   GlobalSettings,
@@ -110,10 +112,63 @@ function SettingsPage({ api, setError }: PageProps) {
         </section>
         <section className="card panel"><SectionTitle title="更新默认值" description="仅应用于之后创建的 Node 和 Service" /><div className="modal-form"><label>Agent 默认策略<select value={settings.agentUpdateDefaultPolicy} onChange={event => setSettings({ ...settings, agentUpdateDefaultPolicy: event.currentTarget.value as "Manual" | "Auto" })}><option value="Manual">Manual</option><option value="Auto">Auto</option></select></label><label>Backend 默认策略<select value={settings.backendUpdateDefaultPolicy} onChange={event => setSettings({ ...settings, backendUpdateDefaultPolicy: event.currentTarget.value as "Manual" | "Auto" })}><option value="Manual">Manual</option><option value="Auto">Auto</option></select></label><label>GitHub Mirror Base URL<input placeholder="留空使用 GitHub 官方源" value={settings.githubMirrorBaseUrl ?? ""} onInput={event => setSettings({ ...settings, githubMirrorBaseUrl: event.currentTarget.value || null })} /></label><button className="button button-primary" type="button" onClick={() => void save()}>保存设置</button></div></section>
          <section className="card panel"><SectionTitle title="Release 与数据" description="受控的官方发布来源" /><dl className="facts-list"><div><dt>Agent Release</dt><dd>{settings.agentReleaseVersion ?? "Unavailable"}</dd></div>{Object.entries(settings.backendReleases).map(([name, version]) => <div key={name}><dt>{name}</dt><dd>{version}</dd></div>)}<div><dt>数据目录</dt><dd>{settings.dataDirectory}</dd></div><div><dt>数据库</dt><dd>{formatBytes(settings.databaseSizeBytes)}</dd></div></dl></section>
-         <CertificatePanel api={api} certificates={certificates} setCertificates={setCertificates} setError={setError} />
+          <CertificatePanel api={api} certificates={certificates} setCertificates={setCertificates} setError={setError} />
+          <BackupPanel api={api} setError={setError} />
        </div>
     </Page>
   );
+}
+
+function BackupPanel({ api, setError }: PageProps) {
+  const [backups, setBackups] = useState<Backup[]>([]);
+  const [validation, setValidation] = useState<BackupValidation | null>(null);
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const load = async () => { try { setBackups(await api.backups()); } catch (reason) { setError(messageFor(reason, "无法加载备份列表")); } };
+  useEffect(() => { void load(); }, []);
+  const create = async () => {
+    setBusy(true);
+    try { const backup = await api.createBackup(); setBackups(current => [backup, ...current]); setError("备份已创建。"); }
+    catch (reason) { setError(messageFor(reason, "无法创建备份")); }
+    finally { setBusy(false); }
+  };
+  const download = async (backup: Backup) => {
+    try { const { blob, filename } = await api.downloadBackup(backup.id); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = filename; link.click(); URL.revokeObjectURL(url); }
+    catch (reason) { setError(messageFor(reason, "无法下载备份")); }
+  };
+  const remove = async (backup: Backup) => {
+    if (!confirm("删除此备份？此操作无法撤销。")) return;
+    try { await api.deleteBackup(backup.id); setBackups(current => current.filter(item => item.id !== backup.id)); setError("备份已删除。"); }
+    catch (reason) { setError(messageFor(reason, "无法删除备份")); }
+  };
+  const validate = async (event: Event) => {
+    const file = (event.currentTarget as HTMLInputElement).files?.[0];
+    setValidation(null); setConfirmation("");
+    if (!file) return;
+    setBusy(true);
+    try { setValidation(await api.validateBackup(file)); }
+    catch (reason) { setError(messageFor(reason, "无法验证备份文件")); }
+    finally { setBusy(false); if (fileInput.current) fileInput.current.value = ""; }
+  };
+  const restore = async () => {
+    if (!validation?.valid || confirmation !== "RESTORE") return;
+    setBusy(true);
+    try { const result = await api.restoreBackup(validation.validationId); setError(`恢复已开始：${result.status}。Server 将重启，当前会话可能断开。`); }
+    catch (reason) { setError(messageFor(reason, "无法恢复备份")); }
+    finally { setBusy(false); }
+  };
+  return <section className="card panel backup-panel">
+    <SectionTitle title="数据备份与恢复" description="创建、下载或验证 Server 数据库备份。" />
+    <div className="section-toolbar"><span>最近备份</span><button className="button button-primary" type="button" disabled={busy} onClick={() => void create()}>{busy ? "处理中…" : "立即创建备份"}</button></div>
+    {backups.length ? <div className="backup-list">{backups.map(backup => <article className="backup-row" key={backup.id}><div><strong>{formatDate(backup.createdAtUtc)}</strong><small>{formatBytes(backup.sizeBytes)} · Schema {backup.schemaVersion} · Server {backup.serverVersion}</small></div><div className="row-actions"><button className="button button-secondary" type="button" onClick={() => void download(backup)}>下载</button><button className="button button-secondary" type="button" onClick={() => void remove(backup)}>删除</button></div></article>)}</div> : <p className="muted">还没有备份。</p>}
+    <div className="backup-restore"><h3>从文件恢复</h3><p className="muted">先选择 .gz 备份文件进行验证。验证通过后才会显示恢复确认。</p><input ref={fileInput} type="file" accept=".gz,application/gzip" disabled={busy} onChange={event => void validate(event)} />
+      {validation && <><dl className="facts-list"><div><dt>备份时间</dt><dd>{validation.createdAtUtc ? formatDate(validation.createdAtUtc) : "不可用"}</dd></div><div><dt>Server 版本</dt><dd>{validation.serverVersion ?? "不可用"}</dd></div><div><dt>Schema 版本</dt><dd>{validation.schemaVersion ?? "不可用"}（格式 {validation.formatVersion ?? "不可用"}）</dd></div><div><dt>数据库大小</dt><dd>{validation.databaseSizeBytes == null ? "不可用" : formatBytes(validation.databaseSizeBytes)}</dd></div><div><dt>完整性检查</dt><dd>{validation.databaseIntegrity ? "通过" : "未通过"}</dd></div><div><dt>MasterKey 兼容</dt><dd>{validation.masterKeyCompatible ? "兼容" : "不兼容"}</dd></div></dl>
+        {validation.error && <Notice kind="error">{validation.error}</Notice>}
+        {validation.valid && <div className="restore-controls"><Notice>恢复将覆盖当前数据，Server 会重启，当前会话可能断开。请在下方输入 RESTORE 确认。</Notice><label>输入 RESTORE<input value={confirmation} onInput={event => setConfirmation(event.currentTarget.value)} autoComplete="off" /></label><button className="button button-primary" type="button" disabled={busy || confirmation !== "RESTORE"} onClick={() => void restore()}>恢复备份</button></div>}
+      </>}
+    </div>
+  </section>;
 }
 
 type CertificateDraft = { name: string };

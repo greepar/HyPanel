@@ -38,3 +38,15 @@
 - Add certificate validation/protector tests with generated self-signed certificates.
 - Add repository integration tests for encrypted storage and replacement revision increments.
 - Run focused Agent/Server tests, then full solution tests and review assertions.
+
+---
+
+## Phase 20 backup / restore test plan
+
+1. Add a reusable temporary Server database fixture with configurable MasterKey and explicit WAL writes.
+2. Test online snapshot consistency, manifest/hash, permissions, retention and active-download protection.
+3. Generate malformed tar.gz variants for missing, duplicate, unknown and hash-mismatched entries.
+4. Test schema compatibility and complete decrypt preflight for credential and certificate records.
+5. Test pending restore success, migration, emergency backup, failed-candidate rollback and unchanged-current-DB cases.
+6. Test Admin authorization/path confinement/upload limit/download headers and CLI dispatch against the shared service.
+7. Run focused Server tests, review assertions, then full build/test/Web/NativeAOT and production-like restore acceptance.

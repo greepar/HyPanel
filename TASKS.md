@@ -1034,9 +1034,51 @@ Planned slices:
 ### HP-1902 — Certificate UI and production acceptance
 - Owner: architect (Sol)
 - Depends on: HP-1900, HP-1901
-- Status: DONE
+- Status: DONE — PRODUCTION ACCEPTED
 - Result: Settings now lists/uploads/replaces certificates and HY2 service forms select a managed asset. Ubuntu/AlmaLinux
   acceptance verified encrypted SQLite storage, API secrecy, real HY2 startup, permission modes, successful rotation,
   mismatched-key rejection without revision change, read-only TLS write failure preserving the old PID/config/listener,
-  and automatic convergence after permissions recovered. Production was restored to official 0.4.5/schema11 after the
-  isolated acceptance; Phase 19 code remains ready for the next release.
+  and automatic convergence after permissions recovered. Official `v0.4.6` Release run `35426209085` published all
+  NativeAOT assets and GHCR manifests. The US Server and UK Agent then self-updated from `0.4.5` without manual binary
+  copying; Server migrated schema 11 → 12. Production accepted a managed-certificate HY2 listener, 0644/0600 TLS files,
+  encrypted SQLite key storage and PEM-free API/state/logs. Rotation changed only the referencing Node revision 25 → 26
+  and restarted that Service; a mismatched key returned 400 with revision and running Service unchanged.
+
+## Phase 20 — Backup / Restore
+
+### HP-2000 — Freeze disaster-recovery boundary and backup format
+- Owner: architect (Sol)
+- Depends on: HP-1902
+- Status: DONE
+- Scope: classify durable/rebuildable/excluded Server state; freeze the versioned manifest, SQLite snapshot, MasterKey
+  fingerprint and compatibility rules.
+- Result: Format v1 is an exact `manifest.json` + online `database.sqlite` gzip tar. The full SQLite logical state is
+  durable; release/backend caches, logs, staging, updater state and deployment secrets are excluded. The manifest has
+  an irreversible domain-separated MasterKey fingerprint only when encrypted rows exist.
+
+### HP-2001 — Implement safe backup and restore core
+- Owner: architect (Sol)
+- Depends on: HP-2000
+- Status: DONE
+- Scope: online SQLite backup, bounded archive validation, encrypted-secret preflight, emergency snapshot, atomic
+  replacement, rollback and controlled restart using one shared service for API and CLI.
+- Result: WAL-safe online snapshots, bounded exact-entry archive parsing, SHA/integrity/schema/repository checks and
+  complete proxy/certificate decrypt preflight run before mutation. API restore commits only during startup, after a
+  pre-restore emergency archive; migration or validation failure restores the prior database.
+
+### HP-2002 — Add Admin API, CLI and Settings data UI
+- Owner: architect (Sol)
+- Depends on: HP-2001
+- Status: DONE
+- Scope: Admin-only list/create/download/delete/validate/restore, disaster-recovery CLI, retention, secure download and
+  explicit two-step restore confirmation.
+- Result: Added Admin-only create/list/download/delete/validate/restore, basename confinement, 0600 archives, 0700
+  directories, five-backup retention, no-store authenticated download, raw bounded upload, shared CLI commands and a
+  Settings flow that requires validation plus literal `RESTORE` confirmation.
+
+### HP-2003 — Backup / Restore production acceptance
+- Owner: architect (Sol)
+- Depends on: HP-2002
+- Status: IN PROGRESS — PRODUCTION ACCEPTANCE PENDING
+- Scope: focused/full tests, Linux x64/arm64 Server NativeAOT, Web build, real state mutation/restore/reconnect/convergence
+  and wrong-MasterKey rejection with the current database unchanged.

@@ -19,7 +19,7 @@ internal static class GlobalSettingsEndpoints
     }
 
     private static async Task<IResult> GetAsync(HttpRequest request, AdminAuthorization authorization,
-        SqliteServerRepository repository, ReleaseCatalog agents, BackendArtifactCatalog backends,
+        SqliteServerRepository repository, SqliteConnectionFactory connections, ReleaseCatalog agents, BackendArtifactCatalog backends,
         ServerUpdateService server, IConfiguration configuration, CancellationToken ct)
     {
         var access = await authorization.AuthorizeAsync(request, ct);
@@ -28,7 +28,7 @@ internal static class GlobalSettingsEndpoints
         var versions = BackendReleaseSources.All.ToDictionary(item => item.BackendType,
             item => backends.GetLatestVersion(item.BackendType) ?? "Unavailable", StringComparer.Ordinal);
         var data = ServerDataDirectory.Resolve(configuration);
-        var database = Path.Combine(data, "hypanel.db");
+        var database = connections.DatabasePath;
         var response = new GlobalSettingsResponse(settings.AgentUpdateDefaultPolicy,
             settings.BackendUpdateDefaultPolicy, settings.GithubMirrorBaseUrl, agents.Manifest?.Version, versions,
             server.GetStatus(), data, File.Exists(database) ? new FileInfo(database).Length : 0);

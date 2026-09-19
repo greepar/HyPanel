@@ -1,4 +1,4 @@
-import type { Certificate, GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Template, Usage, User, UserForm } from './domain'
+import type { Backup, BackupValidation, Certificate, GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Template, Usage, User, UserForm } from './domain'
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message) }
@@ -15,6 +15,16 @@ export class ApiClient {
       throw new ApiError(response.status, labels[response.status] ?? `请求失败（${response.status}）`)
     }
     return (response.status === 204 ? undefined : await response.json()) as T
+  }
+  private async authenticatedFetch(path: string, init: RequestInit = {}) {
+    const bearer = this.token()
+    const response = await fetch(path, { ...init, headers: { ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}), ...init.headers } })
+    if (!response.ok) {
+      if (response.status === 401) this.unauthorized()
+      const labels: Record<number, string> = { 400: '提交内容无效，请检查文件。', 401: '登录已失效，请重新登录。', 403: '当前账户没有此操作权限。', 404: '请求的资源不存在。', 409: '名称或状态发生冲突。' }
+      throw new ApiError(response.status, labels[response.status] ?? `请求失败（${response.status}）`)
+    }
+    return response
   }
   login = (username: string, password: string) => this.request<{ token: string; expiresAtUtc: string; user: User }>('/api/auth/v1/login', { method: 'POST', body: JSON.stringify({ username, password }) })
   async validateAdminToken(token: string): Promise<void> {
@@ -45,5 +55,20 @@ export class ApiClient {
   certificates = () => this.request<Certificate[]>('/api/admin/v1/certificates')
   createCertificate = (value: { name: string; certificatePem: string; privateKeyPem: string }) => this.request<Certificate>('/api/admin/v1/certificates', { method: 'POST', body: JSON.stringify(value) })
   replaceCertificate = (id: string, value: { name: string; certificatePem: string; privateKeyPem: string }) => this.request<Certificate>(`/api/admin/v1/certificates/${id}`, { method: 'PUT', body: JSON.stringify(value) })
+  backups = () => this.request<Backup[]>('/api/admin/v1/backups')
+  createBackup = () => this.request<Backup>('/api/admin/v1/backups', { method: 'POST' })
+  deleteBackup = (id: string) => this.request<void>(`/api/admin/v1/backups/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  async downloadBackup(id: string): Promise<{ blob: Blob; filename: string }> {
+    const response = await this.authenticatedFetch(`/api/admin/v1/backups/${encodeURIComponent(id)}/download`)
+    const disposition = response.headers.get('Content-Disposition') ?? ''
+    const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+    const plain = disposition.match(/filename="?([^";]+)"?/i)?.[1]
+    return { blob: await response.blob(), filename: encoded ? decodeURIComponent(encoded) : plain ?? `backup-${id}.gz` }
+  }
+  async validateBackup(file: File): Promise<BackupValidation> {
+    const response = await this.authenticatedFetch('/api/admin/v1/backups/validate', { method: 'POST', headers: { 'Content-Type': 'application/gzip' }, body: file })
+    return await response.json() as BackupValidation
+  }
+  restoreBackup = (validationId: string) => this.request<{ status: string }>('/api/admin/v1/backups/restore', { method: 'POST', body: JSON.stringify({ validationId, confirmation: 'RESTORE' }) })
   createUser = (form: UserForm) => this.request<{ user: User; subscriptionToken: string }>('/api/admin/v1/users', { method: 'POST', body: JSON.stringify({ ...form, trafficLimitBytes: form.trafficLimitBytes ? Number(form.trafficLimitBytes) : null, expiresAtUtc: form.expiresAtUtc || null }) })
 }

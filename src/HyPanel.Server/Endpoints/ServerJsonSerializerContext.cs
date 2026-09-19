@@ -1,6 +1,7 @@
 namespace HyPanel.Server.Endpoints;
 using HyPanel.Server.Updates;
 using HyPanel.Server.Persistence;
+using HyPanel.Server.Backup;
 
 using System.Text.Json.Serialization;
 using HyPanel.Shared.Contracts;
@@ -56,4 +57,10 @@ using HyPanel.Shared.Contracts;
 [JsonSerializable(typeof(CertificateUploadRequest))]
 [JsonSerializable(typeof(CertificateResponse))]
 [JsonSerializable(typeof(CertificateResponse[]))]
+[JsonSerializable(typeof(BackupSummary))]
+[JsonSerializable(typeof(IReadOnlyList<BackupSummary>))]
+[JsonSerializable(typeof(BackupValidation))]
+[JsonSerializable(typeof(RestoreRequest))]
+[JsonSerializable(typeof(RestoreResponse))]
+[JsonSerializable(typeof(BackupErrorResponse))]
 internal sealed partial class ServerJsonSerializerContext : JsonSerializerContext;

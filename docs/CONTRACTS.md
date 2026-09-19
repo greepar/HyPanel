@@ -242,7 +242,43 @@ or remote file API:
 - Admin may trigger and read diagnostics; normal users cannot. Diagnostic output must never be exposed through
   subscription or normal User APIs.
 
-## 8. Backend types/capabilities
+## 8. Backup archive and restore
+
+Backup archives are Server-local operational contracts, not Server-Agent shared DTOs. Format version 1 contains exactly:
+
+```text
+manifest.json
+database.sqlite
+```
+
+The manifest contains `formatVersion`, `createdAtUtc`, `hyPanelVersion`, `schemaVersion`, `databaseSizeBytes`,
+`databaseSha256`, `masterKeyFingerprint`, and `hasEncryptedSecrets`. `formatVersion` evolves independently from the
+SQLite schema. `masterKeyFingerprint` is null only when the snapshot has no encrypted proxy credential or certificate
+key rows; it never contains the MasterKey.
+
+Admin API:
+
+```text
+GET    /api/admin/v1/backups
+POST   /api/admin/v1/backups
+GET    /api/admin/v1/backups/{id}/download
+DELETE /api/admin/v1/backups/{id}
+POST   /api/admin/v1/backups/validate
+POST   /api/admin/v1/backups/restore
+```
+
+All routes require Admin authorization. IDs are generated basenames resolved only beneath the fixed backup directory.
+Downloads are private attachments with `no-store`. Validation accepts a bounded raw gzip body and returns a short-lived
+server-generated `validationId`. Restore requires the same single-use ID and literal confirmation `RESTORE`; success is
+`202 RestartPending`, not proof that replacement has already committed.
+
+Only same-schema or older compatible snapshots may restore. A newer schema returns
+`backup_schema_newer_than_server`. Encrypted rows with a different fingerprint return `master_key_mismatch`. Archive,
+integrity, repository-shape or decrypt failure occurs before production replacement. CLI `backup`, `backup validate
+<archive>`, and `restore <archive>` use the same service and checks; offline restore refuses while another Server process
+holds the data-directory process lock.
+
+## 9. Backend types/capabilities
 
 Stable backend IDs should be machine-friendly, e.g.:
 

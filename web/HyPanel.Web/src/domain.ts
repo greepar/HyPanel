@@ -6,6 +6,8 @@ export type Role = 'Admin' | 'User'
 export type ServerUpdate = { currentVersion: string; latestVersion: string | null; deploymentMode: 'BareMetal' | 'Docker'; updateAvailable: boolean; status: string; error: string | null }
 export type GlobalSettings = { agentUpdateDefaultPolicy: 'Manual' | 'Auto'; backendUpdateDefaultPolicy: 'Manual' | 'Auto'; githubMirrorBaseUrl: string | null; agentReleaseVersion: string | null; backendReleases: Record<string, string>; server: ServerUpdate; dataDirectory: string; databaseSizeBytes: number }
 export type Certificate = { id: string; name: string; createdAtUtc: string; notBeforeUtc: string; expiresAtUtc: string; fingerprint: string; subject: string; san: string[]; usedBy: number }
+export type Backup = { id: string; createdAtUtc: string; sizeBytes: number; serverVersion: string; schemaVersion: number }
+export type BackupValidation = { validationId: string; valid: boolean; error: string | null; formatVersion: number | null; createdAtUtc: string | null; serverVersion: string | null; schemaVersion: number | null; databaseSizeBytes: number | null; databaseIntegrity: boolean; masterKeyCompatible: boolean }
 
 export type User = {
   id: string

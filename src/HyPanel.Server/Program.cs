@@ -8,6 +8,7 @@ using HyPanel.Server.Persistence;
 using HyPanel.Server.Releases;
 using HyPanel.Server.Security;
 using HyPanel.Server.Updates;
+using HyPanel.Server.Backup;
 using HyPanel.Shared.Serialization;
 using Microsoft.AspNetCore.HttpOverrides;
 
@@ -37,6 +38,9 @@ public static class Program
         builder.Services.AddSingleton<UserAuthentication>();
         builder.Services.AddSingleton<PasswordService>();
         builder.Services.AddSingleton<ProxyCredentialProtector>();
+        builder.Services.AddSingleton<ServerProcessControl>();
+        builder.Services.AddSingleton<ServerOperationCoordinator>();
+        builder.Services.AddSingleton<BackupRestoreService>();
         builder.Services.AddHttpClient("server-update", client => client.Timeout = TimeSpan.FromMinutes(10));
         builder.Services.AddSingleton<ServerUpdateService>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<ServerUpdateService>());
@@ -66,6 +70,13 @@ public static class Program
 
         var app = builder.Build();
         Directory.CreateDirectory(ServerDataDirectory.Resolve(app.Configuration));
+        if (args.Length > 0 && args[0] is "backup" or "restore")
+        {
+            Environment.ExitCode = await RunBackupCliAsync(args, app.Services, app.Configuration);
+            return;
+        }
+        using var processLock = ServerProcessLock.Acquire(ServerDataDirectory.Resolve(app.Configuration));
+        await app.Services.GetRequiredService<BackupRestoreService>().ApplyPendingRestoreAsync(CancellationToken.None);
 
         app.UseForwardedHeaders();
         app.UseRateLimiter();
@@ -97,9 +108,45 @@ public static class Program
         ReleaseEndpoints.Map(app);
         ServerUpdateEndpoints.Map(app);
         GlobalSettingsEndpoints.Map(app);
+        AdminBackupEndpoints.Map(app);
         EmbeddedWebEndpoints.Map(app);
 
         await app.RunAsync();
+    }
+
+    private static async Task<int> RunBackupCliAsync(string[] args, IServiceProvider services,
+        IConfiguration configuration)
+    {
+        var backups = services.GetRequiredService<BackupRestoreService>();
+        try
+        {
+            if (args is ["backup"])
+            {
+                var value = await backups.CreateAsync(CancellationToken.None);
+                Console.WriteLine(Path.Combine(backups.BackupDirectory, value.Id));
+                return 0;
+            }
+            if (args is ["backup", "validate", var validationPath])
+            {
+                var value = await backups.ValidateFileAsync(validationPath, CancellationToken.None);
+                Console.WriteLine(value.Valid ? "valid" : value.Error);
+                return value.Valid ? 0 : 2;
+            }
+            if (args is ["restore", var restorePath])
+            {
+                using var processLock = ServerProcessLock.Acquire(ServerDataDirectory.Resolve(configuration));
+                await backups.RestoreFileOfflineAsync(restorePath, CancellationToken.None);
+                Console.WriteLine("restore_succeeded");
+                return 0;
+            }
+            Console.Error.WriteLine("Usage: HyPanel.Server backup | backup validate <archive> | restore <archive>");
+            return 2;
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(exception is BackupException backup ? backup.Code : exception.Message);
+            return 1;
+        }
     }
 
     internal static void ConfigureForwardedHeaders(ForwardedHeadersOptions options)

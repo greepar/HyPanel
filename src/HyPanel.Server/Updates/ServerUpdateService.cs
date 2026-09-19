@@ -10,6 +10,7 @@ using System.Text.Json.Serialization;
 using HyPanel.Server.Releases;
 using HyPanel.Shared.Versioning;
 using HyPanel.Server.Persistence;
+using HyPanel.Server.Backup;
 
 internal sealed record ServerUpdateStatus(string CurrentVersion, string? LatestVersion, string DeploymentMode,
     bool UpdateAvailable, string Status, string? Error);
@@ -17,7 +18,8 @@ internal sealed record ServerUpdateState(string TargetVersion, string PreviousVe
     string InstallPath, string? Error);
 
 internal sealed partial class ServerUpdateService(IConfiguration configuration, IHttpClientFactory clients,
-    IHostApplicationLifetime lifetime, ILogger<ServerUpdateService> logger, SqliteServerRepository? repository = null) : BackgroundService
+    IHostApplicationLifetime lifetime, ILogger<ServerUpdateService> logger, SqliteServerRepository? repository = null,
+    ServerOperationCoordinator? operations = null) : BackgroundService
 {
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(15);
     private readonly SemaphoreSlim gate = new(1, 1);
@@ -81,6 +83,13 @@ internal sealed partial class ServerUpdateService(IConfiguration configuration, 
 
     internal async Task ApplyAsync(CancellationToken cancellationToken)
     {
+        var coordinator = operations ?? new ServerOperationCoordinator();
+        if (!coordinator.TryBegin("server-update"))
+        {
+            error = "server_operation_in_progress";
+            stateStatus = "Failed";
+            return;
+        }
         await gate.WaitAsync(cancellationToken);
         try
         {
@@ -121,7 +130,11 @@ internal sealed partial class ServerUpdateService(IConfiguration configuration, 
             stateStatus = "Failed";
             logger.LogError(exception, "Server update failed.");
         }
-        finally { gate.Release(); }
+        finally
+        {
+            gate.Release();
+            coordinator.End("server-update");
+        }
     }
 
     private async Task RecoverAsync(CancellationToken cancellationToken)

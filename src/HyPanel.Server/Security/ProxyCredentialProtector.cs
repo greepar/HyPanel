@@ -30,6 +30,20 @@ internal sealed class ProxyCredentialProtector
 
     public bool IsConfigured => key is not null;
 
+    public string? MasterKeyFingerprint
+    {
+        get
+        {
+            if (key is null) return null;
+            var label = Encoding.UTF8.GetBytes("hypanel:master-key-fingerprint:v1:");
+            var value = new byte[label.Length + key.Length];
+            label.CopyTo(value, 0);
+            key.CopyTo(value, label.Length);
+            try { return Convert.ToHexString(SHA256.HashData(value)).ToLowerInvariant(); }
+            finally { CryptographicOperations.ZeroMemory(value); }
+        }
+    }
+
     public ProtectedCredential Protect(Guid userId, Guid serviceId, string backendType, string credential)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(backendType);

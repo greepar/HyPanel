@@ -417,6 +417,26 @@ private key 0600. Rendered Hysteria2 config uses relative paths into that direct
 every referencing Node revision; write/validation/start failure rolls the service back to the previous config and TLS
 fingerprint.
 
+### Backup and restore
+
+The durable recovery boundary is one SQLite online snapshot plus `manifest.json` in a versioned gzip tar archive.
+SQLite's online backup API is mandatory because production uses WAL; copying only `hypanel.db` can omit committed data.
+The snapshot includes all logical control-plane state: Nodes, Agents, Services, Users, grants, sessions, subscription
+hashes, usage, global settings, encrypted proxy credentials and encrypted certificate keys.
+
+Release caches, Backend caches, update staging/state, logs and downloaded GitHub metadata are rebuildable and excluded.
+The Server MasterKey and Admin token are deployment secrets and are never included. The manifest stores only an
+irreversible, domain-separated MasterKey fingerprint when encrypted rows exist. A useful disaster-recovery set is the
+backup archive plus the matching MasterKey, stored separately.
+
+Restore is deliberately restart-based, not hot reload. The running process streams to fixed private staging, validates
+the exact two-entry archive, SHA256, SQLite integrity, schema compatibility, required repository tables, MasterKey
+fingerprint and every encrypted credential/certificate key. It then records a fixed pending restore and execs the same
+Server binary. Before ordinary migrations or repository initialization, the new process creates a pre-restore emergency
+backup, replaces the database, runs compatible migrations and repeats integrity/secret validation. Any post-replacement
+failure restores the emergency snapshot. A process lock prevents the offline CLI from restoring beneath a running
+Server; a shared operation lease prevents Server self-update and restore from racing.
+
 ## 9. Usage accounting
 
 Providers normalize backend-specific counters into a shared usage representation.

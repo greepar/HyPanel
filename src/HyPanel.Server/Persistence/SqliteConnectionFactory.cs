@@ -6,6 +6,8 @@ internal sealed class SqliteConnectionFactory
 {
     private readonly string _connectionString;
 
+    public string DatabasePath { get; }
+
     public SqliteConnectionFactory(IConfiguration configuration)
     {
         var configured = configuration.GetConnectionString("HyPanel")
@@ -16,6 +18,10 @@ internal sealed class SqliteConnectionFactory
         {
             DataSource = Path.Combine(dataDirectory, "hypanel.db")
         }.ToString();
+        var builder = new SqliteConnectionStringBuilder(_connectionString);
+        if (string.IsNullOrWhiteSpace(builder.DataSource) || builder.DataSource == ":memory:")
+            throw new InvalidOperationException("HyPanel backup and restore require a file-backed SQLite database.");
+        DatabasePath = Path.GetFullPath(builder.DataSource);
     }
 
     public async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
@@ -28,4 +34,12 @@ internal sealed class SqliteConnectionFactory
         await command.ExecuteNonQueryAsync(cancellationToken);
         return connection;
     }
+
+    public SqliteConnection CreateConnection(string path, SqliteOpenMode mode = SqliteOpenMode.ReadWriteCreate) =>
+        new(new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.GetFullPath(path),
+            Mode = mode,
+            Pooling = false
+        }.ToString());
 }

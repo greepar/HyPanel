@@ -238,3 +238,45 @@ Static tests never substitute for Windows Service, LaunchDaemon, OpenRC or procd
 
 Review Backend boundaries, NativeAOT, memory/startup, SQLite access, sync payload size, secret logging and retry
 behavior. Refactor only demonstrated complexity or correctness problems; stable code is not reorganized cosmetically.
+
+## Phase 18 — Linux Agent production hardening
+
+Harden the unprivileged systemd lifecycle, updater rollback guard, service failure isolation, bounded backoff, atomic
+state/config writes and Linux x64/arm64 NativeAOT gates. Production acceptance remains glibc/systemd-first.
+
+## Phase 19 — Hysteria2 managed certificates
+
+Store certificate assets with encrypted private keys, bind Hysteria2 by CertificateId, deliver PEM only through
+authenticated desired state, and maintain private fingerprint-addressed Agent TLS files. Official `v0.4.6` completed
+schema 11 → 12 production rollout, rotation and mismatch acceptance.
+
+## Phase 20 — Backup / Restore
+
+Deliver:
+
+- Versioned `manifest.json` + online SQLite snapshot archives under the private Server data directory.
+- Admin list/create/download/delete and two-step validate/restore flows with bounded uploads and no public URLs.
+- MasterKey fingerprint compatibility plus complete encrypted proxy credential and certificate-key validation.
+- Startup-only replacement, automatic pre-restore emergency backup, compatible migration and rollback on failure.
+- Shared Web API and offline CLI implementation; release caches, logs, staging and MasterKey stay outside archives.
+
+Exit criteria:
+
+- A running WAL database backs up consistently without disrupting Agent sync.
+- Real Node, Service, user, token/hash, usage, settings and encrypted-secret state survives mutation and restore.
+- Wrong MasterKey, corrupt archive/database, newer schema and failed migration leave the current database usable.
+
+## Phase 21 — User-facing documentation
+
+Replace development-oriented landing documentation with deployment, first-run, service, update, backup/security and
+Linux troubleshooting instructions that match only shipped behavior.
+
+## Phase 22 — Backend capability audit
+
+Research current official Hysteria2, Mihomo and sing-box multi-user/traffic APIs. Record only deterministic, stable
+capabilities; do not infer per-user traffic from logs, estimates or shared passwords.
+
+## Phase 23 — Product journey polish
+
+Run the fresh-admin journey through backup and fix only concrete wording, hierarchy, empty-state and dangerous-action
+friction while preserving the established Node-detail flow and visual system.

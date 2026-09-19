@@ -1,5 +1,19 @@
 # Phase 7 Test Status
 
+# Phase 20 Test Status
+
+- Core backup/restore tests: PASS, 17/17. Covers WAL snapshot data, manifest/list metadata, retention, active download,
+  traversal, oversized/invalid/incomplete/duplicate/SHA-corrupt archives, newer schema, MasterKey mismatch, corrupt
+  credential/certificate key, same-schema restore, schema 11 migration and migration-failure emergency rollback.
+- Full tests: PASS, Shared 21 + Server 133 + Agent 151 = 305.
+- Release solution build: PASS, 0 warnings / 0 errors.
+- Web production build: PASS.
+- Server NativeAOT: PASS for linux-x64 and linux-arm64.
+- `git diff --check`: PASS.
+- Production mutation/restore acceptance: pending formal release rollout.
+
+---
+
 ## Checklist -> tests
 
 - Migration v6/table shape: `MigrateAsync_WhenRunTwice_AppliesEachMigrationOnceAndAddsCommandExpiryColumn`.

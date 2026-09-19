@@ -68,3 +68,23 @@ Acceptance checklist:
 - Private key encrypted at rest and absent from normal API/read DTOs.
 - Agent writes cert 0644, key 0600, references fingerprint path, and does not persist PEM in desired metadata.
 - Certificate replacement increments every referencing Node revision and keeps unrelated Nodes unchanged.
+
+---
+
+## Phase 20 backup / restore test scope
+
+- Versioned Server backup archive, SQLite online snapshot under WAL, MasterKey compatibility and complete encrypted-row
+  preflight, fixed-directory Admin API, shared disaster-recovery CLI, startup-only replacement and emergency rollback.
+- Existing conventions: SDK-style .NET 10, MSTest, temporary file-backed SQLite, source-generated JSON and
+  `System.Formats.Tar`; no external process or network dependency in unit tests.
+
+## Acceptance checklist
+
+- Online backup contains WAL-resident committed data and a correct manifest/hash.
+- Archives reject SHA mismatch, missing/duplicate/unknown/traversal entries, oversized content and invalid SQLite.
+- Retention preserves at most five automatic backups and never deletes an active download.
+- Restore accepts same/older schemas, rejects newer schemas, and validates proxy credentials and certificate keys.
+- MasterKey mismatch and every preflight failure leave the current database unchanged.
+- Replacement failure restores an emergency snapshot; successful restore migrates then validates.
+- Admin routes require authorization, use basename-only IDs, bound uploads and no-store downloads.
+- CLI create/validate/restore uses the same service implementation.
