@@ -403,7 +403,7 @@ Unsupported backends do not receive grants that would expose a shared service se
 Hysteria2 users authenticate with `userpass` identities `hypanel-<userId:N>` / binding credential; clients send
 `<identity>:<credential>`. With no granted users the service falls back to the shared `authPassword`. The Server
 assigns a loopback control port on which the Agent enables Hysteria2 `trafficStats` (service-scoped secret) and reads
-cumulative per-user `tx`/`rx` counters (`tx` = user download, `rx` = user upload).
+cumulative per-user `tx`/`rx` counters (`tx` = user upload, `rx` = user download; verified against Hysteria 2.12).
 
 Grants are automatic: creating a multi-user service grants it to every enabled user, and creating a user grants every
 existing multi-user service. Admins can still revoke individual grants.

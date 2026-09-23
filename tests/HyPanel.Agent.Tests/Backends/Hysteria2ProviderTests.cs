@@ -185,11 +185,11 @@ public sealed class Hysteria2ProviderTests
     }
 
     [TestMethod]
-    public void ParseTraffic_MapsTxToDownloadAndIgnoresUnknownIdentities()
+    public void ParseTraffic_MapsTxToUploadRxToDownloadAndIgnoresUnknownIdentities()
     {
         var alice = Guid.NewGuid();
         var observedAt = DateTimeOffset.Parse("2026-09-23T10:00:00Z");
-        var json = "{\"hypanel-" + alice.ToString("N") + "\":{\"tx\":900,\"rx\":100},\"someone-else\":{\"tx\":5,\"rx\":5}}";
+        var json = "{\"hypanel-" + alice.ToString("N") + "\":{\"tx\":100,\"rx\":900},\"someone-else\":{\"tx\":5,\"rx\":5}}";
 
         var traffic = Hysteria2Provider.ParseTraffic(json, [new BackendUser(alice, "alice-credential")], observedAt);
 

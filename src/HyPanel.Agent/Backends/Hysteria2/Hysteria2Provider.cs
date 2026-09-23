@@ -175,7 +175,7 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
         {
             if (!counters.TryGetValue(UserName(user.UserId), out var counter) || counter.Tx < 0 || counter.Rx < 0)
                 continue;
-            result.Add(new BackendUserTraffic(user.UserId, counter.Rx, counter.Tx, observedAt));
+            result.Add(new BackendUserTraffic(user.UserId, counter.Tx, counter.Rx, observedAt));
         }
 
         return result;

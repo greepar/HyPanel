@@ -17,10 +17,10 @@ internal sealed partial class Hysteria2TrafficJsonSerializerContext : JsonSerial
 
 internal sealed class Hysteria2TrafficCounter
 {
-    /// <summary>Bytes sent to the client (the user's download).</summary>
+    /// <summary>Bytes the client transmitted (the user's upload); verified against a live server.</summary>
     public long Tx { get; init; }
 
-    /// <summary>Bytes received from the client (the user's upload).</summary>
+    /// <summary>Bytes the client received (the user's download); verified against a live server.</summary>
     public long Rx { get; init; }
 }
 
