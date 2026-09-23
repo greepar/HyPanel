@@ -1437,7 +1437,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
     void loadServices(nodeId, controller.signal);
     return () => controller.abort();
   }, [nodeId]);
-  const save = async (form: ServiceForm, service: Service | null) => {
+  const save = async (form: ServiceForm, service: Service | null, address: PublicEndpoint | null) => {
     const payload = payloadFor(form, backendFor(form.backendType));
     const path = `/api/admin/v1/nodes/${nodeId}/services${service ? `/${service.id}` : ""}`;
     const body = service
@@ -1449,10 +1449,17 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
           configJson: payload.configJson,
         }
       : payload;
-    await api.request(path, {
+    const result = await api.request<{ id: string } | undefined>(path, {
       method: service ? "PUT" : "POST",
       body: JSON.stringify(body),
     });
+    const serviceId = service?.id ?? result?.id;
+    if (serviceId) {
+      const endpointPath = `/api/admin/v1/nodes/${nodeId}/services/${serviceId}/public-endpoint`;
+      await api.request(endpointPath, address
+        ? { method: "PUT", body: JSON.stringify(address) }
+        : { method: "DELETE" });
+    }
     setEditor(null);
     await loadServices(nodeId);
   };
@@ -1597,6 +1604,8 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
       {editor && (
         <ServiceEditor
           service={editor.service}
+          nodeId={nodeId}
+          publicIpv4={node.publicIpv4 ?? null}
           api={api}
           save={save}
           close={() => setEditor(null)}
@@ -1636,52 +1645,12 @@ function ServiceCard({
   const facts = serviceFacts(service);
   const status = service.runtime?.status ?? 0;
   const [endpoint, setEndpoint] = useState<PublicEndpoint | null>(null);
-  const [endpointLoading, setEndpointLoading] = useState(false);
-  const [endpointOpen, setEndpointOpen] = useState(false);
   const [updatingBackend, setUpdatingBackend] = useState(false);
   const listenPort = Number(parseConfig(service.configJson)?.listenPort) || null;
   const autoAddress = publicIpv4 && listenPort ? `${publicIpv4}:${listenPort}` : null;
   useEffect(() => {
     void api.endpoint(nodeId, service.id).then((value) => setEndpoint(value ?? null), () => undefined);
   }, [nodeId, service.id]);
-  const clearEndpoint = async () => {
-    try {
-      await api.request(`/api/admin/v1/nodes/${nodeId}/services/${service.id}/public-endpoint`, { method: "DELETE" });
-      setEndpoint(null);
-      setEndpointOpen(false);
-      setError("已恢复自动连接地址。");
-    } catch (reason) {
-      setError(messageFor(reason, "无法恢复自动连接地址"));
-    }
-  };
-  const openEndpoint = async () => {
-    const next = !endpointOpen;
-    setEndpointOpen(next);
-    if (!next || endpoint) return;
-    setEndpointLoading(true);
-    try {
-      setEndpoint((await api.endpoint(nodeId, service.id)) ?? null);
-    } catch (reason) {
-      setError(messageFor(reason, "无法加载连接地址"));
-    } finally {
-      setEndpointLoading(false);
-    }
-  };
-  const saveEndpoint = async (event: Event) => {
-    event.preventDefault();
-    if (!endpoint) return;
-    try {
-      const result = await api.request<PublicEndpoint>(
-        `/api/admin/v1/nodes/${nodeId}/services/${service.id}/public-endpoint`,
-        { method: "PUT", body: JSON.stringify(endpoint) },
-      );
-      setEndpoint(result);
-      setEndpointOpen(false);
-      setError("自定义连接地址已保存。");
-    } catch (reason) {
-      setError(messageFor(reason, "无法保存连接地址"));
-    }
-  };
   const updateBackend = async () => {
     if (
       !service.latestBackendVersion ||
@@ -1786,13 +1755,10 @@ function ServiceCard({
       </div>
       <div className="service-footer">
         <div className="row-actions">
-          <button
-            className="link-button"
-            type="button"
-            onClick={() => void openEndpoint()}
-          >
-            连接地址：{endpoint ? `${endpoint.host}:${endpoint.port}（自定义）` : autoAddress ?? "等待节点上报公网 IP"}
-          </button>
+          <span className="connection-address" title="在“编辑”中可以自定义">
+            连接地址 <b className="mono">{endpoint ? `${endpoint.host}:${endpoint.port}` : autoAddress ?? "等待节点上报公网 IP"}</b>
+            {endpoint ? "（自定义）" : "（自动）"}
+          </span>
         </div>
         <label className="switch">
           <input
@@ -1804,68 +1770,6 @@ function ServiceCard({
           {service.enabled ? "已启用" : "已停用"}
         </label>
       </div>
-      {endpointOpen && (
-        <form
-          className="endpoint-form"
-          onSubmit={(event) => void saveEndpoint(event)}
-        >
-          <p className="endpoint-help">
-            用户订阅中连接此服务使用的地址。默认自动使用节点公网 IP{autoAddress ? `（${autoAddress}）` : ""}
-            {service.backendType === "hysteria2" ? "，并以证书域名作为 SNI" : ""}；
-            只有经过域名、CDN 或端口转发访问时才需要自定义。
-          </p>
-          {endpointLoading ? (
-            <Loading label="加载中…" />
-          ) : !endpoint ? (
-            <button
-              className="button button-secondary"
-              type="button"
-              onClick={() =>
-                setEndpoint({ host: "", port: listenPort ?? 443, tlsServerName: null })
-              }
-            >
-              自定义连接地址
-            </button>
-          ) : (
-            <>
-              <label>
-                域名或 IP
-                <input
-                  required
-                  placeholder="例如 hk.example.com"
-                  value={endpoint.host}
-                  onInput={(event) => setEndpoint({ ...endpoint, host: event.currentTarget.value })}
-                />
-              </label>
-              <label>
-                端口
-                <input
-                  required
-                  type="number"
-                  min="1"
-                  max="65535"
-                  value={endpoint.port}
-                  onInput={(event) => setEndpoint({ ...endpoint, port: Number(event.currentTarget.value) })}
-                />
-              </label>
-              <label>
-                SNI（可选）
-                <input
-                  placeholder={service.backendType === "hysteria2" ? "默认使用证书域名" : "留空即可"}
-                  value={endpoint.tlsServerName ?? ""}
-                  onInput={(event) => setEndpoint({ ...endpoint, tlsServerName: event.currentTarget.value || null })}
-                />
-              </label>
-              <div className="row-actions">
-                <button className="button button-secondary" type="button" onClick={() => void clearEndpoint()}>
-                  恢复自动
-                </button>
-                <button className="button button-primary">保存</button>
-              </div>
-            </>
-          )}
-        </form>
-      )}
     </article>
   );
 }
@@ -1952,17 +1856,30 @@ function ServiceLogPanel({
 
 function ServiceEditor({
   service,
+  nodeId,
+  publicIpv4,
   api,
   save,
   close,
   setError,
 }: {
   service: Service | null;
+  nodeId: string;
+  publicIpv4: string | null;
   api: ApiClient;
-  save: (form: ServiceForm, service: Service | null) => Promise<void>;
+  save: (form: ServiceForm, service: Service | null, address: PublicEndpoint | null) => Promise<void>;
   close: () => void;
   setError: (value: string) => void;
 }) {
+  // Optional subscription connection address; all fields empty means automatic (node IP + listen port).
+  const [address, setAddress] = useState({ host: "", port: "", sni: "" });
+  useEffect(() => {
+    if (!service) return;
+    void api.endpoint(nodeId, service.id).then(
+      (value) => value && setAddress({ host: value.host, port: String(value.port), sni: value.tlsServerName ?? "" }),
+      () => undefined,
+    );
+  }, [service?.id]);
   const [definitions, setDefinitions] = useState<BackendDefinition[]>([]);
   const [form, setForm] = useState<ServiceForm | null>(null);
   const [certificates, setCertificates] = useState<Certificate[]>([]);
@@ -2031,7 +1948,15 @@ function ServiceEditor({
     if (!form) return;
     setBusy(true);
     try {
-      await save(form, service);
+      const custom = address.host.trim() || address.port.trim() || address.sni.trim();
+      const listenPort = Number(form.values.listenPort) || null;
+      const host = address.host.trim() || publicIpv4;
+      const port = Number(address.port) || listenPort;
+      if (custom && (!host || !port)) {
+        setError("请填写连接地址的域名/IP 和端口，或全部留空使用自动地址。");
+        return;
+      }
+      await save(form, service, custom ? { host: host!, port: port!, tlsServerName: address.sni.trim() || null } : null);
     } catch (reason) {
       setError(messageFor(reason, "无法保存服务"));
     } finally {
@@ -2201,6 +2126,44 @@ function ServiceEditor({
             </div>
           )}
           <div className="form-grid">{protocolFields.map(renderField)}</div>
+        </fieldset>
+        <fieldset>
+          <legend>连接地址（可选）</legend>
+          <p className="field-help">
+            写进用户订阅的地址。全部留空即自动使用节点公网 IP 和监听端口
+            {form.backendType === "hysteria2" ? "，SNI 取证书域名" : ""}；只有通过域名、CDN 或端口转发访问时才需要填写。
+          </p>
+          <div className="form-grid">
+            <label>
+              域名或 IP
+              <input
+                placeholder={publicIpv4 ? `自动：${publicIpv4}` : "自动：节点公网 IP"}
+                value={address.host}
+                onInput={(event) => setAddress({ ...address, host: event.currentTarget.value })}
+              />
+            </label>
+            <label>
+              端口
+              <input
+                type="number"
+                min="1"
+                max="65535"
+                placeholder={`自动：${String(form.values.listenPort ?? "监听端口")}`}
+                value={address.port}
+                onInput={(event) => setAddress({ ...address, port: event.currentTarget.value })}
+              />
+            </label>
+            {form.backendType === "hysteria2" && (
+              <label>
+                SNI
+                <input
+                  placeholder="自动：证书域名"
+                  value={address.sni}
+                  onInput={(event) => setAddress({ ...address, sni: event.currentTarget.value })}
+                />
+              </label>
+            )}
+          </div>
         </fieldset>
         <footer>
           <div className="row-actions">

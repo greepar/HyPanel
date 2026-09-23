@@ -270,6 +270,9 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 .service-tags span { padding: 3px 8px; border-radius: 6px; color: var(--muted); background: var(--surface-2); font-size: 11px }
 .endpoint-form { display: grid; grid-template-columns: 1.3fr .5fr 1.3fr auto; gap: 10px; align-items: end; padding: 16px; border-top: 1px solid var(--border); background: var(--surface-2) }
 .endpoint-form .state { min-height: 80px; grid-column: 1 / -1 }
+.field-help { margin: -4px 0 12px; color: var(--muted); font-size: 12px }
+.connection-address { color: var(--muted); font-size: 12px }
+.connection-address b { margin-left: 4px; color: var(--text); font-weight: 500 }
 .endpoint-help { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 12px }
 .endpoint-form > .button { justify-self: start; grid-column: 1 / -1 }
 
