@@ -58,9 +58,10 @@ internal static class BackendDefinitionCatalog
                 Field("realityPrivateKey", "REALITY 私钥", "password", required: true, secret: true, generate: true),
                 Field("realityPublicKey", "REALITY 公钥", "text", required: true, generate: true),
                 Field("shortId", "Short ID", "text", required: true, generate: true),
-                Field("serverName", "服务器名称 / SNI", "text", required: true,
-                    defaultValue: "www.microsoft.com"),
-                Field("destination", "伪装目标", "text", required: true, defaultValue: "www.microsoft.com:443"),
+                Field("serverName", "服务器名称 / SNI", "text", required: true, generate: true,
+                    defaultValue: "www.cloudflare.com"),
+                Field("destination", "伪装目标", "text", required: true, generate: true,
+                    defaultValue: "www.cloudflare.com:443"),
                 Field("fingerprint", "浏览器指纹", "select", required: true, defaultValue: "chrome",
                     options: Fingerprints),
                 FixedField("flow", "流控", "xtls-rprx-vision", "string")
@@ -97,14 +98,27 @@ internal static class BackendDefinitionCatalog
         _ => []
     };
 
+    /// <summary>
+    /// REALITY camouflage targets: large sites that serve TLS 1.3 + HTTP/2 and are reachable from mainland China.
+    /// Microsoft endpoints are avoided because they frequently break REALITY handshakes.
+    /// </summary>
+    internal static readonly string[] RealityTargets =
+    [
+        "www.cloudflare.com", "www.visa.cn", "www.visa.com", "www.nvidia.com", "www.amd.com", "addons.mozilla.org",
+        "www.tesla.com", "dl.google.com"
+    ];
+
     private static Dictionary<string, string> RealityDefaults()
     {
         var (privateKey, publicKey) = SecretGenerator.RealityKeyPair();
+        var target = RealityTargets[System.Security.Cryptography.RandomNumberGenerator.GetInt32(RealityTargets.Length)];
         return new Dictionary<string, string>
         {
             ["realityPrivateKey"] = privateKey,
             ["realityPublicKey"] = publicKey,
-            ["shortId"] = SecretGenerator.LowerHex(8)
+            ["shortId"] = SecretGenerator.LowerHex(8),
+            ["serverName"] = target,
+            ["destination"] = target + ":443"
         };
     }
 

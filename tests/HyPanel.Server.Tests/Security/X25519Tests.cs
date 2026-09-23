@@ -67,7 +67,10 @@ public sealed class X25519Tests
         Assert.AreNotEqual(hysteria["authPassword"], hysteria["obfsPassword"]);
 
         var xray = BackendDefinitionCatalog.GenerateDefaults("xray");
-        Assert.AreEqual(3, xray.Count);
+        Assert.AreEqual(5, xray.Count);
+        CollectionAssert.Contains(BackendDefinitionCatalog.RealityTargets, xray["serverName"]);
+        Assert.AreEqual(xray["serverName"] + ":443", xray["destination"]);
+        Assert.IsFalse(BackendDefinitionCatalog.RealityTargets.Any(target => target.Contains("microsoft", StringComparison.OrdinalIgnoreCase)));
         Assert.AreEqual(32, DecodeBase64Url(xray["realityPrivateKey"]).Length);
         Assert.AreEqual(16, xray["shortId"].Length);
 

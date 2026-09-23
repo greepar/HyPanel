@@ -2052,6 +2052,8 @@ function ServiceEditor({
     try {
       // New services get a random port that is free on this node; existing services keep theirs.
       const result = await api.generateBackendDefaults(definition.backendType, service ? undefined : nodeId);
+      // Regenerating on an existing service only rotates secrets; its camouflage target stays as configured.
+      if (service) { delete result.values.serverName; delete result.values.destination; }
       setForm((current) =>
         current && current.backendType === definition.backendType
           ? { ...current, values: { ...current.values, ...result.values } }
