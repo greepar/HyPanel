@@ -89,6 +89,25 @@ export function AdminApp({
   return <OverviewPage api={api} setError={setError} />;
 }
 
+/**
+ * Silently re-runs `refresh` every few seconds while the tab is visible (and once when it becomes visible again),
+ * so runtime status such as 重启退避 → 运行中 shows up without reloading the page.
+ */
+function useAutoRefresh(refresh: () => unknown, deps: unknown[] = [], intervalMs = 5000) {
+  const latest = useRef(refresh);
+  latest.current = refresh;
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === "visible") void latest.current();
+    };
+    const timer = setInterval(tick, intervalMs);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, deps);
+}
 function SettingsPage({ api, setError }: PageProps) {
   const [settings, setSettings] = useState<GlobalSettings | null>(null);
   const [certificates, setCertificates] = useState<Certificate[]>([]);
@@ -376,9 +395,11 @@ function OverviewPage({ api, setError }: PageProps) {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const load = async () => {
-    setLoading(true);
-    setLoadError("");
+  const load = async (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setLoadError("");
+    }
     try {
       const [nextHealth, nextNodes] = await Promise.all([
         api.health(),
@@ -387,14 +408,15 @@ function OverviewPage({ api, setError }: PageProps) {
       setHealth(nextHealth);
       setNodes(nextNodes);
     } catch (reason) {
-      setLoadError(messageFor(reason, "无法加载概览"));
+      if (!silent) setLoadError(messageFor(reason, "无法加载概览"));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
   useEffect(() => {
     void load();
   }, []);
+  useAutoRefresh(() => load(true));
   if (!loading && loadError)
     return (
       <Page
@@ -537,20 +559,23 @@ function NodesPage({ api, setError }: PageProps) {
   const [filter, setFilter] = useState<"all" | "online" | "offline">("all");
   const [query, setQuery] = useState("");
   const [deleting, setDeleting] = useState<Node | null>(null);
-  const load = async () => {
-    setLoading(true);
-    setLoadError("");
+  const load = async (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setLoadError("");
+    }
     try {
       setNodes(await api.nodes());
     } catch (reason) {
-      setLoadError(messageFor(reason, "无法加载节点"));
+      if (!silent) setLoadError(messageFor(reason, "无法加载节点"));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
   useEffect(() => {
     void load();
   }, []);
+  useAutoRefresh(() => load(true));
   const create = async (event: Event) => {
     event.preventDefault();
     setBusy(true);
@@ -1111,9 +1136,11 @@ function NodeDetailPage({
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const load = async () => {
-    setLoading(true);
-    setLoadError("");
+  const load = async (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setLoadError("");
+    }
     try {
       const [nodes, nextServices] = await Promise.all([
         api.nodes(),
@@ -1122,14 +1149,15 @@ function NodeDetailPage({
       setNode(nodes.find((item) => item.id === nodeId) ?? null);
       setServices(nextServices);
     } catch (reason) {
-      setLoadError(messageFor(reason, "无法加载节点详情"));
+      if (!silent) setLoadError(messageFor(reason, "无法加载节点详情"));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
   useEffect(() => {
     void load();
   }, [nodeId]);
+  useAutoRefresh(() => load(true), [nodeId]);
   if (!loading && (loadError || !node))
     return (
       <Page title="节点详情" description="节点可能不存在或暂时无法读取。">
@@ -1575,22 +1603,28 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
     null,
   );
   const [selected, setSelected] = useState<string[]>([]);
-  const loadServices = async (id: string, signal?: AbortSignal) => {
-    setLoading(true);
-    setLoadError("");
+  const loadServices = async (id: string, signal?: AbortSignal, silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setLoadError("");
+    }
     try {
       const next = await api.services(id, signal);
+      if (signal?.aborted) return;
       setServices(
         node.online
           ? next
           : next.map((service) => ({ ...service, runtime: null })),
       );
-      setSelected([]);
+      // A background refresh keeps the selection of services that still exist.
+      setSelected((current) =>
+        silent ? current.filter((serviceId) => next.some((service) => service.id === serviceId)) : [],
+      );
     } catch (reason) {
-      if (!(reason instanceof DOMException && reason.name === "AbortError"))
+      if (!silent && !(reason instanceof DOMException && reason.name === "AbortError"))
         setLoadError(messageFor(reason, "无法加载服务"));
     } finally {
-      if (!signal?.aborted) setLoading(false);
+      if (!silent && !signal?.aborted) setLoading(false);
     }
   };
   useEffect(() => {
@@ -1599,6 +1633,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
     void loadServices(nodeId, controller.signal);
     return () => controller.abort();
   }, [nodeId]);
+  useAutoRefresh(() => loadServices(nodeId, undefined, true), [nodeId, node.online]);
   const save = async (form: ServiceForm, service: Service | null, address: PublicEndpoint | null) => {
     const payload = payloadFor(form, backendFor(form.backendType));
     const path = `/api/admin/v1/nodes/${nodeId}/services${service ? `/${service.id}` : ""}`;

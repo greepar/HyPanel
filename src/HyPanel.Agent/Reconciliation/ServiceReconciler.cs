@@ -71,6 +71,35 @@ public sealed class ServiceReconciler(
             }
             try
             {
+                // Services deleted in the Panel are stopped first and always, even when another service fails to
+                // apply: otherwise a deleted backend keeps running and holding ports the new services need.
+                if (previous.DesiredState is not null)
+                {
+                    var desiredIds = desiredState.Services.Select(service => service.ServiceId).ToHashSet();
+                    foreach (var removed in previous.DesiredState.Services.Where(service =>
+                                 !desiredIds.Contains(service.ServiceId)))
+                    {
+                        try
+                        {
+                            var stopped =
+                                await processSupervisor.StopAsync(removed.ServiceId, StopTimeout, cancellationToken);
+                            if (stopped.Status == ServiceRuntimeStatus.Failed)
+                                throw new InvalidOperationException("A removed backend process could not be stopped.");
+                            instanceStore.Delete(removed.ServiceId);
+                            recoveryStates.TryRemove(removed.ServiceId, out _);
+                            runtimeStates[removed.ServiceId] = State(removed.ServiceId, ServiceRuntimeStatus.Stopped,
+                                removed.BackendVersion, null, null, null);
+                        }
+                        catch (Exception exception) when (IsExpectedFailure(exception))
+                        {
+                            failed = true;
+                            firstErrorCode ??= ErrorCode(exception);
+                            failedService = removed.ServiceId;
+                            SetFailed(removed.ServiceId, ErrorCode(exception));
+                        }
+                    }
+                }
+
                 foreach (var plan in preflight.Plans)
                 {
                     var changed = new List<Guid>();
@@ -97,33 +126,6 @@ public sealed class ServiceReconciler(
                             continue;
                         if (!await SetRolledBackAsync(plan.Desired.ServiceId, desiredState, cancellationToken))
                             SetFailed(plan.Desired.ServiceId, ErrorCode(exception));
-                    }
-                }
-
-                if (!failed && previous.DesiredState is not null)
-                {
-                    var desiredIds = desiredState.Services.Select(service => service.ServiceId).ToHashSet();
-                    foreach (var removed in previous.DesiredState.Services.Where(service =>
-                                 !desiredIds.Contains(service.ServiceId)))
-                    {
-                        try
-                        {
-                            var stopped =
-                                await processSupervisor.StopAsync(removed.ServiceId, StopTimeout, cancellationToken);
-                            if (stopped.Status == ServiceRuntimeStatus.Failed)
-                                throw new InvalidOperationException("A removed backend process could not be stopped.");
-                            instanceStore.Delete(removed.ServiceId);
-                            recoveryStates.TryRemove(removed.ServiceId, out _);
-                            runtimeStates[removed.ServiceId] = State(removed.ServiceId, ServiceRuntimeStatus.Stopped,
-                                removed.BackendVersion, null, null, null);
-                        }
-                        catch (Exception exception) when (IsExpectedFailure(exception))
-                        {
-                            failed = true;
-                            firstErrorCode ??= ErrorCode(exception);
-                            failedService = removed.ServiceId;
-                            SetFailed(removed.ServiceId, ErrorCode(exception));
-                        }
                     }
                 }
 

@@ -871,6 +871,48 @@ internal sealed partial class SqliteServerRepository(
         return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
 
+    public const int FirstControlPort = 20_000;
+    public const int LastControlPort = 20_255;
+
+    /// <summary>
+    /// Returns each service's loopback control port, assigning the lowest free port on the node to services that
+    /// have none yet. Assignments are persisted, so a service keeps its port for its whole lifetime.
+    /// </summary>
+    public async Task<Dictionary<Guid, int>> EnsureControlPortsAsync(Guid nodeId, IReadOnlyList<Guid> serviceIds,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        var assigned = new Dictionary<Guid, int>();
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = "SELECT id,control_port FROM service_instances WHERE node_id=@node AND control_port IS NOT NULL;";
+            read.Parameters.AddWithValue("@node", nodeId.ToString("D"));
+            await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                assigned[SqliteValue.ToGuid(reader.GetString(0))] = reader.GetInt32(1);
+        }
+        var used = assigned.Values.ToHashSet();
+        var next = FirstControlPort;
+        foreach (var serviceId in serviceIds.Where(id => !assigned.ContainsKey(id)))
+        {
+            while (used.Contains(next) && next <= LastControlPort) next++;
+            if (next > LastControlPort) throw new InvalidOperationException("No free control port on this node.");
+            await using var write = connection.CreateCommand();
+            write.Transaction = transaction;
+            write.CommandText = "UPDATE service_instances SET control_port=@port WHERE id=@id AND node_id=@node;";
+            write.Parameters.AddWithValue("@port", next);
+            write.Parameters.AddWithValue("@id", serviceId.ToString("D"));
+            write.Parameters.AddWithValue("@node", nodeId.ToString("D"));
+            await write.ExecuteNonQueryAsync(cancellationToken);
+            assigned[serviceId] = next;
+            used.Add(next);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return assigned;
+    }
+
     /// <summary>The admin's custom Mihomo template, or null when the built-in default is in use.</summary>
     public async Task<string?> GetMihomoTemplateAsync(CancellationToken cancellationToken)
     {

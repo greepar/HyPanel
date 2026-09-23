@@ -35,7 +35,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -315,7 +315,7 @@ public sealed class SqliteServerRepositoryTests
             new[]
             {
                 "id", "node_id", "name", "backend_type", "backend_version", "enabled", "config_schema_version",
-                "config_json", "created_at_utc", "updated_at_utc", "backend_update_policy"
+                "config_json", "created_at_utc", "updated_at_utc", "backend_update_policy", "control_port"
             },
             await ReadColumnNamesAsync(connection, "service_instances"));
         CollectionAssert.AreEquivalent(
@@ -515,6 +515,27 @@ public sealed class SqliteServerRepositoryTests
         {
             directory.Delete(recursive: true);
         }
+    }
+
+    [TestMethod]
+    public async Task EnsureControlPorts_AreStableWhenServicesComeAndGo()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        await fixture.Repository.CreateNodeAsync(nodeId, "ports", CancellationToken.None);
+        var a = (await fixture.Repository.CreateServiceAsync(CreateService(nodeId, Guid.NewGuid(), "a"), CancellationToken.None)).Service!.Id;
+        var b = (await fixture.Repository.CreateServiceAsync(CreateService(nodeId, Guid.NewGuid(), "b"), CancellationToken.None)).Service!.Id;
+
+        var first = await fixture.Repository.EnsureControlPortsAsync(nodeId, [a, b], CancellationToken.None);
+        Assert.AreEqual(20_000, first[a]);
+        Assert.AreEqual(20_001, first[b]);
+
+        await fixture.Repository.DeleteServiceAsync(nodeId, a, CancellationToken.None);
+        var c = (await fixture.Repository.CreateServiceAsync(CreateService(nodeId, Guid.NewGuid(), "c"), CancellationToken.None)).Service!.Id;
+        var second = await fixture.Repository.EnsureControlPortsAsync(nodeId, [c, b], CancellationToken.None);
+
+        Assert.AreEqual(20_001, second[b], "an existing service keeps its port");
+        Assert.AreEqual(20_000, second[c], "a new service reuses a freed port without shifting others");
     }
 
     [DataTestMethod]

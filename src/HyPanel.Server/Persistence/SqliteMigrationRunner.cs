@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 19;
+    public const long CurrentSchemaVersion = 20;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -24,6 +24,7 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
     private const long UserGroupsSchemaVersion = 17;
     private const long SubscriptionTemplateSchemaVersion = 18;
     private const long CertificateSourceStatusSchemaVersion = 19;
+    private const long StableControlPortSchemaVersion = 20;
     public const string DefaultGroupId = "00000000-0000-0000-0000-000000000001";
 
     public async Task MigrateAsync(CancellationToken cancellationToken)
@@ -524,6 +525,21 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             insertMigration.CommandText =
                 "INSERT INTO schema_migrations (version,applied_at_utc) VALUES (@version,@at);";
             insertMigration.Parameters.AddWithValue("@version", CertificateSourceStatusSchemaVersion);
+            insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+            await insertMigration.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, StableControlPortSchemaVersion, cancellationToken))
+        {
+            // Loopback stats ports are assigned once per service and then kept, so adding or removing a service
+            // never shifts the ports of the others (which made them collide with still-running processes).
+            await ExecuteAsync(connection, transaction,
+                "ALTER TABLE service_instances ADD COLUMN control_port INTEGER NULL;", cancellationToken);
+            await using var insertMigration = connection.CreateCommand();
+            insertMigration.Transaction = transaction;
+            insertMigration.CommandText =
+                "INSERT INTO schema_migrations (version,applied_at_utc) VALUES (@version,@at);";
+            insertMigration.Parameters.AddWithValue("@version", StableControlPortSchemaVersion);
             insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
             await insertMigration.ExecuteNonQueryAsync(cancellationToken);
         }
