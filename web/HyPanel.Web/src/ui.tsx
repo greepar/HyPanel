@@ -1,6 +1,6 @@
 import type { ComponentChildren } from 'preact'
-import { useEffect, useRef } from 'preact/hooks'
-import { Check, ChevronDown, LayoutDashboard, LogOut, Monitor, Moon, Server, Settings, Sun, Users } from 'lucide-preact'
+import { useEffect, useRef, useState } from 'preact/hooks'
+import { Check, ChevronDown, ChevronsUpDown, LayoutDashboard, LogOut, Monitor, Moon, Server, Settings, Sun, Users } from 'lucide-preact'
 import type { AppRoute, Role, Theme } from './domain'
 
 export const themes: Theme[] = ['light', 'dark', 'system']
@@ -67,7 +67,8 @@ export function Modal({ title, description, close, children }: { title: string; 
       ?? root?.querySelector<HTMLElement>('button, a[href]')
     preferred?.focus()
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); closeRef.current(); return }
+      // An open dropdown consumes Escape first (it calls preventDefault); only then close the dialog.
+      if (event.key === 'Escape') { if (event.defaultPrevented) return; event.preventDefault(); closeRef.current(); return }
       if (event.key !== 'Tab' || !root) return
       const focusable = [...root.querySelectorAll<HTMLElement>('input:not([type="hidden"]):not([disabled]), select:not([disabled]), button:not([disabled]), a[href]')]
       if (!focusable.length) return
@@ -126,3 +127,54 @@ export const formatUptime = (seconds: number) => {
 
 export const usedBytes = (total: number, available: number) => Math.max(0, total - available)
 export const messageFor = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback
+
+export type SelectOption = { value: string; label: string; hint?: string }
+
+/**
+ * Styled replacement for the native <select>, whose popup (blue system highlight on macOS) cannot be themed.
+ * Keyboard: Enter/Space/ArrowDown opens, arrows move, Enter selects, Escape/Tab close.
+ */
+export function Select({ value, options, onChange, placeholder = '请选择', required = false, disabled = false, ariaLabel }: {
+  value: string; options: SelectOption[]; onChange: (value: string) => void; placeholder?: string
+  required?: boolean; disabled?: boolean; ariaLabel?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [active, setActive] = useState(0)
+  const root = useRef<HTMLDivElement>(null)
+  const selected = options.find(option => option.value === value)
+  useEffect(() => {
+    if (!open) return
+    const close = (event: MouseEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+  const show = () => { if (disabled) return; setActive(Math.max(0, options.findIndex(option => option.value === value))); setOpen(true) }
+  const choose = (option: SelectOption) => { onChange(option.value); setOpen(false) }
+  const onKey = (event: KeyboardEvent) => {
+    if (!open) {
+      if (['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes(event.key)) { event.preventDefault(); show() }
+      return
+    }
+    if (event.key === 'Escape' || event.key === 'Tab') { if (event.key === 'Escape') event.preventDefault(); setOpen(false) }
+    else if (event.key === 'ArrowDown') { event.preventDefault(); setActive(index => Math.min(options.length - 1, index + 1)) }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); setActive(index => Math.max(0, index - 1)) }
+    else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); if (options[active]) choose(options[active]) }
+  }
+  return <div className={`select${open ? ' open' : ''}`} ref={root}>
+    <button type="button" className="select-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={ariaLabel}
+      disabled={disabled} onClick={event => { event.preventDefault(); open ? setOpen(false) : show() }} onKeyDown={onKey}>
+      <span className={selected ? '' : 'select-placeholder'}>{selected?.label ?? placeholder}</span>
+      <ChevronsUpDown size={14} aria-hidden="true" />
+    </button>
+    {required && <input className="select-validation" tabIndex={-1} aria-hidden="true" required value={value} onInput={() => undefined}
+      onInvalid={event => { event.preventDefault(); show() }} />}
+    {open && <ul className="select-menu" role="listbox">
+      {options.map((option, index) => <li key={option.value} role="option" aria-selected={option.value === value}
+        className={`${index === active ? 'active' : ''}${option.value === value ? ' selected' : ''}`}
+        onMouseEnter={() => setActive(index)} onMouseDown={event => { event.preventDefault(); choose(option) }}>
+        <span>{option.label}{option.hint && <small>{option.hint}</small>}</span>
+        {option.value === value && <Check size={14} aria-hidden="true" />}
+      </li>)}
+    </ul>}
+  </div>
+}

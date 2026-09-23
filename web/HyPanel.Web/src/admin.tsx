@@ -50,6 +50,7 @@ import {
   Notice,
   Page,
   percentOf,
+  Select,
   Stat,
   usedBytes,
 } from "./ui";
@@ -116,7 +117,7 @@ function SettingsPage({ api, setError }: PageProps) {
           {server.error && <Notice kind="error">{server.error}</Notice>}
           {server.deploymentMode === "Docker" ? <Notice>发现新镜像时运行 <code>docker compose pull &amp;&amp; docker compose up -d</code>。</Notice> : <div className="section-toolbar"><button className="button button-primary" type="button" disabled={!server.updateAvailable || server.status === "Downloading" || server.status === "Applying"} onClick={() => void update()}>更新 Server</button></div>}
         </section>
-        <section className="card panel"><SectionTitle title="更新默认值" description="仅应用于之后创建的 Node 和 Service" /><div className="modal-form"><label>Agent 默认策略<select value={settings.agentUpdateDefaultPolicy} onChange={event => setSettings({ ...settings, agentUpdateDefaultPolicy: event.currentTarget.value as "Manual" | "Auto" })}><option value="Manual">Manual</option><option value="Auto">Auto</option></select></label><label>Backend 默认策略<select value={settings.backendUpdateDefaultPolicy} onChange={event => setSettings({ ...settings, backendUpdateDefaultPolicy: event.currentTarget.value as "Manual" | "Auto" })}><option value="Manual">Manual</option><option value="Auto">Auto</option></select></label><label>GitHub Mirror Base URL<input placeholder="留空使用 GitHub 官方源" value={settings.githubMirrorBaseUrl ?? ""} onInput={event => setSettings({ ...settings, githubMirrorBaseUrl: event.currentTarget.value || null })} /></label><button className="button button-primary" type="button" onClick={() => void save()}>保存设置</button></div></section>
+        <section className="card panel"><SectionTitle title="自动更新" description="新建节点和服务时的默认策略；已有节点可在节点设置里单独开关。" /><div className="modal-form"><label className="switch"><input type="checkbox" checked={settings.agentUpdateDefaultPolicy === "Auto"} onChange={event => setSettings({ ...settings, agentUpdateDefaultPolicy: event.currentTarget.checked ? "Auto" : "Manual" })} /><span />新节点自动更新 Agent</label><label className="switch"><input type="checkbox" checked={settings.backendUpdateDefaultPolicy === "Auto"} onChange={event => setSettings({ ...settings, backendUpdateDefaultPolicy: event.currentTarget.checked ? "Auto" : "Manual" })} /><span />新服务自动更新代理内核</label><label>GitHub 镜像地址<input placeholder="留空使用 GitHub 官方源" value={settings.githubMirrorBaseUrl ?? ""} onInput={event => setSettings({ ...settings, githubMirrorBaseUrl: event.currentTarget.value || null })} /></label><button className="button button-primary" type="button" onClick={() => void save()}>保存设置</button></div></section>
          <section className="card panel"><SectionTitle title="Release 与数据" description="受控的官方发布来源" /><dl className="facts-list"><div><dt>Agent Release</dt><dd>{settings.agentReleaseVersion ?? "Unavailable"}</dd></div>{Object.entries(settings.backendReleases).map(([name, version]) => <div key={name}><dt>{name}</dt><dd>{version}</dd></div>)}<div><dt>数据目录</dt><dd>{settings.dataDirectory}</dd></div><div><dt>数据库</dt><dd>{formatBytes(settings.databaseSizeBytes)}</dd></div></dl></section>
           <CertificatePanel api={api} certificates={certificates} setCertificates={setCertificates} setError={setError} />
           <BackupPanel api={api} setError={setError} />
@@ -296,9 +297,8 @@ function CertificatePanel({ api, certificates, setCertificates, setError }: { ap
         <div className="form-grid">
           <label>域名<input required placeholder="hy.example.com" value={draft.domain} onInput={event => change("domain", event.currentTarget.value)} /></label>
           <label>联系邮箱<input required type="email" placeholder="用于证书到期通知" value={draft.acmeEmail} onInput={event => change("acmeEmail", event.currentTarget.value)} /></label>
-          <label>验证方式<select value={draft.acmeChallenge} onChange={event => change("acmeChallenge", event.currentTarget.value as AcmeChallenge)}>
-            {(Object.keys(acmeChallengeLabels) as AcmeChallenge[]).map(value => <option key={value} value={value}>{acmeChallengeLabels[value]}</option>)}
-          </select></label>
+          <label>验证方式<Select ariaLabel="验证方式" value={draft.acmeChallenge} onChange={value => change("acmeChallenge", value as AcmeChallenge)}
+            options={(Object.keys(acmeChallengeLabels) as AcmeChallenge[]).map(value => ({ value, label: acmeChallengeLabels[value] }))} /></label>
           {draft.acmeChallenge === "cloudflare" && <label>Cloudflare API Token<input type="password" autoComplete="off" required={!editing?.hasAcmeDnsToken} placeholder={editing?.hasAcmeDnsToken ? "已保存，留空则保持不变" : "需要 Zone.DNS 编辑权限"} value={draft.acmeDnsToken} onInput={event => change("acmeDnsToken", event.currentTarget.value)} /></label>}
         </div>
         {draft.acmeChallenge !== "cloudflare" && <p className="field-help">HTTP / TLS 验证要求节点的 TCP {draft.acmeChallenge === "http" ? "80" : "443"} 端口可从公网访问且未被占用；较早安装的节点需重新运行一次安装命令，以授予 Agent 绑定低端口的权限。</p>}
@@ -2086,18 +2086,18 @@ function ServiceEditor({
       return (
         <label key={field.key}>
           证书
-          <select
+          <Select
+            ariaLabel="证书"
             required={field.required}
+            placeholder={certificates.length ? "选择证书" : "请先在“设置”中添加证书"}
             value={form.values[field.key] ?? ""}
-            onChange={(event) => change(field.key, event.currentTarget.value)}
-          >
-            <option value="">选择证书</option>
-            {certificates.map((certificate) => (
-              <option key={certificate.id} value={certificate.id}>
-                {certificate.name} · {certificateSummary(certificate)}
-              </option>
-            ))}
-          </select>
+            onChange={(value) => change(field.key, value)}
+            options={certificates.map((certificate) => ({
+              value: certificate.id,
+              label: certificate.name,
+              hint: certificateSummary(certificate),
+            }))}
+          />
         </label>
       );
     }
@@ -2105,17 +2105,13 @@ function ServiceEditor({
       return (
         <label key={field.key}>
           {field.label}
-          <select
+          <Select
+            ariaLabel={field.label}
             required={field.required}
             value={form.values[field.key] ?? ""}
-            onChange={(event) => change(field.key, event.currentTarget.value)}
-          >
-            {field.options.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
+            onChange={(value) => change(field.key, value)}
+            options={field.options.map((option) => ({ value: option, label: option }))}
+          />
         </label>
       );
     }
@@ -2764,15 +2760,15 @@ function UserEditor({
           </label>
           <label>
             角色
-            <select
+            <Select
+              ariaLabel="角色"
               value={form.role}
-              onChange={(event) =>
-                update({ role: event.currentTarget.value as UserForm["role"] })
-              }
-            >
-              <option value="User">普通用户</option>
-              <option value="Admin">管理员</option>
-            </select>
+              onChange={(value) => update({ role: value as UserForm["role"] })}
+              options={[
+                { value: "User", label: "普通用户" },
+                { value: "Admin", label: "管理员" },
+              ]}
+            />
           </label>
           <label>
             流量上限（字节）

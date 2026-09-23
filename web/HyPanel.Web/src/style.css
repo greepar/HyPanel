@@ -116,6 +116,24 @@ select { height: 36px; padding-right: 32px; -webkit-appearance: none; appearance
 input:not([type="checkbox"]):not([type="radio"]) { height: 36px }
 input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0 }
 input[type="number"] { -moz-appearance: textfield; appearance: textfield }
+/* Custom select (replaces the unthemeable native popup). */
+.select { position: relative; color: var(--text); font-size: 13px; font-weight: 400 }
+.select-trigger { display: flex; width: 100%; height: 36px; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); background: var(--surface); cursor: pointer; text-align: left; transition: border-color .12s, box-shadow .12s }
+.select-trigger:hover:not(:disabled) { border-color: var(--border-strong) }
+.select.open .select-trigger, .select-trigger:focus-visible { border-color: var(--text); box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 10%, transparent); outline: none }
+.select-trigger:disabled { cursor: not-allowed; opacity: .5 }
+.select-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.select-trigger svg { flex: 0 0 auto; color: var(--muted) }
+.select-placeholder { color: var(--faint) }
+.select-validation { position: absolute; bottom: 0; left: 50%; width: 1px; height: 1px; min-height: 0; padding: 0; border: 0; opacity: 0; pointer-events: none }
+.select-menu { position: absolute; top: calc(100% + 4px); right: 0; left: 0; z-index: 70; max-height: 280px; margin: 0; padding: 4px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); list-style: none; animation: pop-in .12s ease-out }
+.select-menu li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 9px; border-radius: 6px; cursor: pointer }
+.select-menu li.active { background: var(--surface-2) }
+.select-menu li.selected { font-weight: 500 }
+.select-menu li > span { display: grid; min-width: 0 }
+.select-menu li small { color: var(--muted); font-size: 11px; font-weight: 400 }
+.select-menu li svg { flex: 0 0 auto }
+.modal-form > .switch, .panel > .modal-form > .switch { min-height: 32px }
 /* A form placed directly in a card should not add the dialog padding a second time. */
 .panel > .modal-form { padding: 0 }
 .panel > .modal-form > .button { justify-self: start }
