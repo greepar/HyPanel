@@ -12,7 +12,10 @@ export class ApiClient {
     if (!response.ok) {
       if (response.status === 401 && path !== '/api/auth/v1/login') this.unauthorized()
       const labels: Record<number, string> = { 400: '提交内容无效，请检查表单。', 401: '登录已失效，请重新登录。', 403: '当前账户没有此操作权限。', 404: '请求的资源不存在。', 409: '名称或状态发生冲突。' }
-      throw new ApiError(response.status, labels[response.status] ?? `请求失败（${response.status}）`)
+      // Prefer a specific reason when the Server provides one ({ "error": "..." }).
+      let detail: string | undefined
+      try { const body = await response.json() as { error?: unknown }; if (typeof body?.error === 'string') detail = body.error } catch { /* no JSON body */ }
+      throw new ApiError(response.status, detail ?? labels[response.status] ?? `请求失败（${response.status}）`)
     }
     return (response.status === 204 ? undefined : await response.json()) as T
   }
@@ -48,6 +51,9 @@ export class ApiClient {
   setBackendUpdatePolicy = (nodeId: string, serviceId: string, policy: 'Manual' | 'Auto') => this.request<void>(`/api/admin/v1/nodes/${nodeId}/services/${serviceId}/backend-update-policy`, { method: 'PUT', body: JSON.stringify({ policy }) })
   users = () => this.request<User[]>('/api/admin/v1/users')
   groups = () => this.request<UserGroup[]>('/api/admin/v1/groups')
+  subscriptionTemplate = () => this.request<{ template: string; isCustom: boolean; defaultTemplate: string }>('/api/admin/v1/subscription-template')
+  saveSubscriptionTemplate = (template: string) => this.request<{ template: string; isCustom: boolean; defaultTemplate: string }>('/api/admin/v1/subscription-template', { method: 'PUT', body: JSON.stringify({ template }) })
+  resetSubscriptionTemplate = () => this.request<{ template: string; isCustom: boolean; defaultTemplate: string }>('/api/admin/v1/subscription-template', { method: 'DELETE' })
   saveGroup = (id: string | null, value: { name: string; autoIncludeNewServices: boolean; serviceIds: string[] }) => this.request<UserGroup>(id ? `/api/admin/v1/groups/${id}` : '/api/admin/v1/groups', { method: id ? 'PUT' : 'POST', body: JSON.stringify(value) })
   deleteGroup = (id: string) => this.request<void>(`/api/admin/v1/groups/${id}`, { method: 'DELETE' })
   usage = () => this.request<Usage[]>('/api/admin/v1/usage')

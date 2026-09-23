@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 17;
+    public const long CurrentSchemaVersion = 18;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -22,6 +22,7 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
     private const long RecoverableSubscriptionTokenSchemaVersion = 15;
     private const long CertificateSourcesSchemaVersion = 16;
     private const long UserGroupsSchemaVersion = 17;
+    private const long SubscriptionTemplateSchemaVersion = 18;
     public const string DefaultGroupId = "00000000-0000-0000-0000-000000000001";
 
     public async Task MigrateAsync(CancellationToken cancellationToken)
@@ -492,6 +493,20 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             insertMigration.CommandText =
                 "INSERT INTO schema_migrations (version,applied_at_utc) VALUES (@version,@at);";
             insertMigration.Parameters.AddWithValue("@version", UserGroupsSchemaVersion);
+            insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+            await insertMigration.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, SubscriptionTemplateSchemaVersion, cancellationToken))
+        {
+            // NULL means "use the built-in default Mihomo template".
+            await ExecuteAsync(connection, transaction,
+                "ALTER TABLE global_settings ADD COLUMN mihomo_template TEXT NULL;", cancellationToken);
+            await using var insertMigration = connection.CreateCommand();
+            insertMigration.Transaction = transaction;
+            insertMigration.CommandText =
+                "INSERT INTO schema_migrations (version,applied_at_utc) VALUES (@version,@at);";
+            insertMigration.Parameters.AddWithValue("@version", SubscriptionTemplateSchemaVersion);
             insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
             await insertMigration.ExecuteNonQueryAsync(cancellationToken);
         }

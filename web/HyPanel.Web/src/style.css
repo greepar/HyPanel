@@ -116,6 +116,10 @@ select { height: 36px; padding-right: 32px; -webkit-appearance: none; appearance
 input:not([type="checkbox"]):not([type="radio"]) { height: 36px }
 input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0 }
 input[type="number"] { -moz-appearance: textfield; appearance: textfield }
+/* Subscription template editor */
+.template-panel { grid-column: 1 / -1 }
+.template-editor { min-height: 420px; font: 12px/1.6 var(--mono); tab-size: 2; white-space: pre }
+
 /* User groups */
 .group-section { margin-bottom: 24px }
 .group-section h2 { margin: 0 }

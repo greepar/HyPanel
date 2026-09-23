@@ -33,7 +33,7 @@ internal static class SubscriptionEndpoints
         {
             "raw" => raw,
             "base64" => Convert.ToBase64String(Encoding.UTF8.GetBytes(raw)),
-            "mihomo" => RenderMihomo(proxies),
+            "mihomo" => RenderMihomo(proxies, await repository.GetMihomoTemplateAsync(ct) ?? MihomoTemplate.Default),
             "singbox" => RenderSingBox(proxies),
             _ => string.Empty
         };
@@ -162,12 +162,12 @@ internal static class SubscriptionEndpoints
         return false;
     }
 
-    private static string RenderMihomo(IEnumerable<SubscriptionProxy> proxies)
+    private static string RenderMihomo(IEnumerable<SubscriptionProxy> proxies, string template)
     {
-        var items = proxies.ToArray();
-        var yaml = new StringBuilder(MihomoTemplate.Header).Append("proxies:\n");
-        foreach (var proxy in items)
+        var rendered = new List<(string Name, string Yaml)>();
+        foreach (var proxy in proxies)
         {
+            var yaml = new StringBuilder();
             if (proxy is Hysteria2Proxy hysteria)
             {
                 yaml.Append("  - name: ").Append(Yaml(hysteria.Name)).Append("\n    type: hysteria2\n    server: ")
@@ -198,15 +198,10 @@ internal static class SubscriptionEndpoints
                     .Append("\n    cipher: ").Append(Yaml(shadowsocks.Method)).Append("\n    password: ")
                     .Append(Yaml(shadowsocks.Password)).Append("\n    udp: true\n");
             }
+            rendered.Add((proxy.Name, yaml.ToString()));
         }
 
-        if (items.Length == 0) yaml.Append("  []\n");
-        yaml.Append("proxy-groups:\n  - name: ").Append(MihomoTemplate.ProxyGroupName).Append("\n    type: select\n    proxies:");
-        foreach (var proxy in items)
-            yaml.Append("\n      - ").Append(Yaml(proxy.Name));
-        // DIRECT keeps the group valid when the user has no usable proxy yet.
-        yaml.Append("\n      - DIRECT\n");
-        return yaml.Append(MihomoTemplate.RuleProvidersAndRules).ToString();
+        return MihomoTemplate.Render(template, rendered, Yaml);
     }
 
     private static string RenderSingBox(IEnumerable<SubscriptionProxy> proxies)

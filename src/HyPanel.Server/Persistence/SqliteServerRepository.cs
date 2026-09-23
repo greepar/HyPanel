@@ -871,6 +871,25 @@ internal sealed partial class SqliteServerRepository(
         return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
 
+    /// <summary>The admin's custom Mihomo template, or null when the built-in default is in use.</summary>
+    public async Task<string?> GetMihomoTemplateAsync(CancellationToken cancellationToken)
+    {
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT mihomo_template FROM global_settings WHERE singleton=1;";
+        return await command.ExecuteScalarAsync(cancellationToken) as string;
+    }
+
+    public async Task SetMihomoTemplateAsync(string? template, CancellationToken cancellationToken)
+    {
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE global_settings SET mihomo_template=@template,updated_at_utc=@now WHERE singleton=1;";
+        command.Parameters.AddWithValue("@template", template is null ? DBNull.Value : template);
+        command.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task<GlobalSettingsRecord> GetGlobalSettingsAsync(CancellationToken cancellationToken)
     {
         await using var connection = await connectionFactory.OpenAsync(cancellationToken);

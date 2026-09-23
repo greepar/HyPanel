@@ -121,10 +121,66 @@ function SettingsPage({ api, setError }: PageProps) {
         </section>
         <section className="card panel"><SectionTitle title="自动更新" description="新建节点和服务时的默认策略；已有节点可在节点设置里单独开关。" /><div className="modal-form"><label className="switch"><input type="checkbox" checked={settings.agentUpdateDefaultPolicy === "Auto"} onChange={event => setSettings({ ...settings, agentUpdateDefaultPolicy: event.currentTarget.checked ? "Auto" : "Manual" })} /><span />新节点自动更新 Agent</label><label className="switch"><input type="checkbox" checked={settings.backendUpdateDefaultPolicy === "Auto"} onChange={event => setSettings({ ...settings, backendUpdateDefaultPolicy: event.currentTarget.checked ? "Auto" : "Manual" })} /><span />新服务自动更新代理内核</label><label>GitHub 镜像地址<input placeholder="留空使用 GitHub 官方源" value={settings.githubMirrorBaseUrl ?? ""} onInput={event => setSettings({ ...settings, githubMirrorBaseUrl: event.currentTarget.value || null })} /></label><button className="button button-primary" type="button" onClick={() => void save()}>保存设置</button></div></section>
          <section className="card panel"><SectionTitle title="Release 与数据" description="受控的官方发布来源" /><dl className="facts-list"><div><dt>Agent Release</dt><dd>{settings.agentReleaseVersion ?? "Unavailable"}</dd></div>{Object.entries(settings.backendReleases).map(([name, version]) => <div key={name}><dt>{name}</dt><dd>{version}</dd></div>)}<div><dt>数据目录</dt><dd>{settings.dataDirectory}</dd></div><div><dt>数据库</dt><dd>{formatBytes(settings.databaseSizeBytes)}</dd></div></dl></section>
+          <SubscriptionTemplatePanel api={api} setError={setError} />
           <CertificatePanel api={api} certificates={certificates} setCertificates={setCertificates} setError={setError} />
           <BackupPanel api={api} setError={setError} />
        </div>
     </Page>
+  );
+}
+
+/** Editable Mihomo subscription template (routing groups and rules applied to every Mihomo subscription). */
+function SubscriptionTemplatePanel({ api, setError }: PageProps) {
+  const [value, setValue] = useState<{ template: string; isCustom: boolean; defaultTemplate: string } | null>(null);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    void api.subscriptionTemplate().then((result) => { setValue(result); setDraft(result.template); }, (reason) => setError(messageFor(reason, "无法加载订阅模板")));
+  }, []);
+  const apply = (result: { template: string; isCustom: boolean; defaultTemplate: string }, message: string) => {
+    setValue(result);
+    setDraft(result.template);
+    setError(message);
+  };
+  const save = async () => {
+    setBusy(true);
+    try { apply(await api.saveSubscriptionTemplate(draft), "订阅模板已保存，客户端下次更新订阅即生效。"); }
+    catch (reason) { setError(messageFor(reason, "模板无效，请检查 YAML")); }
+    finally { setBusy(false); }
+  };
+  const reset = async () => {
+    if (!confirm("恢复为内置默认模板？当前自定义内容会丢失。")) return;
+    setBusy(true);
+    try { apply(await api.resetSubscriptionTemplate(), "已恢复默认模板。"); }
+    catch (reason) { setError(messageFor(reason, "无法恢复默认模板")); }
+    finally { setBusy(false); }
+  };
+  return (
+    <section className="card panel template-panel">
+      <div className="section-toolbar">
+        <div>
+          <h2>订阅规则模板（Mihomo / Clash）</h2>
+          <span>
+            {value ? (value.isCustom ? "当前使用：自定义模板" : "当前使用：内置默认模板（参考 ACL4SSR 分流）") : "加载中…"}
+          </span>
+        </div>
+        <div className="row-actions">
+          {value?.isCustom && (
+            <button className="button button-secondary" type="button" disabled={busy} onClick={() => void reset()}>
+              恢复默认
+            </button>
+          )}
+          <button className="button button-primary" type="button" disabled={busy || !value || draft === value.template} onClick={() => void save()}>
+            保存模板
+          </button>
+        </div>
+      </div>
+      <p className="field-help">
+        标准 Mihomo YAML。<code>proxies: ~</code> 这一行会被替换成用户可用的节点；策略组里的 <code>- __ALL_PROXIES__</code> 会展开为全部节点名；
+        也可以用 Mihomo 自带的 <code>include-all: true</code> + <code>filter: "正则"</code> 按节点名自动归组（节点名格式为“节点 · 服务”）。
+      </p>
+      <textarea className="template-editor" spellcheck={false} value={draft} onInput={(event) => setDraft(event.currentTarget.value)} />
+    </section>
   );
 }
 

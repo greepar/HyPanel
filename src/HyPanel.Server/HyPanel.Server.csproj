@@ -36,6 +36,10 @@
     <ItemGroup><Compile Include="$(GeneratedBuildInfo)" /></ItemGroup>
   </Target>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Endpoints/DefaultMihomoTemplate.yaml" LogicalName="HyPanel.Server.DefaultMihomoTemplate.yaml" />
+  </ItemGroup>
+
   <Target Name="BuildAndEmbedWebAssets" BeforeTargets="BeforeBuild">
     <Exec Command="npm run build" WorkingDirectory="$(WebProjectDirectory)" />
     <ItemGroup>

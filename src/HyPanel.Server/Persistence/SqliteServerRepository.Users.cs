@@ -492,13 +492,14 @@ internal sealed partial class SqliteServerRepository
         var services = new List<SubscriptionServiceRecord>();
         await using var cmd = c.CreateCommand();
         cmd.CommandText = """
-                           SELECT s.id,s.name,s.backend_type,s.config_json,
+                           SELECT s.id,n.display_name || ' · ' || s.name,s.backend_type,s.config_json,
                                   COALESCE(p.host,a.public_ipv4),
                                   COALESCE(p.port,CAST(json_extract(s.config_json,'$.listenPort') AS INTEGER)),
                                   p.tls_server_name,COALESCE(p.updated_at_utc,a.last_seen_at_utc),
                                    k.nonce,k.ciphertext,k.tag,c.san,c.certificate_pem
                            FROM user_service_bindings b
                            JOIN service_instances s ON s.id=b.service_id
+                           JOIN nodes n ON n.id=s.node_id
                            LEFT JOIN agents a ON a.node_id=s.node_id
                            LEFT JOIN service_public_endpoints p ON p.service_id=s.id
                            LEFT JOIN certificates c ON c.id=json_extract(s.config_json,'$.certificateId')

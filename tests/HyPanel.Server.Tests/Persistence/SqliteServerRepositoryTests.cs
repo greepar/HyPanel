@@ -35,7 +35,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -941,14 +941,19 @@ public sealed class SqliteServerRepositoryTests
 
         var raw = await RenderSubscriptionAsync(fixture, "mixed-token", "raw");
         var expectedVless =
-            $"vless://{clientId}@[2001:db8::10]:24445?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.example.com&fp=chrome&pbk=public-key-value&sid=a1b2&type=tcp#xray%20%23%20one";
-        StringAssert.Contains(raw, $"hysteria2://{hyUser}:{hyCredential}@hy.example:24444/?sni=hy.example&insecure=0#hy%20two");
+            $"vless://{clientId}@[2001:db8::10]:24445?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.example.com&fp=chrome&pbk=public-key-value&sid=a1b2&type=tcp#mixed%20%C2%B7%20xray%20%23%20one";
+        StringAssert.Contains(raw, $"hysteria2://{hyUser}:{hyCredential}@hy.example:24444/?sni=hy.example&insecure=0#mixed%20%C2%B7%20hy%20two");
         StringAssert.Contains(raw, expectedVless);
         Assert.AreEqual(raw, Encoding.UTF8.GetString(Convert.FromBase64String(
             await RenderSubscriptionAsync(fixture, "mixed-token", "base64"))));
 
         var mihomo = await RenderSubscriptionAsync(fixture, "mixed-token", "mihomo");
         StringAssert.Contains(mihomo, "type: hysteria2");
+        // Default template: proxies expand into the placeholder groups and the routing rules are present.
+        StringAssert.Contains(mihomo, "  - name: 🚀 手动切换\n    type: select\n    proxies:\n      - \"mixed · hy two\"\n      - \"mixed · xray # one\"");
+        StringAssert.Contains(mihomo, "  - MATCH,🐟 漏网之鱼");
+        Assert.IsFalse(mihomo.Contains("- __ALL_PROXIES__", StringComparison.Ordinal));
+        Assert.IsFalse(mihomo.Contains("proxies: ~", StringComparison.Ordinal));
         StringAssert.Contains(mihomo, $"password: \"{hyUser}:{hyCredential}\"");
         StringAssert.Contains(mihomo, "type: vless");
         StringAssert.Contains(mihomo, "public-key: \"public-key-value\"");
