@@ -51,6 +51,12 @@ export function App() {
   }, [theme])
   const endSession = () => { for (const key of ['hypanel-token', 'hypanel-user', 'hypanel-bootstrap', 'hypanel-session-token', 'hypanel-session-user', 'hypanel-admin-token']) sessionStorage.removeItem(key); setToken(''); setUser(null); setBootstrap(false) }
   const api = useMemo(() => new ApiClient(() => token, endSession), [token])
+  // Success toasts fade on their own; errors stay a little longer so they can be read.
+  useEffect(() => {
+    if (!error) return
+    const timer = setTimeout(() => setError(''), /已|排队|成功/.test(error) ? 3500 : 8000)
+    return () => clearTimeout(timer)
+  }, [error])
 
   useEffect(() => {
     if (!checkingSession || !token) return

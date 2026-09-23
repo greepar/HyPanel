@@ -17,6 +17,20 @@ const navigation: { route: AppRoute; label: string; admin: boolean; icon: typeof
 export function AppShell({ children, theme, setTheme, route, navigate, identity, role, logout }: { children: ComponentChildren; theme: Theme; setTheme: (value: Theme) => void; route?: AppRoute; navigate?: (value: AppRoute) => void; identity?: string; role?: Role | 'Bootstrap'; logout?: () => void }) {
   const items = navigation.filter(item => role === 'User' ? !item.admin : item.admin)
   const activeRoute = route?.startsWith('nodes/') ? 'nodes' : route
+  // Dropdown menus are <details>; close them after choosing an item, clicking elsewhere or pressing Escape.
+  useEffect(() => {
+    const closeMenus = (keep?: Element | null) => document.querySelectorAll<HTMLDetailsElement>('details.more-menu[open], details.user-menu[open]')
+      .forEach(menu => { if (menu !== keep) menu.open = false })
+    const onClick = (event: MouseEvent) => {
+      const target = event.target as Element | null
+      const menu = target?.closest('details.more-menu, details.user-menu') ?? null
+      closeMenus(menu && !target?.closest('button') ? menu : null)
+    }
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') closeMenus() }
+    document.addEventListener('click', onClick, true)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('click', onClick, true); document.removeEventListener('keydown', onKey) }
+  }, [])
   return <div className="app-shell">
     <header className="topbar">
       <a className="brand" href={role === 'User' ? '#/subscription' : '#/overview'}><span className="brand-mark" aria-hidden="true">H</span>HyPanel</a>
