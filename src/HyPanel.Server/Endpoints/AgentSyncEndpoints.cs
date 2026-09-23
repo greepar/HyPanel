@@ -97,7 +97,7 @@ internal static class AgentSyncEndpoints
             var controlPort = 20_000;
             foreach (var service in desired.Value.Services)
             {
-                var users = service.BackendType == "xray"
+                var users = Backends.BackendCapabilities.IsMultiUser(service.BackendType)
                     ? (await repository.GetServiceCredentialsAsync(service.Id, true, cancellationToken))
                         .Select(item => new BackendUser(item.UserId, item.Credential)).ToArray()
                     : Array.Empty<BackendUser>();
@@ -111,7 +111,7 @@ internal static class AgentSyncEndpoints
                 }
                 desiredServices.Add(new ServiceDesiredState(service.Id, service.Name, service.BackendType,
                     service.BackendVersion, service.Enabled, service.ConfigSchemaVersion, service.ConfigJson, users,
-                    service.BackendType == "xray" ? controlPort++ : null, tls));
+                    Backends.BackendCapabilities.NeedsControlPort(service.BackendType) ? controlPort++ : null, tls));
             }
             var artifacts = DistinctArtifacts(desired.Value.Services.Where(service => service.Enabled)
                 .Select(service => backendArtifactCatalog.FindArtifact(service.BackendType, service.BackendVersion,

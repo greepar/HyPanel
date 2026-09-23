@@ -211,7 +211,7 @@ internal sealed partial class SqliteServerRepository
         await using var c = await connectionFactory.OpenAsync(ct);
         await using var tx = (SqliteTransaction)await c.BeginTransactionAsync(ct);
         var backend = await GetBindingBackendAsync(c, tx, userId, serviceId, requireBinding: false, ct);
-        if (backend != "xray")
+        if (!HyPanel.Server.Backends.BackendCapabilities.IsMultiUser(backend))
         {
             await tx.RollbackAsync(ct);
             return false;
@@ -231,6 +231,38 @@ internal sealed partial class SqliteServerRepository
         }
         await tx.CommitAsync(ct);
         return true;
+    }
+
+    /// <summary>Grants a newly created multi-user service to every enabled user (admins included).</summary>
+    public async Task<int> GrantServiceToAllUsersAsync(Guid serviceId, CancellationToken ct)
+    {
+        var userIds = await ReadGuidsAsync("SELECT id FROM users WHERE enabled=1 ORDER BY id;", ct);
+        var granted = 0;
+        foreach (var userId in userIds)
+            if (await BindServiceAsync(userId, serviceId, ct)) granted++;
+        return granted;
+    }
+
+    /// <summary>Grants every existing multi-user service to a newly created user.</summary>
+    public async Task<int> GrantAllServicesToUserAsync(Guid userId, CancellationToken ct)
+    {
+        var serviceIds = await ReadGuidsAsync(
+            $"SELECT id FROM service_instances WHERE backend_type IN {HyPanel.Server.Backends.BackendCapabilities.MultiUserSqlList} ORDER BY id;", ct);
+        var granted = 0;
+        foreach (var serviceId in serviceIds)
+            if (await BindServiceAsync(userId, serviceId, ct)) granted++;
+        return granted;
+    }
+
+    private async Task<List<Guid>> ReadGuidsAsync(string sql, CancellationToken ct)
+    {
+        await using var c = await connectionFactory.OpenAsync(ct);
+        await using var cmd = c.CreateCommand();
+        cmd.CommandText = sql;
+        var ids = new List<Guid>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct)) ids.Add(SqliteValue.ToGuid(reader.GetString(0)));
+        return ids;
     }
 
     public async Task InitializeProxyCredentialsAsync(CancellationToken ct)
@@ -254,7 +286,7 @@ internal sealed partial class SqliteServerRepository
                 FROM user_service_bindings b
                 JOIN service_instances s ON s.id=b.service_id
                 LEFT JOIN user_service_credentials k ON k.user_id=b.user_id AND k.service_id=b.service_id
-                WHERE k.user_id IS NULL AND s.backend_type='xray'
+                WHERE k.user_id IS NULL AND s.backend_type IN ('xray','hysteria2')
                 ORDER BY b.user_id,b.service_id;
                 """;
             await using var reader = await select.ExecuteReaderAsync(ct);
@@ -374,6 +406,19 @@ internal sealed partial class SqliteServerRepository
         return rows;
     }
 
+    public async Task ClearServicePublicEndpointAsync(Guid nodeId, Guid serviceId, CancellationToken ct)
+    {
+        await using var c = await connectionFactory.OpenAsync(ct);
+        await using var cmd = c.CreateCommand();
+        cmd.CommandText = """
+                          DELETE FROM service_public_endpoints
+                          WHERE service_id=@service AND EXISTS (SELECT 1 FROM service_instances WHERE id=@service AND node_id=@node);
+                          """;
+        cmd.Parameters.AddWithValue("@service", serviceId.ToString("D"));
+        cmd.Parameters.AddWithValue("@node", nodeId.ToString("D"));
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     public async Task<bool> SetServicePublicEndpointAsync(Guid nodeId, ServicePublicEndpointRecord endpoint,
         CancellationToken ct)
     {
@@ -436,14 +481,15 @@ internal sealed partial class SqliteServerRepository
                                   COALESCE(p.host,a.public_ipv4),
                                   COALESCE(p.port,CAST(json_extract(s.config_json,'$.listenPort') AS INTEGER)),
                                   p.tls_server_name,COALESCE(p.updated_at_utc,a.last_seen_at_utc),
-                                   k.nonce,k.ciphertext,k.tag
+                                   k.nonce,k.ciphertext,k.tag,c.san,c.certificate_pem
                            FROM user_service_bindings b
                            JOIN service_instances s ON s.id=b.service_id
                            LEFT JOIN agents a ON a.node_id=s.node_id
                            LEFT JOIN service_public_endpoints p ON p.service_id=s.id
+                           LEFT JOIN certificates c ON c.id=json_extract(s.config_json,'$.certificateId')
                            JOIN user_service_credentials k ON k.user_id=b.user_id AND k.service_id=b.service_id
                            WHERE b.user_id=@user AND s.enabled=1 AND k.status='Active'
-                             AND (p.host IS NOT NULL OR (a.public_ipv4 IS NOT NULL AND s.backend_type<>'hysteria2'))
+                             AND (p.host IS NOT NULL OR a.public_ipv4 IS NOT NULL)
                              AND COALESCE(p.port,CAST(json_extract(s.config_json,'$.listenPort') AS INTEGER)) BETWEEN 1 AND 65535
                            ORDER BY s.name,s.id;
                           """;
@@ -455,12 +501,48 @@ internal sealed partial class SqliteServerRepository
             var backend = r.GetString(2);
             var credential = credentialProtector.Unprotect(SqliteValue.ToGuid(userId), serviceId, backend,
                 new ProtectedCredential((byte[])r[8], (byte[])r[9], (byte[])r[10]));
+            // Without an explicit endpoint the node's public IPv4 is dialled and the certificate's first DNS name
+            // is sent as SNI; a self-signed certificate is pinned by fingerprint instead of verified by a CA.
+            var san = r.IsDBNull(11) ? null : r.GetString(11);
+            var pem = r.IsDBNull(12) ? null : r.GetString(12);
+            var serverName = r.IsDBNull(6) ? FirstDnsName(san) : r.GetString(6);
             services.Add(new SubscriptionServiceRecord(SqliteValue.ToGuid(userId), serviceId, r.GetString(1), backend, r.GetString(3), credential,
                 new ServicePublicEndpointRecord(serviceId, r.GetString(4), r.GetInt32(5),
-                    r.IsDBNull(6) ? null : r.GetString(6), SqliteValue.ToDateTimeOffset(r.GetString(7)))));
+                    serverName, SqliteValue.ToDateTimeOffset(r.GetString(7))), SelfSignedFingerprint(pem)));
         }
 
         return services;
+    }
+
+    internal static string? FirstDnsName(string? san)
+    {
+        if (string.IsNullOrWhiteSpace(san)) return null;
+        foreach (var part in san.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var separator = part.IndexOfAny([':', '=']);
+            if (separator > 0 && part[..separator].Trim().Equals("DNS", StringComparison.OrdinalIgnoreCase))
+            {
+                var name = part[(separator + 1)..].Trim();
+                if (name.Length > 0 && !name.StartsWith('*')) return name;
+            }
+        }
+        return null;
+    }
+
+    private static string? SelfSignedFingerprint(string? pem)
+    {
+        if (string.IsNullOrWhiteSpace(pem)) return null;
+        try
+        {
+            using var certificate = System.Security.Cryptography.X509Certificates.X509Certificate2.CreateFromPem(pem);
+            return certificate.SubjectName.RawData.AsSpan().SequenceEqual(certificate.IssuerName.RawData)
+                ? Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(certificate.RawData)).ToLowerInvariant()
+                : null;
+        }
+        catch (System.Security.Cryptography.CryptographicException)
+        {
+            return null;
+        }
     }
 
     private static async Task<bool> IsBoundAsync(SqliteConnection c, Guid user, Guid service, CancellationToken ct)
@@ -478,7 +560,7 @@ internal sealed partial class SqliteServerRepository
         await using var c = await connectionFactory.OpenAsync(ct);
         await using var tx = (SqliteTransaction)await c.BeginTransactionAsync(ct);
         var backend = await GetBindingBackendAsync(c, tx, userId, serviceId, requireBinding: true, ct);
-        if (backend != "xray")
+        if (!HyPanel.Server.Backends.BackendCapabilities.IsMultiUser(backend))
         {
             await tx.RollbackAsync(ct);
             return null;

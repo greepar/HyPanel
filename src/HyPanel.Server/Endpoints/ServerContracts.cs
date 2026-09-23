@@ -145,32 +145,6 @@ internal sealed record ServicePublicEndpointResponse(
     string? TlsServerName,
     DateTimeOffset UpdatedAtUtc);
 
-internal sealed record CreateServiceTemplateRequest(
-    string Name,
-    string BackendType,
-    string BackendVersion,
-    int ConfigSchemaVersion,
-    string ConfigJson);
-
-internal sealed record UpdateServiceTemplateRequest(
-    string Name,
-    string BackendType,
-    string BackendVersion,
-    int ConfigSchemaVersion,
-    string ConfigJson);
-
-internal sealed record ServiceTemplateResponse(
-    Guid Id,
-    string Name,
-    string BackendType,
-    string BackendVersion,
-    int ConfigSchemaVersion,
-    string ConfigJson,
-    DateTimeOffset CreatedAtUtc,
-    DateTimeOffset UpdatedAtUtc);
-
-internal sealed record CreateServiceFromTemplateRequest(string Name);
-
 internal sealed record BatchServiceEnabledItem(Guid NodeId, Guid ServiceId, bool Enabled);
 
 internal sealed record BatchServiceEnabledRequest(BatchServiceEnabledItem[] Items);

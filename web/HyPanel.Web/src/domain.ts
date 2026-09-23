@@ -1,6 +1,6 @@
 export type Theme = 'light' | 'dark' | 'system'
 export type NodeTab = 'overview' | 'services' | 'network' | 'logs' | 'settings'
-export type AdminRoute = 'overview' | 'nodes' | 'templates' | 'users' | 'settings' | `nodes/${string}/${NodeTab}`
+export type AdminRoute = 'overview' | 'nodes' | 'users' | 'settings' | `nodes/${string}/${NodeTab}`
 export type AppRoute = AdminRoute | 'subscription'
 export type Role = 'Admin' | 'User'
 export type ServerUpdate = { currentVersion: string; latestVersion: string | null; deploymentMode: 'BareMetal' | 'Docker'; updateAvailable: boolean; status: string; error: string | null }
@@ -105,14 +105,6 @@ export type HealthSummary = {
   issues: HealthIssue[]
 }
 
-export type Template = {
-  id: string
-  name: string
-  backendType: string
-  backendVersion: string
-  configSchemaVersion: number
-  configJson: string
-}
 
 export type PublicEndpoint = { host: string; port: number; tlsServerName: string | null }
 export type ServiceDiagnostic = { commandId: string; status: 'Pending' | 'Running' | 'Succeeded' | 'Failed' | 'Expired'; createdAtUtc: string; startedAtUtc: string | null; completedAtUtc: string | null; expiresAtUtc: string | null; errorCode: string | null; errorMessage: string | null; output: string | null }

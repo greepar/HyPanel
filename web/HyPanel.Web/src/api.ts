@@ -1,4 +1,4 @@
-import type { BackendDefinition, Backup, BackupValidation, Certificate, GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Template, Usage, User, UserForm } from './domain'
+import type { BackendDefinition, Backup, BackupValidation, Certificate, GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Usage, User, UserForm } from './domain'
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message) }
@@ -48,7 +48,6 @@ export class ApiClient {
   setBackendUpdatePolicy = (nodeId: string, serviceId: string, policy: 'Manual' | 'Auto') => this.request<void>(`/api/admin/v1/nodes/${nodeId}/services/${serviceId}/backend-update-policy`, { method: 'PUT', body: JSON.stringify({ policy }) })
   users = () => this.request<User[]>('/api/admin/v1/users')
   usage = () => this.request<Usage[]>('/api/admin/v1/usage')
-  templates = () => this.request<Template[]>('/api/admin/v1/service-templates')
   serverUpdate = () => this.request<ServerUpdate>('/api/admin/v1/server-update')
   updateServer = () => this.request<{ version: string }>('/api/admin/v1/server-update', { method: 'POST' })
   settings = () => this.request<GlobalSettings>('/api/admin/v1/settings')

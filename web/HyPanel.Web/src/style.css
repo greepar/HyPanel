@@ -270,13 +270,13 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 .service-tags span { padding: 3px 8px; border-radius: 6px; color: var(--muted); background: var(--surface-2); font-size: 11px }
 .endpoint-form { display: grid; grid-template-columns: 1.3fr .5fr 1.3fr auto; gap: 10px; align-items: end; padding: 16px; border-top: 1px solid var(--border); background: var(--surface-2) }
 .endpoint-form .state { min-height: 80px; grid-column: 1 / -1 }
+.endpoint-help { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 12px }
+.endpoint-form > .button { justify-self: start; grid-column: 1 / -1 }
 
 /* ---------- templates & users ---------- */
-.template-grid, .user-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px }
-.template-card { display: grid; gap: 16px; padding: 18px }
-.template-heading { display: flex; align-items: center; gap: 12px }
-.template-heading p, .user-card header p { margin: 2px 0 0; color: var(--muted); font-size: 12px }
-.template-card footer, .user-card footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: auto }
+.user-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px }
+.user-card header p { margin: 2px 0 0; color: var(--muted); font-size: 12px }
+.user-card footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: auto }
 .user-card { overflow: hidden }
 .user-card > header { display: flex; align-items: center; gap: 12px; padding: 16px 18px }
 .user-card > header > div:nth-child(2) { min-width: 0; flex: 1 }
@@ -398,7 +398,7 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
   .stats-grid.four { grid-template-columns: repeat(2, 1fr) }
   .overview-grid, .login-layout { grid-template-columns: 1fr }
   .login-copy { padding-top: 24px }
-  .template-grid, .user-grid { grid-template-columns: 1fr }
+  .user-grid { grid-template-columns: 1fr }
   .backend-picker { grid-template-columns: repeat(2, 1fr) }
   .endpoint-form { grid-template-columns: 1fr 1fr }
   .telemetry-row { grid-template-columns: repeat(3, minmax(0, 1fr)) }

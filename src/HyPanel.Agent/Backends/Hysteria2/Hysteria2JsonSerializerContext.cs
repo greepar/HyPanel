@@ -10,6 +10,20 @@ using System.Text.Json.Serialization;
 [JsonSerializable(typeof(Hysteria2Config))]
 internal sealed partial class Hysteria2JsonSerializerContext : JsonSerializerContext;
 
+/// <summary>Response of the Hysteria2 trafficStats API: <c>GET /traffic</c> keyed by auth identity.</summary>
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(Dictionary<string, Hysteria2TrafficCounter>))]
+internal sealed partial class Hysteria2TrafficJsonSerializerContext : JsonSerializerContext;
+
+internal sealed class Hysteria2TrafficCounter
+{
+    /// <summary>Bytes sent to the client (the user's download).</summary>
+    public long Tx { get; init; }
+
+    /// <summary>Bytes received from the client (the user's upload).</summary>
+    public long Rx { get; init; }
+}
+
 internal sealed class Hysteria2Config
 {
     public string? ListenHost { get; init; }

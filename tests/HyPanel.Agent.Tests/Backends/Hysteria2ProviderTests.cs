@@ -146,6 +146,59 @@ public sealed class Hysteria2ProviderTests
     }
 
     [TestMethod]
+    public async Task RenderConfigAsync_GrantedUsers_RendersUserpassAndLoopbackTrafficStats()
+    {
+        var alice = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001");
+        var bob = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000002");
+        var desired = CreateDesiredState() with
+        {
+            Users = [new BackendUser(bob, "bob-credential-1"), new BackendUser(alice, "alice-credential")],
+            ControlPort = 20_001
+        };
+
+        var validation = await provider.ValidateAsync(desired, CancellationToken.None);
+        var yaml = Encoding.UTF8.GetString((await provider.RenderConfigAsync(desired, CancellationToken.None)).Content.Span);
+
+        Assert.IsTrue(validation.IsValid);
+        CollectionAssert.AreEqual(new[] { 20_001 }, validation.TcpPorts.ToArray());
+        StringAssert.Contains(yaml, "  type: \"userpass\"");
+        StringAssert.Contains(yaml, $"    \"hypanel-{alice:N}\": \"alice-credential\"");
+        StringAssert.Contains(yaml, $"    \"hypanel-{bob:N}\": \"bob-credential-1\"");
+        Assert.IsFalse(yaml.Contains(AuthPassword, StringComparison.Ordinal));
+        StringAssert.Contains(yaml, "trafficStats:\n  listen: \"127.0.0.1:20001\"");
+        Assert.IsTrue(yaml.IndexOf(alice.ToString("N"), StringComparison.Ordinal) <
+                      yaml.IndexOf(bob.ToString("N"), StringComparison.Ordinal), "users render in stable order");
+    }
+
+    [TestMethod]
+    public async Task ValidateAsync_DuplicateOrShortUserCredential_IsRejected()
+    {
+        var user = Guid.NewGuid();
+        var duplicate = CreateDesiredState() with
+        {
+            Users = [new BackendUser(user, "same-credential"), new BackendUser(Guid.NewGuid(), "same-credential")]
+        };
+        var tooShort = CreateDesiredState() with { Users = [new BackendUser(user, "short")] };
+
+        Assert.IsFalse((await provider.ValidateAsync(duplicate, CancellationToken.None)).IsValid);
+        Assert.IsFalse((await provider.ValidateAsync(tooShort, CancellationToken.None)).IsValid);
+    }
+
+    [TestMethod]
+    public void ParseTraffic_MapsTxToDownloadAndIgnoresUnknownIdentities()
+    {
+        var alice = Guid.NewGuid();
+        var observedAt = DateTimeOffset.Parse("2026-09-23T10:00:00Z");
+        var json = "{\"hypanel-" + alice.ToString("N") + "\":{\"tx\":900,\"rx\":100},\"someone-else\":{\"tx\":5,\"rx\":5}}";
+
+        var traffic = Hysteria2Provider.ParseTraffic(json, [new BackendUser(alice, "alice-credential")], observedAt);
+
+        Assert.AreEqual(1, traffic.Count);
+        Assert.AreEqual(new BackendUserTraffic(alice, 100, 900, observedAt), traffic[0]);
+        Assert.AreEqual(0, Hysteria2Provider.ParseTraffic("not json", [new BackendUser(alice, "x")], observedAt).Count);
+    }
+
+    [TestMethod]
     public async Task CollectUserTrafficAsync_ReturnsEmpty()
     {
         var result = await provider.CollectUserTrafficAsync(CreateInstanceContext("/tmp", "/tmp/hysteria", "/tmp/config.yaml"), CancellationToken.None);

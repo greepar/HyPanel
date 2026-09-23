@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'preact/hooks'
 import type { AppRoute, Role } from './domain'
 
-const adminRoutes: AppRoute[] = ['overview', 'nodes', 'templates', 'users', 'settings']
+const adminRoutes: AppRoute[] = ['overview', 'nodes', 'users', 'settings']
 const nodeRoute = /^nodes\/[^/]+\/(overview|services|network|logs|settings)$/
 const routeFromHash = (): AppRoute => {
   const value = location.hash.replace(/^#\/?/, '') as AppRoute

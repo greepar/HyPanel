@@ -81,6 +81,7 @@ internal static class UserEndpoints
         {
             var issue = await repo.CreateUserAsync(Guid.NewGuid(), username, normalized, passwords.Hash(body.Password),
                 body.Role, body.Enabled, body.TrafficLimitBytes, body.ExpiresAtUtc, NewToken(), ct);
+            await repo.GrantAllServicesToUserAsync(issue.User.Id, ct);
             return Results.Json(new CreateUserResponse(ToResponse(issue.User), issue.SubscriptionToken),
                 ServerJsonSerializerContext.Default.CreateUserResponse);
         }

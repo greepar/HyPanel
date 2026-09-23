@@ -645,127 +645,6 @@ internal sealed partial class SqliteServerRepository(
         return services;
     }
 
-    public async Task<IReadOnlyList<ServiceTemplateRecord>> GetServiceTemplatesAsync(
-        CancellationToken cancellationToken)
-    {
-        var templates = new List<ServiceTemplateRecord>();
-        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText =
-            "SELECT id, name, normalized_name, backend_type, backend_version, config_schema_version, config_json, created_at_utc, updated_at_utc FROM service_templates ORDER BY normalized_name, id;";
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken)) templates.Add(ReadServiceTemplate(reader));
-        return templates;
-    }
-
-    public async Task<ServiceTemplateRecord?> GetServiceTemplateAsync(Guid id, CancellationToken cancellationToken)
-    {
-        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText =
-            "SELECT id, name, normalized_name, backend_type, backend_version, config_schema_version, config_json, created_at_utc, updated_at_utc FROM service_templates WHERE id = @id;";
-        command.Parameters.AddWithValue("@id", id.ToString("D"));
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken) ? ReadServiceTemplate(reader) : null;
-    }
-
-    public async Task<bool> CreateServiceTemplateAsync(ServiceTemplateRecord template,
-        CancellationToken cancellationToken)
-    {
-        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText =
-            "INSERT INTO service_templates (id, name, normalized_name, backend_type, backend_version, config_schema_version, config_json, created_at_utc, updated_at_utc) VALUES (@id,@name,@normalizedName,@backendType,@backendVersion,@schema,@config,@created,@updated);";
-        AddTemplateParameters(command, template);
-        try
-        {
-            return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
-        }
-        catch (SqliteException exception) when (exception.SqliteErrorCode == 19)
-        {
-            return false;
-        }
-    }
-
-    public async Task<bool?> UpdateServiceTemplateAsync(ServiceTemplateRecord template,
-        CancellationToken cancellationToken)
-    {
-        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
-        await using var exists = connection.CreateCommand();
-        exists.CommandText = "SELECT 1 FROM service_templates WHERE id = @id;";
-        exists.Parameters.AddWithValue("@id", template.Id.ToString("D"));
-        if (await exists.ExecuteScalarAsync(cancellationToken) is null) return null;
-        await using var command = connection.CreateCommand();
-        command.CommandText =
-            "UPDATE service_templates SET name=@name, normalized_name=@normalizedName, backend_type=@backendType, backend_version=@backendVersion, config_schema_version=@schema, config_json=@config, updated_at_utc=@updated WHERE id=@id;";
-        AddTemplateParameters(command, template);
-        try
-        {
-            return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
-        }
-        catch (SqliteException exception) when (exception.SqliteErrorCode == 19)
-        {
-            return false;
-        }
-    }
-
-    public async Task<bool> DeleteServiceTemplateAsync(Guid id, CancellationToken cancellationToken)
-    {
-        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM service_templates WHERE id = @id;";
-        command.Parameters.AddWithValue("@id", id.ToString("D"));
-        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
-    }
-
-    public async Task<(ServiceInstanceRecord? Service, long Revision)> CreateServiceFromTemplateAsync(Guid nodeId,
-        Guid templateId, string name, CancellationToken cancellationToken)
-    {
-        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
-        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
-        try
-        {
-            var now = timeProvider.GetUtcNow();
-            var service = new ServiceInstanceRecord(Guid.NewGuid(), nodeId, name, string.Empty, string.Empty, true, 0,
-                string.Empty, now, now);
-            await using var insert = connection.CreateCommand();
-            insert.Transaction = transaction;
-            insert.CommandText = """
-                                 INSERT INTO service_instances (id,node_id,name,backend_type,backend_version,enabled,config_schema_version,config_json,created_at_utc,updated_at_utc)
-                                 SELECT @id,@nodeId,@name,backend_type,backend_version,1,config_schema_version,config_json,@createdAtUtc,@updatedAtUtc
-                                 FROM service_templates WHERE id=@templateId AND EXISTS (SELECT 1 FROM nodes WHERE id=@nodeId);
-                                 """;
-            insert.Parameters.AddWithValue("@templateId", templateId.ToString("D"));
-            AddServiceParameters(insert, service);
-            if (await insert.ExecuteNonQueryAsync(cancellationToken) != 1)
-            {
-                await transaction.RollbackAsync(cancellationToken);
-                return (null, 0);
-            }
-
-            await using var select = connection.CreateCommand();
-            select.Transaction = transaction;
-            select.CommandText =
-                "SELECT backend_type,backend_version,config_schema_version,config_json FROM service_instances WHERE id=@id;";
-            select.Parameters.AddWithValue("@id", service.Id.ToString("D"));
-            await using var reader = await select.ExecuteReaderAsync(cancellationToken);
-            await reader.ReadAsync(cancellationToken);
-            service = service with
-            {
-                BackendType = reader.GetString(0), BackendVersion = reader.GetString(1),
-                ConfigSchemaVersion = reader.GetInt32(2), ConfigJson = reader.GetString(3)
-            };
-            var revision = await IncrementRevisionAsync(connection, transaction, nodeId, cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            return (service, revision);
-        }
-        catch
-        {
-            await transaction.RollbackAsync(CancellationToken.None);
-            throw;
-        }
-    }
-
     public async Task<IReadOnlyList<BatchServiceEnabledNodeResult>?> SetServicesEnabledBatchAsync(
         IReadOnlyList<BatchServiceEnabledItemRecord> items, CancellationToken cancellationToken)
     {
@@ -1397,19 +1276,6 @@ internal sealed partial class SqliteServerRepository(
         command.Parameters.AddWithValue("@updatedAtUtc", SqliteValue.ToUtcText(service.UpdatedAtUtc));
     }
 
-    private static void AddTemplateParameters(SqliteCommand command, ServiceTemplateRecord template)
-    {
-        command.Parameters.AddWithValue("@id", template.Id.ToString("D"));
-        command.Parameters.AddWithValue("@name", template.Name);
-        command.Parameters.AddWithValue("@normalizedName", template.NormalizedName);
-        command.Parameters.AddWithValue("@backendType", template.BackendType);
-        command.Parameters.AddWithValue("@backendVersion", template.BackendVersion);
-        command.Parameters.AddWithValue("@schema", template.ConfigSchemaVersion);
-        command.Parameters.AddWithValue("@config", template.ConfigJson);
-        command.Parameters.AddWithValue("@created", SqliteValue.ToUtcText(template.CreatedAtUtc));
-        command.Parameters.AddWithValue("@updated", SqliteValue.ToUtcText(template.UpdatedAtUtc));
-    }
-
     private static async Task<long> IncrementRevisionAsync(SqliteConnection connection, SqliteTransaction transaction,
         Guid nodeId, CancellationToken cancellationToken)
     {
@@ -1462,11 +1328,6 @@ internal sealed partial class SqliteServerRepository(
     private static NodeRecord ReadNode(SqliteDataReader reader) => new(
         SqliteValue.ToGuid(reader.GetString(0)), reader.GetString(1), reader.GetInt64(2),
         SqliteValue.ToDateTimeOffset(reader.GetString(3)));
-
-    private static ServiceTemplateRecord ReadServiceTemplate(SqliteDataReader reader) => new(
-        SqliteValue.ToGuid(reader.GetString(0)), reader.GetString(1), reader.GetString(2), reader.GetString(3),
-        reader.GetString(4), reader.GetInt32(5), reader.GetString(6), SqliteValue.ToDateTimeOffset(reader.GetString(7)),
-        SqliteValue.ToDateTimeOffset(reader.GetString(8)));
 
     private static EnrollmentTokenRecord ReadEnrollmentToken(SqliteDataReader reader) => new(
         SqliteValue.ToGuid(reader.GetString(0)), SqliteValue.ToGuid(reader.GetString(1)),

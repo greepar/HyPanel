@@ -27,7 +27,6 @@ import type {
   ServiceDiagnostic,
   ServiceForm,
   ServiceRef,
-  Template,
   Usage,
   User,
   UserForm,
@@ -79,8 +78,6 @@ export function AdminApp({
       />
     );
   if (route === "nodes") return <NodesPage api={api} setError={setError} />;
-  if (route === "templates")
-    return <TemplatesPage api={api} setError={setError} />;
   if (route === "users") return <UsersPage api={api} setError={setError} />;
   if (route === "settings") return <SettingsPage api={api} setError={setError} />;
   return <OverviewPage api={api} setError={setError} />;
@@ -721,6 +718,9 @@ function NodesPage({ api, setError }: PageProps) {
   );
 }
 
+/** Backends whose Agent provider issues a distinct identity per user (mirrors Server BackendCapabilities). */
+const isMultiUserBackend = (backendType: string) => backendType === "xray" || backendType === "hysteria2";
+
 function visibleNodes(nodes: Node[], filter: "all" | "online" | "offline", query: string) {
   const needle = query.trim().toLowerCase();
   return nodes
@@ -993,13 +993,13 @@ function NodeDetailPage({
     tab === "services" ? (
       <ServicesPage api={api} setError={setError} node={node} />
     ) : tab === "network" ? (
-      <NodeNetwork node={node} services={services} />
+      <NodeNetwork api={api} services={services} />
     ) : tab === "logs" ? (
       <NodeLogs services={services} />
     ) : tab === "settings" ? (
       <NodeSettings api={api} node={node} setError={setError} reload={() => void load()} />
     ) : (
-      <NodeOverview node={node} services={services} />
+      <NodeOverview api={api} node={node} services={services} />
     );
   return (
     <Page
@@ -1047,8 +1047,11 @@ function NodeDetailPage({
   );
 }
 
-function NodeOverview({ node, services }: { node: Node; services: Service[] }) {
+function NodeOverview({ api, node, services }: { api: ApiClient; node: Node; services: Service[] }) {
   const metrics = node.metrics;
+  const { usage } = useNodeUsage(api, services);
+  const proxyUp = usage?.reduce((total, row) => total + row.uploadBytes, 0) ?? 0;
+  const proxyDown = usage?.reduce((total, row) => total + row.downloadBytes, 0) ?? 0;
   return (
     <>
       <div className="stats-grid node-stats">
@@ -1079,19 +1082,9 @@ function NodeOverview({ node, services }: { node: Node; services: Service[] }) {
           note="已用 / 总量"
         />
         <Stat
-          label="网络"
-          value={
-            metrics
-              ? formatBytes(
-                  metrics.networkUploadBytes + metrics.networkDownloadBytes,
-                )
-              : "无数据"
-          }
-          note={
-            metrics
-              ? `↑ ${formatBytes(metrics.networkUploadBytes)} · ↓ ${formatBytes(metrics.networkDownloadBytes)}`
-              : "等待上报"
-          }
+          label="代理流量"
+          value={usage ? formatBytes(proxyUp + proxyDown) : "…"}
+          note={`↑ ${formatBytes(proxyUp)} · ↓ ${formatBytes(proxyDown)}`}
         />
         <Stat
           label="运行时间"
@@ -1137,38 +1130,83 @@ function NodeOverview({ node, services }: { node: Node; services: Service[] }) {
   );
 }
 
-function NodeNetwork({ node, services }: { node: Node; services: Service[] }) {
+/** Accounted proxy traffic (per-user usage records) for the services on one node. */
+function useNodeUsage(api: ApiClient, services: Service[]) {
+  const [usage, setUsage] = useState<Usage[] | null>(null);
+  const [users, setUsers] = useState<User[]>([]);
+  useEffect(() => {
+    let active = true;
+    void Promise.all([api.usage(), api.users()]).then(
+      ([rows, people]) => {
+        if (!active) return;
+        const ids = new Set(services.map((service) => service.id));
+        setUsage(rows.filter((row) => ids.has(row.serviceId)));
+        setUsers(people);
+      },
+      () => active && setUsage([]),
+    );
+    return () => {
+      active = false;
+    };
+  }, [services.map((service) => service.id).join()]);
+  return { usage, users };
+}
+
+function NodeNetwork({ api, services }: { api: ApiClient; services: Service[] }) {
+  const { usage, users } = useNodeUsage(api, services);
+  if (!usage) return <Loading />;
+  const sum = (rows: Usage[]) =>
+    rows.reduce((total, row) => ({ up: total.up + row.uploadBytes, down: total.down + row.downloadBytes }), { up: 0, down: 0 });
+  const total = sum(usage);
+  const byService = services
+    .map((service) => ({ service, ...sum(usage.filter((row) => row.serviceId === service.id)) }))
+    .sort((a, b) => b.up + b.down - (a.up + a.down));
+  const byUser = [...new Set(usage.map((row) => row.userId))]
+    .map((userId) => ({
+      name: users.find((user) => user.id === userId)?.username ?? userId.slice(0, 8),
+      ...sum(usage.filter((row) => row.userId === userId)),
+    }))
+    .sort((a, b) => b.up + b.down - (a.up + a.down));
   return (
-    <div className="detail-grid">
-      <section className="card panel">
-        <SectionTitle title="节点网络" description="Agent 累计主机流量" />
-        <dl className="facts-list">
-          <div>
-            <dt>上传</dt>
-            <dd>{formatBytes(node.metrics?.networkUploadBytes ?? 0)}</dd>
-          </div>
-          <div>
-            <dt>下载</dt>
-            <dd>{formatBytes(node.metrics?.networkDownloadBytes ?? 0)}</dd>
-          </div>
-        </dl>
-      </section>
-      <section className="card panel">
-        <SectionTitle title="服务流量" description="最近运行时上报" />
-        <dl className="facts-list">
-          {services.map((service) => (
-            <div key={service.id}>
-              <dt>{service.name}</dt>
-              <dd>
-                ↑ {formatBytes(service.runtime?.trafficUploadBytes ?? 0)} · ↓{" "}
-                {formatBytes(service.runtime?.trafficDownloadBytes ?? 0)}
-              </dd>
-            </div>
-          ))}
-        </dl>
-        {!services.length && <p className="muted">此节点没有服务。</p>}
-      </section>
-    </div>
+    <>
+      <div className="stats-grid">
+        <Stat label="代理总流量" value={formatBytes(total.up + total.down)} note="经过本节点代理服务的累计流量" />
+        <Stat label="上传" value={formatBytes(total.up)} note="用户发往代理" />
+        <Stat label="下载" value={formatBytes(total.down)} note="代理返回用户" />
+      </div>
+      <div className="detail-grid">
+        <section className="card panel">
+          <SectionTitle title="按服务" description="各代理服务的累计用户流量" />
+          {byService.length ? (
+            <dl className="facts-list">
+              {byService.map((item) => (
+                <div key={item.service.id}>
+                  <dt>{item.service.name}</dt>
+                  <dd>↑ {formatBytes(item.up)} · ↓ {formatBytes(item.down)}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <p className="muted">此节点没有服务。</p>
+          )}
+        </section>
+        <section className="card panel">
+          <SectionTitle title="按用户" description="用户在本节点上的累计流量" />
+          {byUser.length ? (
+            <dl className="facts-list">
+              {byUser.map((item) => (
+                <div key={item.name}>
+                  <dt>{item.name}</dt>
+                  <dd>↑ {formatBytes(item.up)} · ↓ {formatBytes(item.down)}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <p className="muted">还没有用户流量记录；用户通过订阅连接后会在这里出现。</p>
+          )}
+        </section>
+      </div>
+    </>
   );
 }
 function NodeLogs({ services }: { services: Service[] }) {
@@ -1510,6 +1548,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
                 key={service.id}
                 api={api}
                 nodeId={nodeId}
+                publicIpv4={node.publicIpv4 ?? null}
                 service={service}
                 selected={selected.includes(service.id)}
                 select={() =>
@@ -1563,6 +1602,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
 function ServiceCard({
   api,
   nodeId,
+  publicIpv4,
   service,
   selected,
   select,
@@ -1574,6 +1614,7 @@ function ServiceCard({
 }: {
   api: ApiClient;
   nodeId: string;
+  publicIpv4: string | null;
   service: Service;
   selected: boolean;
   select: () => void;
@@ -1595,6 +1636,21 @@ function ServiceCard({
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [updatingBackend, setUpdatingBackend] = useState(false);
+  const listenPort = Number(parseConfig(service.configJson)?.listenPort) || null;
+  const autoAddress = publicIpv4 && listenPort ? `${publicIpv4}:${listenPort}` : null;
+  useEffect(() => {
+    void api.endpoint(nodeId, service.id).then((value) => setEndpoint(value ?? null), () => undefined);
+  }, [nodeId, service.id]);
+  const clearEndpoint = async () => {
+    try {
+      await api.request(`/api/admin/v1/nodes/${nodeId}/services/${service.id}/public-endpoint`, { method: "DELETE" });
+      setEndpoint(null);
+      setEndpointOpen(false);
+      setError("已恢复自动连接地址。");
+    } catch (reason) {
+      setError(messageFor(reason, "无法恢复自动连接地址"));
+    }
+  };
   const openEndpoint = async () => {
     const next = !endpointOpen;
     setEndpointOpen(next);
@@ -1603,7 +1659,7 @@ function ServiceCard({
     try {
       setEndpoint((await api.endpoint(nodeId, service.id)) ?? null);
     } catch (reason) {
-      setError(messageFor(reason, "无法加载公网端点"));
+      setError(messageFor(reason, "无法加载连接地址"));
     } finally {
       setEndpointLoading(false);
     }
@@ -1617,9 +1673,10 @@ function ServiceCard({
         { method: "PUT", body: JSON.stringify(endpoint) },
       );
       setEndpoint(result);
-      setError("公网端点已保存。");
+      setEndpointOpen(false);
+      setError("自定义连接地址已保存。");
     } catch (reason) {
-      setError(messageFor(reason, "无法保存公网端点"));
+      setError(messageFor(reason, "无法保存连接地址"));
     }
   };
   const loadDiagnostics = async () => {
@@ -1757,7 +1814,7 @@ function ServiceCard({
             type="button"
             onClick={() => void openEndpoint()}
           >
-            {endpointOpen ? "收起公网端点" : "配置公网端点"}
+            连接地址：{endpoint ? `${endpoint.host}:${endpoint.port}（自定义）` : autoAddress ?? "等待节点上报公网 IP"}
           </button>
           <button
             className="link-button"
@@ -1782,67 +1839,59 @@ function ServiceCard({
           className="endpoint-form"
           onSubmit={(event) => void saveEndpoint(event)}
         >
+          <p className="endpoint-help">
+            用户订阅中连接此服务使用的地址。默认自动使用节点公网 IP{autoAddress ? `（${autoAddress}）` : ""}
+            {service.backendType === "hysteria2" ? "，并以证书域名作为 SNI" : ""}；
+            只有经过域名、CDN 或端口转发访问时才需要自定义。
+          </p>
           {endpointLoading ? (
-            <Loading label="加载端点…" />
+            <Loading label="加载中…" />
+          ) : !endpoint ? (
+            <button
+              className="button button-secondary"
+              type="button"
+              onClick={() =>
+                setEndpoint({ host: "", port: listenPort ?? 443, tlsServerName: null })
+              }
+            >
+              自定义连接地址
+            </button>
           ) : (
             <>
-              {!endpoint && (
-                <button
-                  className="button button-secondary"
-                  type="button"
-                  onClick={() =>
-                    setEndpoint({ host: "", port: 443, tlsServerName: null })
-                  }
-                >
-                  添加公网端点
+              <label>
+                域名或 IP
+                <input
+                  required
+                  placeholder="例如 hk.example.com"
+                  value={endpoint.host}
+                  onInput={(event) => setEndpoint({ ...endpoint, host: event.currentTarget.value })}
+                />
+              </label>
+              <label>
+                端口
+                <input
+                  required
+                  type="number"
+                  min="1"
+                  max="65535"
+                  value={endpoint.port}
+                  onInput={(event) => setEndpoint({ ...endpoint, port: Number(event.currentTarget.value) })}
+                />
+              </label>
+              <label>
+                SNI（可选）
+                <input
+                  placeholder={service.backendType === "hysteria2" ? "默认使用证书域名" : "留空即可"}
+                  value={endpoint.tlsServerName ?? ""}
+                  onInput={(event) => setEndpoint({ ...endpoint, tlsServerName: event.currentTarget.value || null })}
+                />
+              </label>
+              <div className="row-actions">
+                <button className="button button-secondary" type="button" onClick={() => void clearEndpoint()}>
+                  恢复自动
                 </button>
-              )}
-              {endpoint && (
-                <>
-                  <label>
-                    公网主机
-                    <input
-                      required
-                      value={endpoint.host}
-                      onInput={(event) =>
-                        setEndpoint({
-                          ...endpoint,
-                          host: event.currentTarget.value,
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    端口
-                    <input
-                      required
-                      type="number"
-                      min="1"
-                      max="65535"
-                      value={endpoint.port}
-                      onInput={(event) =>
-                        setEndpoint({
-                          ...endpoint,
-                          port: Number(event.currentTarget.value),
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    TLS 服务器名
-                    <input
-                      value={endpoint.tlsServerName ?? ""}
-                      onInput={(event) =>
-                        setEndpoint({
-                          ...endpoint,
-                          tlsServerName: event.currentTarget.value || null,
-                        })
-                      }
-                    />
-                  </label>
-                  <button className="button button-primary">保存端点</button>
-                </>
-              )}
+                <button className="button button-primary">保存</button>
+              </div>
             </>
           )}
         </form>
@@ -2045,21 +2094,6 @@ function ServiceEditor({
       setBusy(false);
     }
   };
-  const saveTemplate = async () => {
-    if (!form) return;
-    setBusy(true);
-    try {
-      await api.request("/api/admin/v1/service-templates", {
-        method: "POST",
-        body: JSON.stringify(payloadFor(form, backendFor(form.backendType))),
-      });
-      setError("服务模板已保存。");
-    } catch (reason) {
-      setError(messageFor(reason, "无法保存模板"));
-    } finally {
-      setBusy(false);
-    }
-  };
   const renderField = (field: BackendField) => {
     if (!form) return null;
     if (field.kind === "fixed") {
@@ -2225,18 +2259,6 @@ function ServiceEditor({
           <div className="form-grid">{protocolFields.map(renderField)}</div>
         </fieldset>
         <footer>
-          <div>
-            {!service && (
-              <button
-                className="button button-secondary"
-                type="button"
-                disabled={busy}
-                onClick={() => void saveTemplate()}
-              >
-                另存为模板
-              </button>
-            )}
-          </div>
           <div className="row-actions">
             <button
               className="button button-secondary"
@@ -2255,97 +2277,6 @@ function ServiceEditor({
         </footer>
       </form>
     </Modal>
-  );
-}
-
-function TemplatesPage({ api, setError }: PageProps) {
-  const [templates, setTemplates] = useState<Template[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
-  const load = async () => {
-    setLoading(true);
-    setLoadError("");
-    try {
-      setTemplates(await api.templates());
-    } catch (reason) {
-      setLoadError(messageFor(reason, "无法加载模板"));
-    } finally {
-      setLoading(false);
-    }
-  };
-  useEffect(() => {
-    void load();
-  }, []);
-  const remove = async (template: Template) => {
-    if (!confirm(`确定删除模板“${template.name}”？`)) return;
-    try {
-      await api.request(`/api/admin/v1/service-templates/${template.id}`, {
-        method: "DELETE",
-      });
-      await load();
-    } catch (reason) {
-      setError(messageFor(reason, "无法删除模板"));
-    }
-  };
-  if (!loading && loadError)
-    return (
-      <Page title="服务模板" description="维护可复用后端配置。">
-        <ErrorState message={loadError} retry={() => void load()} />
-      </Page>
-    );
-  return (
-    <Page
-      title="服务模板"
-      description="维护可复用配置；服务实例请从具体节点的服务标签创建。"
-    >
-      {loading ? (
-        <Loading />
-      ) : templates.length ? (
-        <div className="template-grid">
-          {templates.map((template) => {
-            const backend = backendFor(template.backendType);
-            return (
-              <article className="card template-card" key={template.id}>
-                <div className="template-heading">
-                  <span className="backend-mark">{backend.badge}</span>
-                  <div>
-                    <h2>{template.name}</h2>
-                    <p>{backend.name}</p>
-                  </div>
-                </div>
-                <div className="service-tags">
-                  <span>
-                    {backend.core} {template.backendVersion}
-                  </span>
-                  <span>{backend.protocol}</span>
-                </div>
-                <footer>
-                  <button
-                    className="more-button"
-                    type="button"
-                    onClick={() => void remove(template)}
-                  >
-                    删除
-                  </button>
-                </footer>
-              </article>
-            );
-          })}
-        </div>
-      ) : (
-        <section className="card">
-          <Empty
-            title="尚无模板"
-            description="在节点详情的服务编辑器中选择“另存为模板”即可建立第一份复用配置。"
-            action={
-              <a className="button button-primary" href="#/nodes">
-                前往节点
-              </a>
-            }
-          />
-        </section>
-      )}
-    </Page>
   );
 }
 
@@ -2490,7 +2421,7 @@ function UsersPage({ api, setError }: PageProps) {
   };
   const toggle = async (userId: string, service: ServiceRef) => {
     const bound = bindings[userId]?.includes(service.id);
-    if (!bound && service.backendType !== "xray") {
+    if (!bound && !isMultiUserBackend(service.backendType)) {
       setError("该后端当前不支持独立用户身份，不能授予共享凭据。");
       return;
     }
@@ -2649,7 +2580,7 @@ function UsersPage({ api, setError }: PageProps) {
                                 bindings[user.id]?.includes(service.id) ?? false
                               }
                               disabled={
-                                service.backendType !== "xray" &&
+                                !isMultiUserBackend(service.backendType) &&
                                 !bindings[user.id]?.includes(service.id)
                               }
                               onChange={() => void toggle(user.id, service)}
@@ -2663,7 +2594,7 @@ function UsersPage({ api, setError }: PageProps) {
                                   ? "凭据有效"
                                   : row?.credentialStatus === "Revoked"
                                     ? "凭据已吊销"
-                                    : service.backendType === "xray"
+                                    : isMultiUserBackend(service.backendType)
                                       ? "未授权"
                                       : "不支持独立身份"}{" "}
                                 ·{" "}

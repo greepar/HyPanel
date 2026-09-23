@@ -58,15 +58,22 @@ internal static class SubscriptionEndpoints
         try
         {
             using var document = JsonDocument.Parse(service.ConfigJson);
-            if (document.RootElement.ValueKind != JsonValueKind.Object ||
-                !TryString(document.RootElement, "authPassword", out var password)) return null;
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return null;
+            // Each granted user authenticates with their own userpass identity (see Hysteria2Provider).
+            var password = $"{Hysteria2UserName(service.UserId)}:{service.Credential}";
             TryString(document.RootElement, "obfsPassword", out var obfsPassword);
             var endpoint = service.PublicEndpoint;
             var host = endpoint.Host.Contains(':') ? $"[{endpoint.Host}]" : endpoint.Host;
+            var pin = service.PinnedCertificateSha256;
             var query = new List<string>();
             if (!string.IsNullOrEmpty(endpoint.TlsServerName))
                 query.Add($"sni={Uri.EscapeDataString(endpoint.TlsServerName)}");
-            query.Add("insecure=0");
+            if (pin is null) query.Add("insecure=0");
+            else
+            {
+                query.Add("insecure=1");
+                query.Add($"pinSHA256={pin}");
+            }
             if (!string.IsNullOrEmpty(obfsPassword))
             {
                 query.Add("obfs=salamander");
@@ -74,9 +81,9 @@ internal static class SubscriptionEndpoints
             }
 
             var uri =
-                $"hysteria2://{Uri.EscapeDataString(password)}@{host}:{endpoint.Port}/?{string.Join('&', query)}#{Uri.EscapeDataString(service.Name)}";
+                $"hysteria2://{Uri.EscapeDataString(Hysteria2UserName(service.UserId))}:{Uri.EscapeDataString(service.Credential)}@{host}:{endpoint.Port}/?{string.Join('&', query)}#{Uri.EscapeDataString(service.Name)}";
             return new Hysteria2Proxy(service.Name, endpoint.Host, endpoint.Port, endpoint.TlsServerName, password,
-                obfsPassword, uri);
+                obfsPassword, pin, uri);
         }
         catch (JsonException)
         {
@@ -137,6 +144,8 @@ internal static class SubscriptionEndpoints
         }
     }
 
+    internal static string Hysteria2UserName(Guid userId) => $"hypanel-{userId:N}";
+
     private static bool TryString(JsonElement root, string name, out string value)
     {
         value = string.Empty;
@@ -163,7 +172,9 @@ internal static class SubscriptionEndpoints
             {
                 yaml.Append("  - name: ").Append(Yaml(hysteria.Name)).Append("\n    type: hysteria2\n    server: ")
                     .Append(Yaml(hysteria.Host)).Append("\n    port: ").Append(hysteria.Port).Append("\n    password: ")
-                    .Append(Yaml(hysteria.Password)).Append("\n    skip-cert-verify: false\n");
+                    .Append(Yaml(hysteria.Password)).Append(hysteria.PinnedSha256 is null
+                        ? "\n    skip-cert-verify: false\n"
+                        : "\n    skip-cert-verify: true\n    fingerprint: " + Yaml(hysteria.PinnedSha256) + "\n");
                 if (!string.IsNullOrEmpty(hysteria.TlsServerName))
                     yaml.Append("    sni: ").Append(Yaml(hysteria.TlsServerName)).Append('\n');
                 if (!string.IsNullOrEmpty(hysteria.ObfsPassword))
@@ -216,7 +227,7 @@ internal static class SubscriptionEndpoints
                     writer.WriteString("password", hysteria.Password);
                     writer.WriteStartObject("tls");
                     writer.WriteBoolean("enabled", true);
-                    writer.WriteBoolean("insecure", false);
+                    writer.WriteBoolean("insecure", hysteria.PinnedSha256 is not null);
                     if (!string.IsNullOrEmpty(hysteria.TlsServerName))
                         writer.WriteString("server_name", hysteria.TlsServerName);
                     writer.WriteEndObject();
@@ -294,6 +305,7 @@ internal static class SubscriptionEndpoints
         string? TlsServerName,
         string Password,
         string? ObfsPassword,
+        string? PinnedSha256,
         string Uri) : SubscriptionProxy(Name, Host, Port, Uri);
 
     private sealed record XrayProxy(

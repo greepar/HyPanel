@@ -104,17 +104,6 @@ internal sealed record ServiceRuntimeStateRecord(
 
 internal sealed record ServiceInstanceWithRuntimeRecord(ServiceInstanceRecord Service, ServiceRuntimeStateRecord? Runtime);
 
-internal sealed record ServiceTemplateRecord(
-    Guid Id,
-    string Name,
-    string NormalizedName,
-    string BackendType,
-    string BackendVersion,
-    int ConfigSchemaVersion,
-    string ConfigJson,
-    DateTimeOffset CreatedAtUtc,
-    DateTimeOffset UpdatedAtUtc);
-
 internal sealed record HealthServiceRecord(
     Guid Id,
     Guid NodeId,
@@ -140,4 +129,5 @@ internal sealed record SubscriptionServiceRecord(
     string BackendType,
     string ConfigJson,
     string Credential,
-    ServicePublicEndpointRecord PublicEndpoint);
+    ServicePublicEndpointRecord PublicEndpoint,
+    string? PinnedCertificateSha256 = null);

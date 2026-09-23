@@ -8,18 +8,32 @@ using System.Text.Json;
 using HyPanel.Agent.Backends;
 using HyPanel.Shared.Contracts;
 
-public sealed class Hysteria2Provider : IBackendProvider
+/// <summary>
+/// Hysteria2 server. Granted users authenticate with distinct <c>userpass</c> identities
+/// (<c>hypanel-&lt;userId:N&gt;</c> / per-binding credential) and their cumulative traffic is read from the
+/// loopback-only trafficStats API on the Panel-assigned control port.
+/// </summary>
+public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvider? timeProvider = null) : IBackendProvider
 {
     private const int MinimumSecretLength = 8;
     private const int MaximumSecretLength = 256;
     private const int MaximumBandwidthMbps = 100_000;
+    private const int MaximumUsers = 256;
+    private const int MaximumStatsResponseBytes = 4 * 1024 * 1024;
+    private static readonly TimeSpan StatsTimeout = TimeSpan.FromSeconds(5);
+    private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
 
     public string BackendType => "hysteria2";
 
     public BackendCapabilities Capabilities =>
+        BackendCapabilities.MultiUser |
+        BackendCapabilities.PerUserTraffic |
+        BackendCapabilities.TrafficStats |
         BackendCapabilities.Logs |
         BackendCapabilities.VersionQuery |
         BackendCapabilities.ConfigValidation;
+
+    internal static string UserName(Guid userId) => $"hypanel-{userId:N}";
 
     public ValueTask<BackendValidationResult> ValidateAsync(
         ServiceDesiredState desiredState,
@@ -37,9 +51,19 @@ public sealed class Hysteria2Provider : IBackendProvider
             return ValueTask.FromResult(Invalid("invalid_config", "Invalid Hysteria2 configuration."));
         }
 
+        if (!TryGetUsers(desiredState, out _))
+        {
+            return ValueTask.FromResult(Invalid("invalid_users", "Invalid Hysteria2 user list."));
+        }
+
+        if (desiredState.ControlPort is { } controlPort && controlPort is not (>= 1024 and <= 65_535))
+        {
+            return ValueTask.FromResult(Invalid("invalid_control_port", "Invalid Hysteria2 control port."));
+        }
+
         return ValueTask.FromResult(new BackendValidationResult(
             true,
-            Array.Empty<int>(),
+            desiredState.ControlPort is { } port ? [port] : Array.Empty<int>(),
             [config.ListenPort],
             null,
             null));
@@ -58,7 +82,13 @@ public sealed class Hysteria2Provider : IBackendProvider
             throw new InvalidOperationException("Hysteria2 configuration is invalid.");
         }
 
-        var yaml = RenderYaml(config, desiredState.TlsCertificate?.Fingerprint);
+        if (!TryGetUsers(desiredState, out var users))
+        {
+            throw new InvalidOperationException("Hysteria2 user list is invalid.");
+        }
+
+        var yaml = RenderYaml(config, desiredState.TlsCertificate?.Fingerprint, users, desiredState.ControlPort,
+            StatsSecret(desiredState));
         var content = Encoding.UTF8.GetBytes(yaml);
         var sha256 = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
 
@@ -96,15 +126,75 @@ public sealed class Hysteria2Provider : IBackendProvider
         return ValueTask.FromResult(new BackendHealthResult(true, null, null));
     }
 
-    public ValueTask<IReadOnlyList<BackendUserTraffic>> CollectUserTrafficAsync(
+    public async ValueTask<IReadOnlyList<BackendUserTraffic>> CollectUserTrafficAsync(
         BackendInstanceContext instance,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var desired = instance.DesiredState;
+        if (httpClient is null || desired.ControlPort is not { } port || desired.Users is not { Count: > 0 })
+            return [];
 
-        // Hysteria2 does not expose a reliable, per-instance traffic API for this provider.
-        return ValueTask.FromResult<IReadOnlyList<BackendUserTraffic>>([]);
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"http://127.0.0.1:{port}/traffic");
+        request.Headers.TryAddWithoutValidation("Authorization", StatsSecret(desired));
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(StatsTimeout);
+        try
+        {
+            using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength > MaximumStatsResponseBytes)
+                return [];
+            var body = await response.Content.ReadAsStringAsync(timeout.Token);
+            return body.Length > MaximumStatsResponseBytes ? [] : ParseTraffic(body, desired.Users, clock.GetUtcNow());
+        }
+        catch (Exception exception) when (exception is HttpRequestException or OperationCanceledException
+                                              && !cancellationToken.IsCancellationRequested)
+        {
+            // The backend may still be starting; the next reconciliation pass retries.
+            return [];
+        }
     }
+
+    internal static IReadOnlyList<BackendUserTraffic> ParseTraffic(string json, IReadOnlyList<BackendUser> users,
+        DateTimeOffset observedAt)
+    {
+        Dictionary<string, Hysteria2TrafficCounter>? counters;
+        try
+        {
+            counters = JsonSerializer.Deserialize(json,
+                Hysteria2TrafficJsonSerializerContext.Default.DictionaryStringHysteria2TrafficCounter);
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+
+        if (counters is null) return [];
+        var result = new List<BackendUserTraffic>();
+        foreach (var user in users.OrderBy(item => item.UserId))
+        {
+            if (!counters.TryGetValue(UserName(user.UserId), out var counter) || counter.Tx < 0 || counter.Rx < 0)
+                continue;
+            result.Add(new BackendUserTraffic(user.UserId, counter.Rx, counter.Tx, observedAt));
+        }
+
+        return result;
+    }
+
+    private static bool TryGetUsers(ServiceDesiredState desired, out IReadOnlyList<BackendUser> users)
+    {
+        users = desired.Users ?? [];
+        var ids = new HashSet<Guid>();
+        var credentials = new HashSet<string>(StringComparer.Ordinal);
+        return users.Count <= MaximumUsers && users.All(user => user.UserId != Guid.Empty && ids.Add(user.UserId)
+            && HasValidSecretLength(user.Credential) && !user.Credential.Any(char.IsControl)
+            && credentials.Add(user.Credential));
+    }
+
+    /// <summary>Stable, service-scoped secret for the loopback-only trafficStats listener.</summary>
+    private static string StatsSecret(ServiceDesiredState desired) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"hypanel-hy2-stats:{desired.ServiceId:N}:{desired.ConfigJson}")))
+            .ToLowerInvariant()[..32];
 
     private static BackendValidationResult Invalid(string errorCode, string errorMessage) =>
         new(false, Array.Empty<int>(), Array.Empty<int>(), errorCode, errorMessage);
@@ -201,7 +291,8 @@ public sealed class Hysteria2Provider : IBackendProvider
         uri.Scheme == Uri.UriSchemeHttps &&
         !string.IsNullOrEmpty(uri.Host);
 
-    private static string RenderYaml(Hysteria2Config config, string? fingerprint)
+    private static string RenderYaml(Hysteria2Config config, string? fingerprint,
+        IReadOnlyList<BackendUser> users, int? controlPort, string statsSecret)
     {
         var listenAddress = config.ListenHost!.Contains(':')
             ? $"[{config.ListenHost}]:{config.ListenPort}"
@@ -215,8 +306,26 @@ public sealed class Hysteria2Provider : IBackendProvider
         yaml.Append("  cert: ").Append(QuoteYaml(certificatePath)).AppendLine();
         yaml.Append("  key: ").Append(QuoteYaml(privateKeyPath)).AppendLine();
         yaml.AppendLine("auth:");
-        yaml.Append("  type: ").Append(QuoteYaml("password")).AppendLine();
-        yaml.Append("  password: ").Append(QuoteYaml(config.AuthPassword!)).AppendLine();
+        if (users.Count > 0)
+        {
+            yaml.Append("  type: ").Append(QuoteYaml("userpass")).AppendLine();
+            yaml.AppendLine("  userpass:");
+            foreach (var user in users.OrderBy(item => item.UserId))
+                yaml.Append("    ").Append(QuoteYaml(UserName(user.UserId))).Append(": ")
+                    .Append(QuoteYaml(user.Credential)).AppendLine();
+        }
+        else
+        {
+            yaml.Append("  type: ").Append(QuoteYaml("password")).AppendLine();
+            yaml.Append("  password: ").Append(QuoteYaml(config.AuthPassword!)).AppendLine();
+        }
+
+        if (controlPort is { } port)
+        {
+            yaml.AppendLine("trafficStats:");
+            yaml.Append("  listen: ").Append(QuoteYaml($"127.0.0.1:{port}")).AppendLine();
+            yaml.Append("  secret: ").Append(QuoteYaml(statsSecret)).AppendLine();
+        }
         yaml.AppendLine("masquerade:");
         yaml.Append("  type: ").Append(QuoteYaml("proxy")).AppendLine();
         yaml.AppendLine("  proxy:");

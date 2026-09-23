@@ -132,7 +132,7 @@ Do not redesign the whole system to expose every obscure backend option.
 
 Deliver as demand justifies:
 
-- Service templates.
+- ~~Service templates~~ (removed: backend-driven defaults with generated secrets replace them).
 - Batch desired-state deployment.
 - Batch Agent updates. (completed by OP-005)
 - Backend update policies/channels.

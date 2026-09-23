@@ -121,26 +121,15 @@ public sealed class SqliteServerRepositoryTests
     }
 
     [TestMethod]
-    public async Task Templates_InstantiateAndBatchEnabled_IncrementAffectedNodesOnce()
+    public async Task BatchEnabled_IncrementsAffectedNodesOnce()
     {
         await using var fixture = await TestDatabase.CreateAsync();
         var nodeOne = Guid.NewGuid();
         var nodeTwo = Guid.NewGuid();
         await fixture.Repository.CreateNodeAsync(nodeOne, "one", CancellationToken.None);
         await fixture.Repository.CreateNodeAsync(nodeTwo, "two", CancellationToken.None);
-        var now = fixture.Time.GetUtcNow();
-        var template = new ServiceTemplateRecord(Guid.NewGuid(), " Template ", "template", "xray", "1.0", 1,
-            "{\"password\":\"secret\"}", now, now);
-        Assert.IsTrue(await fixture.Repository.CreateServiceTemplateAsync(template, CancellationToken.None));
-        Assert.IsFalse(await fixture.Repository.CreateServiceTemplateAsync(template with { Id = Guid.NewGuid() },
-            CancellationToken.None));
-
-        var instantiated =
-            await fixture.Repository.CreateServiceFromTemplateAsync(nodeOne, template.Id, "from template",
-                CancellationToken.None);
-        Assert.IsNotNull(instantiated.Service);
-        Assert.AreEqual(1L, instantiated.Revision);
-        Assert.AreEqual("xray", instantiated.Service.BackendType);
+        var first = await fixture.Repository.CreateServiceAsync(CreateService(nodeOne, Guid.NewGuid(), "first"),
+            CancellationToken.None);
         var second = await fixture.Repository.CreateServiceAsync(CreateService(nodeTwo, Guid.NewGuid(), "second"),
             CancellationToken.None);
         var third = await fixture.Repository.CreateServiceAsync(CreateService(nodeOne, Guid.NewGuid(), "third"),
@@ -148,7 +137,7 @@ public sealed class SqliteServerRepositoryTests
 
         var result = await fixture.Repository.SetServicesEnabledBatchAsync(new[]
         {
-            new BatchServiceEnabledItemRecord(nodeOne, instantiated.Service.Id, false),
+            new BatchServiceEnabledItemRecord(nodeOne, first.Service!.Id, false),
             new BatchServiceEnabledItemRecord(nodeOne, third.Service!.Id, false),
             new BatchServiceEnabledItemRecord(nodeTwo, second.Service!.Id, false),
         }, CancellationToken.None);
@@ -166,24 +155,11 @@ public sealed class SqliteServerRepositoryTests
 
         Assert.IsNull(await fixture.Repository.SetServicesEnabledBatchAsync(new[]
         {
-            new BatchServiceEnabledItemRecord(nodeOne, instantiated.Service.Id, true),
-            new BatchServiceEnabledItemRecord(nodeOne, instantiated.Service.Id, false)
+            new BatchServiceEnabledItemRecord(nodeOne, first.Service!.Id, true),
+            new BatchServiceEnabledItemRecord(nodeOne, first.Service!.Id, false)
         }, CancellationToken.None));
         Assert.IsFalse((await fixture.Repository.GetServicesForNodeAsync(nodeOne, CancellationToken.None))
-            .Single(item => item.Service.Id == instantiated.Service.Id).Service.Enabled);
-
-        var updated = template with
-        {
-            Name = "Renamed",
-            NormalizedName = "renamed",
-            ConfigJson = "{\"password\":\"changed\"}",
-            UpdatedAtUtc = now.AddMinutes(1)
-        };
-        Assert.IsTrue(await fixture.Repository.UpdateServiceTemplateAsync(updated, CancellationToken.None));
-        Assert.AreEqual("Renamed",
-            (await fixture.Repository.GetServiceTemplateAsync(template.Id, CancellationToken.None))!.Name);
-        Assert.IsTrue(await fixture.Repository.DeleteServiceTemplateAsync(template.Id, CancellationToken.None));
-        Assert.IsNull(await fixture.Repository.GetServiceTemplateAsync(template.Id, CancellationToken.None));
+            .Single(item => item.Service.Id == first.Service!.Id).Service.Enabled);
     }
 
     [TestMethod]
@@ -231,23 +207,6 @@ public sealed class SqliteServerRepositoryTests
         Assert.AreEqual("Failed", observation.UpdateStatus);
         Assert.AreEqual("1.3.0", observation.UpdateTargetVersion);
         Assert.AreEqual("sha256_mismatch", observation.UpdateError);
-    }
-
-    [TestMethod]
-    public void ServiceTemplateValidation_NormalizesNameAndRequiresSchemaVersionOne()
-    {
-        Assert.IsTrue(AdminServiceTemplateEndpoints.TryValidate(
-            "  ＴＥＭＰＬＡＴＥ  ", "MIHOMO", " 1.19.30 ", 1, "{ \"password\": \"secret\" }",
-            out var name, out var normalizedName, out var backendType, out var version, out var config));
-        Assert.AreEqual("TEMPLATE", name);
-        Assert.AreEqual("template", normalizedName);
-        Assert.AreEqual("mihomo", backendType);
-        Assert.AreEqual("1.19.30", version);
-        Assert.AreEqual("{ \"password\": \"secret\" }", config);
-        StringAssert.Contains(AdminServicesEndpoints.RedactPasswords(config), "[REDACTED]");
-
-        Assert.IsFalse(AdminServiceTemplateEndpoints.TryValidate(
-            "template", "mihomo", "1.19.30", 2, "{}", out _, out _, out _, out _, out _));
     }
 
     [TestMethod]
@@ -457,6 +416,39 @@ public sealed class SqliteServerRepositoryTests
         var remaining = await fixture.Repository.GetNodeObservationsAsync(CancellationToken.None);
         Assert.AreEqual(keptNodeId, remaining.Single().Id);
     }
+
+    [TestMethod]
+    public async Task AutoGrant_NewServiceReachesEnabledUsersAndNewUserReceivesExistingServices()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        await fixture.Repository.CreateNodeAsync(nodeId, "grant", CancellationToken.None);
+        var active = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Active", "active", "hash", "User",
+            true, null, null, "active-token", CancellationToken.None);
+        var disabled = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Off", "off", "hash", "User",
+            false, null, null, "off-token", CancellationToken.None);
+        var hysteria = await fixture.Repository.CreateServiceAsync(CreateService(nodeId, Guid.NewGuid(), "hy"),
+            CancellationToken.None);
+
+        Assert.AreEqual(1, await fixture.Repository.GrantServiceToAllUsersAsync(hysteria.Service!.Id, CancellationToken.None));
+        CollectionAssert.AreEqual(new[] { hysteria.Service.Id },
+            (await fixture.Repository.GetBoundServicesAsync(active.User.Id, CancellationToken.None)).ToArray());
+        Assert.AreEqual(0, (await fixture.Repository.GetBoundServicesAsync(disabled.User.Id, CancellationToken.None)).Count);
+
+        var late = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Late", "late", "hash", "User",
+            true, null, null, "late-token", CancellationToken.None);
+        Assert.AreEqual(1, await fixture.Repository.GrantAllServicesToUserAsync(late.User.Id, CancellationToken.None));
+        Assert.AreEqual(1, (await fixture.Repository.GetServiceCredentialsAsync(hysteria.Service.Id, true,
+            CancellationToken.None)).Count(item => item.UserId == late.User.Id));
+    }
+
+    [DataTestMethod]
+    [DataRow("DNS:hy.example.com, DNS:www.example.com", "hy.example.com")]
+    [DataRow("DNS:*.example.com, DNS=edge.example.com", "edge.example.com")]
+    [DataRow("IP Address:203.0.113.1", null)]
+    [DataRow("", null)]
+    public void FirstDnsName_PicksFirstConcreteHostName(string san, string? expected) =>
+        Assert.AreEqual(expected, SqliteServerRepository.FirstDnsName(san));
 
     [TestMethod]
     public async Task ServiceMutations_WhenNodeOrServiceDoesNotExist_DoNotAdvanceRevision()
@@ -909,8 +901,11 @@ public sealed class SqliteServerRepositoryTests
         await fixture.Repository.CreateServiceAsync(xray, CancellationToken.None);
         var user = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Mixed", "mixed", "hash", "User", true,
             null, null, "mixed-token", CancellationToken.None);
-        Assert.IsFalse(await fixture.Repository.BindServiceAsync(user.User.Id, hysteria.Id, CancellationToken.None));
+        Assert.IsTrue(await fixture.Repository.BindServiceAsync(user.User.Id, hysteria.Id, CancellationToken.None));
         Assert.IsTrue(await fixture.Repository.BindServiceAsync(user.User.Id, xray.Id, CancellationToken.None));
+        var hyCredential = (await fixture.Repository.GetServiceCredentialsAsync(hysteria.Id, true,
+            CancellationToken.None)).Single().Credential;
+        var hyUser = $"hypanel-{user.User.Id:N}";
         var clientId = (await fixture.Repository.GetServiceCredentialsAsync(xray.Id, true,
             CancellationToken.None)).Single().Credential;
         Assert.IsTrue(await fixture.Repository.SetServicePublicEndpointAsync(nodeId,
@@ -923,25 +918,27 @@ public sealed class SqliteServerRepositoryTests
         var raw = await RenderSubscriptionAsync(fixture, "mixed-token", "raw");
         var expectedVless =
             $"vless://{clientId}@[2001:db8::10]:24445?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.example.com&fp=chrome&pbk=public-key-value&sid=a1b2&type=tcp#xray%20%23%20one";
-        Assert.IsFalse(raw.Contains("hysteria2://", StringComparison.Ordinal));
+        StringAssert.Contains(raw, $"hysteria2://{hyUser}:{hyCredential}@hy.example:24444/?sni=hy.example&insecure=0#hy%20two");
         StringAssert.Contains(raw, expectedVless);
         Assert.AreEqual(raw, Encoding.UTF8.GetString(Convert.FromBase64String(
             await RenderSubscriptionAsync(fixture, "mixed-token", "base64"))));
 
         var mihomo = await RenderSubscriptionAsync(fixture, "mixed-token", "mihomo");
-        Assert.IsFalse(mihomo.Contains("type: hysteria2", StringComparison.Ordinal));
+        StringAssert.Contains(mihomo, "type: hysteria2");
+        StringAssert.Contains(mihomo, $"password: \"{hyUser}:{hyCredential}\"");
         StringAssert.Contains(mihomo, "type: vless");
         StringAssert.Contains(mihomo, "public-key: \"public-key-value\"");
         StringAssert.Contains(mihomo, "short-id: \"a1b2\"");
         var singbox = await RenderSubscriptionAsync(fixture, "mixed-token", "singbox");
         using var document = JsonDocument.Parse(singbox);
-        Assert.AreEqual(1, document.RootElement.GetProperty("outbounds").GetArrayLength());
-        Assert.AreEqual("public-key-value", document.RootElement.GetProperty("outbounds")[0]
+        Assert.AreEqual(2, document.RootElement.GetProperty("outbounds").GetArrayLength());
+        Assert.AreEqual("public-key-value", document.RootElement.GetProperty("outbounds")[1]
             .GetProperty("tls").GetProperty("reality").GetProperty("public_key").GetString());
 
         foreach (var output in new[] { raw, mihomo, singbox })
         {
             Assert.IsFalse(output.Contains(privateKey, StringComparison.Ordinal));
+            Assert.IsFalse(output.Contains("hy-secret", StringComparison.Ordinal));
             Assert.IsFalse(output.Contains("private-destination.example", StringComparison.Ordinal));
         }
 

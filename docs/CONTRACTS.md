@@ -393,12 +393,24 @@ The current implemented capability matrix is:
 
 ```text
 Xray:       MultiUser=true,  PerUserTraffic=true,  TrafficStats=true
-Hysteria2:  MultiUser=false, PerUserTraffic=false, TrafficStats=false
+Hysteria2:  MultiUser=true,  PerUserTraffic=true,  TrafficStats=true
 sing-box:   MultiUser=false, PerUserTraffic=false, TrafficStats=false
 Mihomo:     MultiUser=false, PerUserTraffic=false, TrafficStats=false
 ```
 
 Unsupported backends do not receive grants that would expose a shared service secret. Their UI states the limitation.
+
+Hysteria2 users authenticate with `userpass` identities `hypanel-<userId:N>` / binding credential; clients send
+`<identity>:<credential>`. With no granted users the service falls back to the shared `authPassword`. The Server
+assigns a loopback control port on which the Agent enables Hysteria2 `trafficStats` (service-scoped secret) and reads
+cumulative per-user `tx`/`rx` counters (`tx` = user download, `rx` = user upload).
+
+Grants are automatic: creating a multi-user service grants it to every enabled user, and creating a user grants every
+existing multi-user service. Admins can still revoke individual grants.
+
+Subscription connection address: an explicit Service public endpoint wins. Otherwise the node's discovered public
+IPv4 and the service listen port are used; for Hysteria2 the SNI is the first DNS SAN of the bound certificate, and a
+self-signed certificate is pinned by SHA-256 (`pinSHA256` / mihomo `fingerprint`) instead of CA verification.
 
 Subscription endpoint concept:
 

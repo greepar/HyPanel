@@ -473,8 +473,8 @@ pending batch persistence are one atomic Agent state-file update, so Agent resta
 The Agent also discovers its outward-facing IPv4 through the fixed HTTPS endpoint `https://4.qwq.lu`. It strictly
 accepts one canonical IPv4 from a bounded response, caches success for six hours, and reports it during ordinary sync.
 The Server retains the last valid address and uses it only as an Xray/Shadowsocks subscription fallback when no manual
-Service public endpoint exists. Manual host/port configuration remains authoritative, and Hysteria2 still requires an
-explicit endpoint because certificate/SNI ownership cannot be inferred safely from an IP address.
+Service public endpoint exists. Manual host/port configuration remains authoritative. Hysteria2 uses the same fallback
+with the bound certificate's first DNS SAN as SNI (self-signed certificates are pinned by fingerprint).
 
 Xray v1 uses its official simplified local API configuration with loopback-only `StatsService`, an empty `stats`
 object, and level-0 `statsUserUplink`/`statsUserDownlink`. Desired users render as distinct VLESS clients whose email is

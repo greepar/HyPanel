@@ -25,6 +25,8 @@ internal static class AdminServicesEndpoints
             GetPublicEndpointAsync);
         endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}/public-endpoint",
             SetPublicEndpointAsync);
+        endpoints.MapDelete("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}/public-endpoint",
+            ClearPublicEndpointAsync);
         endpoints.MapDelete("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}", DeleteAsync);
     }
 
@@ -54,10 +56,14 @@ internal static class AdminServicesEndpoints
         var result = await repository.CreateServiceAsync(
             new ServiceInstanceRecord(Guid.NewGuid(), nodeId, name, backendType, version, true,
                 request.ConfigSchemaVersion, configJson, now, now), cancellationToken);
-        return result.Service is null
-            ? Results.NotFound()
-            : Results.Json(new ServiceMutationResponse(result.Service.Id, result.Revision),
-                ServerJsonSerializerContext.Default.ServiceMutationResponse, statusCode: StatusCodes.Status201Created);
+        if (result.Service is null) return Results.NotFound();
+        // A new service is immediately usable: every enabled user receives their own credential for it.
+        var revision = result.Revision;
+        if (Backends.BackendCapabilities.IsMultiUser(backendType)
+            && await repository.GrantServiceToAllUsersAsync(result.Service.Id, cancellationToken) > 0)
+            revision = (await repository.GetNodeAsync(nodeId, cancellationToken))?.DesiredRevision ?? revision;
+        return Results.Json(new ServiceMutationResponse(result.Service.Id, revision),
+            ServerJsonSerializerContext.Default.ServiceMutationResponse, statusCode: StatusCodes.Status201Created);
     }
 
     private static async Task<IResult> UpdateAsync(Guid nodeId, Guid serviceId, UpdateServiceRequest request,
@@ -171,6 +177,16 @@ internal static class AdminServicesEndpoints
             ? Results.Json(new ServicePublicEndpointResponse(endpoint.Host, endpoint.Port, endpoint.TlsServerName,
                 endpoint.UpdatedAtUtc), ServerJsonSerializerContext.Default.ServicePublicEndpointResponse)
             : Results.NotFound();
+    }
+
+    /// <summary>Removes a custom connection address so subscriptions fall back to the automatic one.</summary>
+    private static async Task<IResult> ClearPublicEndpointAsync(Guid nodeId, Guid serviceId, HttpRequest httpRequest,
+        AdminAuthorization authorization, SqliteServerRepository repository, CancellationToken ct)
+    {
+        var access = await authorization.AuthorizeAsync(httpRequest, ct);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        await repository.ClearServicePublicEndpointAsync(nodeId, serviceId, ct);
+        return Results.NoContent();
     }
 
     private static bool TryValidateCreate(CreateServiceRequest request, out string name, out string backendType,
