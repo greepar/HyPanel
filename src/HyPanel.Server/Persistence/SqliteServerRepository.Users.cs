@@ -314,7 +314,7 @@ internal sealed partial class SqliteServerRepository
                 FROM user_service_bindings b
                 JOIN service_instances s ON s.id=b.service_id
                 LEFT JOIN user_service_credentials k ON k.user_id=b.user_id AND k.service_id=b.service_id
-                WHERE k.user_id IS NULL AND s.backend_type IN ('xray','hysteria2')
+                WHERE k.user_id IS NULL AND s.backend_type IN ('xray','xray-ss','hysteria2')
                 ORDER BY b.user_id,b.service_id;
                 """;
             await using var reader = await select.ExecuteReaderAsync(ct);

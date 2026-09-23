@@ -879,7 +879,7 @@ function NodesPage({ api, setError }: PageProps) {
 }
 
 /** Backends whose Agent provider issues a distinct identity per user (mirrors Server BackendCapabilities). */
-const isMultiUserBackend = (backendType: string) => backendType === "xray" || backendType === "hysteria2";
+const isMultiUserBackend = (backendType: string) => backendType === "xray" || backendType === "xray-ss" || backendType === "hysteria2";
 
 function visibleNodes(nodes: Node[], filter: "all" | "online" | "offline", query: string) {
   const needle = query.trim().toLowerCase();
@@ -1745,7 +1745,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
         <section className="card">
           <Empty
             title="这个节点还没有服务"
-            description="添加 Hysteria 2、Xray、Mihomo 或 sing-box 实例。"
+            description="添加 Hysteria 2、Xray REALITY 或 Xray Shadowsocks 实例。"
             action={
               <button
                 className="button button-primary"

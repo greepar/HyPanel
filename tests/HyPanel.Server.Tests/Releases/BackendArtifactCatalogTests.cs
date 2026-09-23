@@ -59,7 +59,6 @@ public sealed class BackendArtifactCatalogTests
     }
 
     [DataTestMethod]
-    [DataRow("backend type")]
     [DataRow("unsupported RID")]
     [DataRow("duplicate backend-version-rid")]
     [DataRow("duplicate filename")]
@@ -73,7 +72,6 @@ public sealed class BackendArtifactCatalogTests
         var assets = fixture.Manifest.Assets.ToArray();
         assets[0] = invalidCase switch
         {
-            "backend type" => assets[0] with { BackendType = "unsupported" },
             "unsupported RID" => assets[0] with { Rid = "unsupported-rid" },
             "duplicate backend-version-rid" => assets[0],
             "duplicate filename" => assets[0],
@@ -122,21 +120,7 @@ public sealed class BackendArtifactCatalogTests
     }
 
     [TestMethod]
-    public void Constructor_WhenMihomoAssetIsValid_AcceptsIt()
-    {
-        using var fixture = CatalogFixture.Create();
-        fixture.WriteManifest(fixture.Manifest with
-        {
-            Assets = [fixture.Manifest.Assets[0] with { BackendType = "mihomo" }]
-        });
-
-        var artifact = fixture.CreateCatalog().GetArtifacts("linux-x64").Single();
-
-        Assert.AreEqual("mihomo", artifact.BackendType);
-    }
-
-    [TestMethod]
-    public void Constructor_WhenSingBoxAssetIsValid_AcceptsIt()
+    public void Constructor_WhenRetiredBackendIsCached_IgnoresIt()
     {
         using var fixture = CatalogFixture.Create();
         fixture.WriteManifest(fixture.Manifest with
@@ -144,15 +128,29 @@ public sealed class BackendArtifactCatalogTests
             Assets = [fixture.Manifest.Assets[0] with { BackendType = "sing-box" }]
         });
 
-        var artifact = fixture.CreateCatalog().GetArtifacts("linux-x64").Single();
+        Assert.AreEqual(0, fixture.CreateCatalog().GetArtifacts("linux-x64").Count);
+    }
 
-        Assert.AreEqual("sing-box", artifact.BackendType);
+    [TestMethod]
+    public void FindArtifact_XrayShadowsocksReusesXrayBinaryUnderItsOwnType()
+    {
+        using var fixture = CatalogFixture.Create();
+        var xray = fixture.Manifest.Assets[0] with { BackendType = "xray" };
+        fixture.WriteManifest(fixture.Manifest with { Assets = [xray] });
+        var catalog = fixture.CreateCatalog();
+
+        var artifact = catalog.FindArtifact("xray-ss", xray.Version, xray.Rid);
+
+        Assert.IsNotNull(artifact);
+        Assert.AreEqual("xray-ss", artifact.BackendType);
+        Assert.AreEqual(xray.FileName, artifact.FileName);
+        Assert.AreEqual(xray.Sha256, artifact.Sha256);
     }
 
     [TestMethod]
     public void ReleaseSources_MapEveryFrozenRidWithoutCallerControlledUrls()
     {
-        CollectionAssert.AreEquivalent(new[] { "hysteria2", "xray", "mihomo", "sing-box" },
+        CollectionAssert.AreEquivalent(new[] { "hysteria2", "xray" },
             BackendReleaseSources.All.Select(item => item.BackendType).ToArray());
         foreach (var source in BackendReleaseSources.All)
         foreach (var rid in ReleaseCatalog.SupportedRids)

@@ -25,14 +25,22 @@ internal sealed class BackendArtifactCatalog
         Volatile.Read(ref snapshot).Artifacts.Where(asset => asset.Rid == rid).ToArray();
 
     public string? GetLatestVersion(string backendType) =>
-        Volatile.Read(ref snapshot).LatestVersions.TryGetValue(backendType, out var version) ? version : null;
+        Volatile.Read(ref snapshot).LatestVersions.TryGetValue(BinarySource(backendType), out var version) ? version : null;
 
     public BackendReleaseIndex? GetRelease(string backendType, string version) =>
-        Volatile.Read(ref snapshot).Releases.TryGetValue(Key(backendType, version), out var release) ? release : null;
+        Volatile.Read(ref snapshot).Releases.TryGetValue(Key(BinarySource(backendType), version), out var release) ? release : null;
 
-    public BackendArtifact? FindArtifact(string backendType, string version, string rid) =>
-        Volatile.Read(ref snapshot).Artifacts.SingleOrDefault(asset => asset.BackendType == backendType
+    /// <summary>Artifact for a service's backend; <c>xray-ss</c> runs the Xray binary but is reported under its own type.</summary>
+    public BackendArtifact? FindArtifact(string backendType, string version, string rid)
+    {
+        var source = BinarySource(backendType);
+        var artifact = Volatile.Read(ref snapshot).Artifacts.SingleOrDefault(asset => asset.BackendType == source
             && asset.Version == version && asset.Rid == rid);
+        return artifact is null || source == backendType ? artifact : artifact with { BackendType = backendType };
+    }
+
+    /// <summary>Backend types that reuse another backend's released binary.</summary>
+    internal static string BinarySource(string backendType) => backendType == "xray-ss" ? "xray" : backendType;
 
     public bool TryGetAssetPath(string fileName, out string path)
     {
@@ -55,6 +63,8 @@ internal sealed class BackendArtifactCatalog
             var legacy = JsonSerializer.Deserialize(stream,
                 BackendArtifactManifestJsonContext.Default.BackendArtifactManifest)
                 ?? throw new InvalidOperationException("Backend artifact manifest must not be null.");
+            // Backends that were retired (e.g. sing-box, Mihomo) may still be cached on disk; ignore them.
+            legacy = legacy with { Assets = legacy.Assets.Where(asset => BackendReleaseSources.IsBackendType(asset.BackendType)).ToArray() };
             ValidateLegacy(legacy);
             Manifest = legacy;
             artifacts.AddRange(legacy.Assets);
@@ -65,6 +75,7 @@ internal sealed class BackendArtifactCatalog
             var release = JsonSerializer.Deserialize(stream,
                 BackendArtifactManifestJsonContext.Default.BackendReleaseIndex)
                 ?? throw new InvalidOperationException("Backend release index must not be null.");
+            if (!BackendReleaseSources.IsBackendType(release.BackendType)) continue;
             ValidateRelease(release);
             releases[Key(release.BackendType, release.Version)] = release;
             artifacts.AddRange(release.Artifacts.Where(asset =>

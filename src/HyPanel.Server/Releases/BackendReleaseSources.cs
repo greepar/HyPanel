@@ -8,11 +8,7 @@ internal static class BackendReleaseSources
     public static readonly IReadOnlyList<BackendReleaseSource> All =
     [
         new("hysteria2", "HyNetwork/hysteria", HysteriaAsset, static _ => string.Empty),
-        new("xray", "XTLS/Xray-core", XrayAsset, static rid => rid.StartsWith("win-", StringComparison.Ordinal) ? "xray.exe" : "xray"),
-        new("mihomo", "MetaCubeX/mihomo", MihomoAsset,
-            static rid => rid.StartsWith("win-", StringComparison.Ordinal) ? "*.exe" : string.Empty),
-        new("sing-box", "SagerNet/sing-box", SingBoxAsset,
-            static rid => rid.StartsWith("win-", StringComparison.Ordinal) ? "sing-box.exe" : "sing-box")
+        new("xray", "XTLS/Xray-core", XrayAsset, static rid => rid.StartsWith("win-", StringComparison.Ordinal) ? "xray.exe" : "xray")
     ];
 
     public static bool IsBackendType(string value) => All.Any(item => item.BackendType == value);
@@ -40,27 +36,5 @@ internal static class BackendReleaseSources
         _ => null
     };
 
-    private static string? MihomoAsset(string rid, string version) => rid switch
-    {
-        "linux-x64" or "linux-musl-x64" => $"mihomo-linux-amd64-v1-v{version}.gz",
-        "linux-arm64" or "linux-musl-arm64" => $"mihomo-linux-arm64-v{version}.gz",
-        "osx-x64" => $"mihomo-darwin-amd64-v1-v{version}.gz",
-        "osx-arm64" => $"mihomo-darwin-arm64-v{version}.gz",
-        "win-x64" => $"mihomo-windows-amd64-v{version}.zip",
-        "win-arm64" => $"mihomo-windows-arm64-v{version}.zip",
-        _ => null
-    };
 
-    private static string? SingBoxAsset(string rid, string version) => rid switch
-    {
-        "linux-x64" => $"sing-box-{version}-linux-amd64.tar.gz",
-        "linux-musl-x64" => $"sing-box-{version}-linux-amd64-musl.tar.gz",
-        "linux-arm64" => $"sing-box-{version}-linux-arm64.tar.gz",
-        "linux-musl-arm64" => $"sing-box-{version}-linux-arm64-musl.tar.gz",
-        "osx-x64" => $"sing-box-{version}-darwin-amd64.tar.gz",
-        "osx-arm64" => $"sing-box-{version}-darwin-arm64.tar.gz",
-        "win-x64" => $"sing-box-{version}-windows-amd64.zip",
-        "win-arm64" => $"sing-box-{version}-windows-arm64.zip",
-        _ => null
-    };
 }

@@ -94,6 +94,7 @@ internal sealed class BackendReleaseSyncWorker(ILogger<BackendReleaseSyncWorker>
     public async Task<BackendArtifact> EnsureCachedAsync(string backendType, string version, string rid,
         CancellationToken cancellationToken)
     {
+        backendType = BackendArtifactCatalog.BinarySource(backendType);
         if (catalog.FindArtifact(backendType, version, rid) is { } cached) return cached;
         var release = catalog.GetRelease(backendType, version)
             ?? throw new InvalidOperationException("Backend release metadata is unavailable.");

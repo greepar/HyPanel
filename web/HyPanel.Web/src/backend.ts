@@ -5,8 +5,7 @@ import type { BackendDefinition, BackendField, Service, ServiceForm, ServicePayl
 const displayFallback: Record<string, { name: string; core: string; protocol: string; description: string; badge: string }> = {
   hysteria2: { name: 'Hysteria 2 官方服务端', core: 'Hysteria 2', protocol: 'Hysteria 2 / QUIC', description: '适合高延迟或不稳定网络。', badge: 'HY2' },
   xray: { name: 'Xray REALITY', core: 'Xray-core', protocol: 'VLESS + TCP + REALITY', description: 'VLESS Vision 与 REALITY 握手。', badge: 'XR' },
-  mihomo: { name: 'Mihomo Shadowsocks', core: 'Mihomo', protocol: 'Shadowsocks 2022', description: 'Shadowsocks 2022 入站，支持 UDP。', badge: 'MI' },
-  'sing-box': { name: 'sing-box Shadowsocks', core: 'sing-box', protocol: 'Shadowsocks 2022', description: 'Shadowsocks 2022 入站，支持 UDP。', badge: 'SB' },
+  'xray-ss': { name: 'Xray Shadowsocks', core: 'Xray-core', protocol: 'Shadowsocks 2022 多用户', description: '每个用户独立密钥与流量统计，支持 UDP。', badge: 'SS' },
 }
 
 let definitions: BackendDefinition[] = []
@@ -88,6 +87,6 @@ export const serviceFacts = (service: Service) => {
   const listen = `${String(c.listenHost ?? '0.0.0.0')}:${String(c.listenPort ?? '—')}`
   if (service.backendType === 'hysteria2') return [listen, `${c.upMbps ?? '?'} / ${c.downMbps ?? '?'} Mbps`, c.obfsPassword ? 'Salamander 混淆' : '无混淆']
   if (service.backendType === 'xray') return [listen, String(c.serverName ?? '未设置 SNI'), 'Vision + REALITY']
-  if (service.backendType === 'mihomo' || service.backendType === 'sing-box') return [listen, String(c.method ?? 'Shadowsocks 2022'), c.udp === false ? '仅 TCP' : 'TCP + UDP']
+  if (service.backendType === 'xray-ss') return [listen, '2022-blake3-aes-128-gcm', 'TCP + UDP · 多用户']
   return [listen, '自定义后端', '']
 }

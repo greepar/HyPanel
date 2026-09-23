@@ -71,8 +71,8 @@ public sealed class X25519Tests
         Assert.AreEqual(32, DecodeBase64Url(xray["realityPrivateKey"]).Length);
         Assert.AreEqual(16, xray["shortId"].Length);
 
-        var singBox = BackendDefinitionCatalog.GenerateDefaults("sing-box");
-        Assert.AreEqual(32, Convert.FromBase64String(singBox["password"]).Length);
+        var shadowsocks = BackendDefinitionCatalog.GenerateDefaults("xray-ss");
+        Assert.AreEqual(16, Convert.FromBase64String(shadowsocks["password"]).Length);
 
         CollectionAssert.AreEqual(Array.Empty<string>(), BackendDefinitionCatalog.GenerateDefaults("unknown").Keys.ToArray());
     }
@@ -81,7 +81,7 @@ public sealed class X25519Tests
     public void Catalog_EveryBackendDefinesListenAndConfigKeys()
     {
         var types = BackendDefinitionCatalog.All.Select(item => item.BackendType).ToArray();
-        CollectionAssert.AreEqual(new[] { "hysteria2", "xray", "mihomo", "sing-box" }, types);
+        CollectionAssert.AreEqual(new[] { "hysteria2", "xray", "xray-ss" }, types);
 
         foreach (var definition in BackendDefinitionCatalog.All)
         {
@@ -102,9 +102,9 @@ public sealed class X25519Tests
             hysteria.Fields.Select(item => item.Key).ToArray());
         var xray = BackendDefinitionCatalog.All.Single(item => item.BackendType == "xray");
         Assert.AreEqual("xtls-rprx-vision", xray.Fields.Single(item => item.Key == "flow").Fixed);
-        var mihomo = BackendDefinitionCatalog.All.Single(item => item.BackendType == "mihomo");
-        Assert.AreEqual("2022-blake3-aes-256-gcm", mihomo.Fields.Single(item => item.Key == "method").Fixed);
-        Assert.AreEqual("true", mihomo.Fields.Single(item => item.Key == "udp").Fixed);
+        var shadowsocks = BackendDefinitionCatalog.All.Single(item => item.BackendType == "xray-ss");
+        Assert.AreEqual("2022-blake3-aes-128-gcm", shadowsocks.Fields.Single(item => item.Key == "method").Fixed);
+        Assert.AreEqual("true", shadowsocks.Fields.Single(item => item.Key == "udp").Fixed);
     }
 
     private static byte[] DecodeBase64Url(string value)

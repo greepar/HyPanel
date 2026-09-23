@@ -45,7 +45,7 @@ internal static class SubscriptionEndpoints
             ? TryProjectHysteria2(service)
             : string.Equals(service.BackendType, "xray", StringComparison.OrdinalIgnoreCase)
                 ? TryProjectXray(service)
-                : service.BackendType is "mihomo" or "sing-box"
+                : service.BackendType == "xray-ss"
                     ? TryProjectShadowsocks(service)
                     : null;
 
@@ -98,10 +98,12 @@ internal static class SubscriptionEndpoints
         {
             using var document = JsonDocument.Parse(service.ConfigJson);
             var root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object || !TryString(root, "method", out var method) ||
-                !TryString(root, "password", out var password)) return null;
+            if (root.ValueKind != JsonValueKind.Object || !TryString(root, "password", out var serverKey)) return null;
             var endpoint = service.PublicEndpoint;
-            return new ShadowsocksProxy(service.Name, endpoint.Host, endpoint.Port, method, password);
+            // Shadowsocks 2022 multi-user: "<server key>:<user key>"; the user key is the credential GUID's bytes.
+            var userKey = Convert.ToBase64String(Guid.Parse(service.Credential).ToByteArray());
+            return new ShadowsocksProxy(service.Name, endpoint.Host, endpoint.Port, "2022-blake3-aes-128-gcm",
+                $"{serverKey}:{userKey}");
         }
         catch (JsonException)
         {

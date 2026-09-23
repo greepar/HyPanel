@@ -65,12 +65,14 @@ internal static class BackendDefinitionCatalog
                     options: Fingerprints),
                 FixedField("flow", "流控", "xtls-rprx-vision", "string")
             ]),
-        new("mihomo", "Mihomo Shadowsocks", "Mihomo", "Shadowsocks 2022", "Shadowsocks 2022 入站，支持 UDP。", "MI",
-            "1.19.30",
-            ShadowsocksFields("24446")),
-        new("sing-box", "sing-box Shadowsocks", "sing-box", "Shadowsocks 2022", "Shadowsocks 2022 入站，支持 UDP。", "SB",
-            "1.14.0",
-            ShadowsocksFields("24447"))
+        new("xray-ss", "Xray Shadowsocks", "Xray-core", "Shadowsocks 2022 多用户",
+            "每个用户独立密钥与流量统计，支持 UDP。", "SS", "26.3.27",
+            [
+                .. Listen("8388"),
+                Field("password", "服务端密钥", "password", required: true, secret: true, generate: true),
+                FixedField("method", "加密方法", "2022-blake3-aes-128-gcm", "string"),
+                FixedField("udp", "UDP", "true", "boolean")
+            ])
     ];
 
     public static bool TryGet(string backendType, out BackendDefinition? definition)
@@ -87,9 +89,10 @@ internal static class BackendDefinitionCatalog
             ["obfsPassword"] = SecretGenerator.Base64Url(24)
         },
         "xray" => RealityDefaults(),
-        "mihomo" or "sing-box" => new Dictionary<string, string>
+        "xray-ss" => new Dictionary<string, string>
         {
-            ["password"] = SecretGenerator.StandardBase64(32)
+            // 2022-blake3-aes-128-gcm uses a 16-byte key.
+            ["password"] = SecretGenerator.StandardBase64(16)
         },
         _ => []
     };
@@ -104,14 +107,6 @@ internal static class BackendDefinitionCatalog
             ["shortId"] = SecretGenerator.LowerHex(8)
         };
     }
-
-    private static BackendFieldDefinition[] ShadowsocksFields(string port) =>
-    [
-        .. Listen(port),
-        Field("password", "Shadowsocks 密钥", "password", required: true, secret: true, generate: true),
-        FixedField("method", "加密方法", "2022-blake3-aes-256-gcm", "string"),
-        FixedField("udp", "UDP", "true", "boolean")
-    ];
 
     private static BackendFieldDefinition[] Listen(string port) =>
     [

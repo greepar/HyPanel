@@ -3,8 +3,6 @@ namespace HyPanel.Agent;
 using HyPanel.Agent.Backends;
 using HyPanel.Agent.Backends.Hysteria2;
 using HyPanel.Agent.Backends.Infrastructure;
-using HyPanel.Agent.Backends.Mihomo;
-using HyPanel.Agent.Backends.SingBox;
 using HyPanel.Agent.Backends.Xray;
 using HyPanel.Agent.Reconciliation;
 using HyPanel.Agent.Updates;
@@ -42,8 +40,7 @@ public static class Program
         builder.Services.AddSingleton<PublicIpv4Resolver>();
         builder.Services.AddSingleton<IBackendProvider, Hysteria2Provider>();
         builder.Services.AddSingleton<IBackendProvider, XrayProvider>();
-        builder.Services.AddSingleton<IBackendProvider, MihomoProvider>();
-        builder.Services.AddSingleton<IBackendProvider, SingBoxProvider>();
+        builder.Services.AddSingleton<IBackendProvider, XrayShadowsocksProvider>();
         builder.Services.AddSingleton<BackendProviderRegistry>();
         builder.Services.AddSingleton<BackendBinaryManager>();
         builder.Services.AddSingleton<BackendInstanceStore>();

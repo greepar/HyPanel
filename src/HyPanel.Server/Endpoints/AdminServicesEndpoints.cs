@@ -223,7 +223,7 @@ internal static class AdminServicesEndpoints
     internal static bool TryBackendType(string? value, out string backendType)
     {
         backendType = value?.Trim().ToLowerInvariant() ?? string.Empty;
-        return backendType is "hysteria2" or "xray" or "mihomo" or "sing-box";
+        return backendType is "hysteria2" or "xray" or "xray-ss";
     }
 
     internal static async Task<bool> HasValidCertificateAsync(string backendType, string configJson,

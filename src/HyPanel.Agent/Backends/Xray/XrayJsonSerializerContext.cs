@@ -8,6 +8,7 @@ using System.Text.Json.Serialization;
     AllowDuplicateProperties = false,
     UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(XrayConfig))]
+[JsonSerializable(typeof(XrayShadowsocksConfig))]
 internal sealed partial class XrayJsonSerializerContext : JsonSerializerContext;
 
 internal sealed class XrayConfig
@@ -34,4 +35,18 @@ internal sealed class XrayConfig
     public string? Destination { get; init; }
 
     public string? Fingerprint { get; init; }
+}
+
+internal sealed class XrayShadowsocksConfig
+{
+    public string? ListenHost { get; init; }
+
+    public int ListenPort { get; init; }
+
+    /// <summary>Server key (base64, 16 bytes) shared by every user of the service.</summary>
+    public string? Password { get; init; }
+
+    public string? Method { get; init; }
+
+    public bool? Udp { get; init; }
 }

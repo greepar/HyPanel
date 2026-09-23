@@ -394,8 +394,15 @@ The current implemented capability matrix is:
 ```text
 Xray:       MultiUser=true,  PerUserTraffic=true,  TrafficStats=true
 Hysteria2:  MultiUser=true,  PerUserTraffic=true,  TrafficStats=true
-sing-box:   MultiUser=false, PerUserTraffic=false, TrafficStats=false
-Mihomo:     MultiUser=false, PerUserTraffic=false, TrafficStats=false
+Xray-SS:    MultiUser=true,  PerUserTraffic=true,  TrafficStats=true   (backend type `xray-ss`)
+```
+
+Only backends with per-user identity and traffic are offered. The sing-box and Mihomo Shadowsocks backends were
+retired because they cannot give each user a distinct credential with per-user accounting; Shadowsocks 2022 is served
+by Xray instead (`2022-blake3-aes-128-gcm`, clients use `<server key>:<user key>`, where the user key is the 16 bytes of
+the binding credential GUID). `xray-ss` reuses the Xray release binaries.
+
+```text
 ```
 
 Unsupported backends do not receive grants that would expose a shared service secret. Their UI states the limitation.
