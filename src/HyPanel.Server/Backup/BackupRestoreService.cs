@@ -431,7 +431,9 @@ internal sealed class BackupRestoreService
         if (schemaVersion >= 12)
         {
             await using var command = connection.CreateCommand();
-            command.CommandText = "SELECT id,key_nonce,key_ciphertext,key_tag FROM certificates;";
+            command.CommandText = schemaVersion >= 16
+                ? "SELECT id,key_nonce,key_ciphertext,key_tag FROM certificates WHERE key_nonce IS NOT NULL;"
+                : "SELECT id,key_nonce,key_ciphertext,key_tag FROM certificates;";
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
@@ -447,6 +449,25 @@ internal sealed class BackupRestoreService
                 }
                 if (!value.Contains("PRIVATE KEY-----", StringComparison.Ordinal))
                     throw new BackupException("encrypted_certificate_key_invalid");
+            }
+        }
+        if (schemaVersion >= 16)
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT id,acme_token_nonce,acme_token_ciphertext,acme_token_tag FROM certificates WHERE acme_token_nonce IS NOT NULL;";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(protector.UnprotectAcmeDnsToken(Guid.Parse(reader.GetString(0)),
+                            new ProtectedCredential((byte[])reader[1], (byte[])reader[2], (byte[])reader[3]))))
+                        throw new BackupException("encrypted_acme_token_invalid");
+                }
+                catch (Exception exception) when (exception is InvalidOperationException or FormatException)
+                {
+                    throw new BackupException("encrypted_acme_token_invalid", exception);
+                }
             }
         }
         if (schemaVersion >= 15)

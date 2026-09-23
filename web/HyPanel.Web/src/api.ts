@@ -1,4 +1,4 @@
-import type { BackendDefinition, Backup, BackupValidation, Certificate, GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Usage, User, UserForm } from './domain'
+import type { BackendDefinition, Backup, BackupValidation, Certificate, CertificateRequest, GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Usage, User, UserForm } from './domain'
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message) }
@@ -76,8 +76,9 @@ export class ApiClient {
   generateBackendDefaults = (backendType: string, nodeId?: string) => this.request<{ backendType: string; values: Record<string, string> }>(`/api/admin/v1/backends/${encodeURIComponent(backendType)}/defaults${nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`, { method: 'POST' })
   updateSettings = (value: Pick<GlobalSettings, 'agentUpdateDefaultPolicy' | 'backendUpdateDefaultPolicy' | 'githubMirrorBaseUrl'>) => this.request('/api/admin/v1/settings', { method: 'PUT', body: JSON.stringify(value) })
   certificates = () => this.request<Certificate[]>('/api/admin/v1/certificates')
-  createCertificate = (value: { name: string; certificatePem: string; privateKeyPem: string }) => this.request<Certificate>('/api/admin/v1/certificates', { method: 'POST', body: JSON.stringify(value) })
-  replaceCertificate = (id: string, value: { name: string; certificatePem: string; privateKeyPem: string }) => this.request<Certificate>(`/api/admin/v1/certificates/${id}`, { method: 'PUT', body: JSON.stringify(value) })
+  createCertificate = (value: CertificateRequest) => this.request<Certificate>('/api/admin/v1/certificates', { method: 'POST', body: JSON.stringify(value) })
+  replaceCertificate = (id: string, value: CertificateRequest) => this.request<Certificate>(`/api/admin/v1/certificates/${id}`, { method: 'PUT', body: JSON.stringify(value) })
+  deleteCertificate = (id: string) => this.request<void>(`/api/admin/v1/certificates/${id}`, { method: 'DELETE' })
   backups = () => this.request<Backup[]>('/api/admin/v1/backups')
   createBackup = () => this.request<Backup>('/api/admin/v1/backups', { method: 'POST' })
   deleteBackup = (id: string) => this.request<void>(`/api/admin/v1/backups/${encodeURIComponent(id)}`, { method: 'DELETE' })

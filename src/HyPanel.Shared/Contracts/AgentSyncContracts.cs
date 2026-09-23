@@ -78,11 +78,39 @@ public sealed record ServiceDesiredState(
     int? ControlPort = null,
     TlsCertificateAsset? TlsCertificate = null);
 
+/// <summary>
+/// TLS material for a service. <c>Upload</c> ships PEM from the Panel; <c>Path</c> points at files already on the
+/// node; <c>Acme</c> lets the backend issue and renew the certificate itself.
+/// </summary>
 public sealed record TlsCertificateAsset(
     Guid CertificateId,
     string Fingerprint,
     string? CertificatePem,
-    string? PrivateKeyPem);
+    string? PrivateKeyPem,
+    string Kind = TlsCertificateKinds.Upload,
+    string? CertificatePath = null,
+    string? PrivateKeyPath = null,
+    IReadOnlyList<string>? AcmeDomains = null,
+    string? AcmeEmail = null,
+    string? AcmeChallenge = null,
+    string? AcmeDnsToken = null);
+
+public static class TlsCertificateKinds
+{
+    public const string Upload = "Upload";
+    public const string Path = "Path";
+    public const string Acme = "Acme";
+}
+
+public static class AcmeChallenges
+{
+    /// <summary>HTTP-01 on TCP 80.</summary>
+    public const string Http = "http";
+    /// <summary>TLS-ALPN-01 on TCP 443.</summary>
+    public const string Tls = "tls";
+    /// <summary>DNS-01 through the Cloudflare API; needs no inbound port.</summary>
+    public const string Cloudflare = "cloudflare";
+}
 
 public sealed record BackendUser(
     Guid UserId,

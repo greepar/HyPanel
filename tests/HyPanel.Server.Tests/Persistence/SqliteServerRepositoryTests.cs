@@ -35,7 +35,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -72,7 +72,7 @@ public sealed class SqliteServerRepositoryTests
         var unrelatedNode = Guid.NewGuid();
         await fixture.Repository.CreateNodeAsync(node, "cert-node", CancellationToken.None);
         await fixture.Repository.CreateNodeAsync(unrelatedNode, "unrelated-node", CancellationToken.None);
-        var value = new CertificateRecord(id, "example", "CERT", fixture.Time.GetUtcNow(), fixture.Time.GetUtcNow(),
+        var value = new CertificateRecord(id, "example", "Upload", "CERT", fixture.Time.GetUtcNow(), fixture.Time.GetUtcNow(),
             fixture.Time.GetUtcNow().AddDays(30), new string('a', 64), "CN=example", "DNS:example.com", 0, "PRIVATE");
         Assert.IsTrue(await fixture.Repository.CreateCertificateAsync(value, CancellationToken.None));
         await using (var c = await fixture.OpenConnectionAsync())
@@ -105,7 +105,7 @@ public sealed class SqliteServerRepositoryTests
         await using var fixture = await TestDatabase.CreateAsync();
         var id = Guid.NewGuid();
         var now = fixture.Time.GetUtcNow();
-        Assert.IsTrue(await fixture.Repository.CreateCertificateAsync(new CertificateRecord(id, "cert", "CERT", now,
+        Assert.IsTrue(await fixture.Repository.CreateCertificateAsync(new CertificateRecord(id, "cert", "Upload", "CERT", now,
             now, now.AddDays(1), new string('c', 64), "CN=test", "", 0, "PRIVATE"), CancellationToken.None));
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {

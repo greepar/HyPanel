@@ -81,6 +81,8 @@ public sealed class BackendInstanceStore(AgentEnrollmentOptions options)
     public async Task EnsureTlsAssetAsync(ServiceDesiredState desiredState, CancellationToken cancellationToken)
     {
         if (desiredState.TlsCertificate is not { } tls) return;
+        // Path and ACME certificates are read or issued by the backend itself; nothing to materialise.
+        if (tls.Kind != TlsCertificateKinds.Upload) return;
         if (!IsSha256(tls.Fingerprint)) throw new InvalidDataException("TLS certificate fingerprint is invalid.");
         var directory = Path.Combine(GetInstanceDirectory(desiredState.ServiceId), "tls", tls.Fingerprint);
         var certPath = Path.Combine(directory, "cert.pem");

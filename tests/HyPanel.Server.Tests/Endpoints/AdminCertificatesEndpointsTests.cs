@@ -33,7 +33,7 @@ public sealed class AdminCertificatesEndpointsTests
 
         Assert.AreEqual("example", value.Name);
         Assert.IsNotNull(value.PrivateKeyPem);
-        Assert.AreEqual(64, value.Fingerprint.Length);
+        Assert.AreEqual(64, value.Fingerprint!.Length);
         StringAssert.Contains(value.San, "example.com");
     }
 
@@ -78,5 +78,26 @@ public sealed class AdminCertificatesEndpointsTests
         Assert.IsFalse(AdminCertificatesEndpoints.TryCreate(Guid.NewGuid(),
             new CertificateUploadRequest("future", cert.ExportCertificatePem(), key.ExportPkcs8PrivateKeyPem()), now,
             out _));
+    }
+
+    [TestMethod]
+    public void TryCreate_PathAndAcmeSources_ValidateRequiredFields()
+    {
+        var now = DateTimeOffset.Parse("2026-09-23T00:00:00Z");
+        Assert.IsTrue(AdminCertificatesEndpoints.TryCreate(Guid.NewGuid(), new CertificateUploadRequest("le", null, null,
+            "Path", "/etc/letsencrypt/live/a.example.com/fullchain.pem", "/etc/letsencrypt/live/a.example.com/privkey.pem",
+            "A.Example.com"), now, out var path));
+        Assert.AreEqual("DNS:a.example.com", path.San);
+        Assert.IsFalse(AdminCertificatesEndpoints.TryCreate(Guid.NewGuid(), new CertificateUploadRequest("bad", null, null,
+            "Path", "relative/cert.pem", "/key.pem", "a.example.com"), now, out _));
+
+        Assert.IsTrue(AdminCertificatesEndpoints.TryCreate(Guid.NewGuid(), new CertificateUploadRequest("acme", null, null,
+            "Acme", Domain: "hy.example.com", AcmeEmail: "ops@example.com", AcmeChallenge: "http"), now, out var http));
+        Assert.IsNull(http.AcmeDnsToken);
+        Assert.IsFalse(AdminCertificatesEndpoints.TryCreate(Guid.NewGuid(), new CertificateUploadRequest("dns", null, null,
+            "Acme", Domain: "hy.example.com", AcmeEmail: "ops@example.com", AcmeChallenge: "cloudflare"), now, out _),
+            "Cloudflare DNS needs an API token");
+        Assert.IsFalse(AdminCertificatesEndpoints.TryCreate(Guid.NewGuid(), new CertificateUploadRequest("wild", null, null,
+            "Acme", Domain: "*.example.com", AcmeEmail: "ops@example.com", AcmeChallenge: "http"), now, out _));
     }
 }

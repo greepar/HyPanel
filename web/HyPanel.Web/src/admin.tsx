@@ -16,7 +16,10 @@ import type {
   BackendField,
   Backup,
   BackupValidation,
+  AcmeChallenge,
   Certificate,
+  CertificateKind,
+  CertificateRequest,
   HealthSummary,
   GlobalSettings,
   Node,
@@ -174,37 +177,136 @@ function BackupPanel({ api, setError }: PageProps) {
   </section>;
 }
 
-type CertificateDraft = { name: string };
+type CertificateDraft = {
+  name: string;
+  kind: CertificateKind;
+  certificatePath: string;
+  privateKeyPath: string;
+  domain: string;
+  acmeEmail: string;
+  acmeChallenge: AcmeChallenge;
+  acmeDnsToken: string;
+};
+const certificateKindLabels: Record<CertificateKind, string> = { Upload: "手动上传", Path: "路径映射", Acme: "ACME 自动续签" };
+const acmeChallengeLabels: Record<AcmeChallenge, string> = {
+  http: "HTTP 验证（需开放 TCP 80）",
+  tls: "TLS-ALPN 验证（需开放 TCP 443）",
+  cloudflare: "Cloudflare DNS 验证（无需开放端口）",
+};
+/** Short description for certificate lists and pickers. */
+const certificateSummary = (certificate: Certificate) =>
+  certificate.kind === "Upload"
+    ? `到期 ${certificate.expiresAtUtc ? formatDate(certificate.expiresAtUtc) : "未知"}`
+    : certificate.kind === "Path"
+      ? "节点本地文件"
+      : "ACME 自动续签";
 
 function CertificatePanel({ api, certificates, setCertificates, setError }: { api: ApiClient; certificates: Certificate[]; setCertificates: (value: Certificate[]) => void; setError: (value: string) => void }) {
-  const empty: CertificateDraft = { name: "" };
+  const empty: CertificateDraft = { name: "", kind: "Upload", certificatePath: "", privateKeyPath: "", domain: "", acmeEmail: "", acmeChallenge: "http", acmeDnsToken: "" };
   const [draft, setDraft] = useState<CertificateDraft>(empty);
   const certificatePem = useRef<HTMLTextAreaElement>(null);
   const privateKeyPem = useRef<HTMLTextAreaElement>(null);
-  const [editing, setEditing] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Certificate | null>(null);
   const [busy, setBusy] = useState(false);
-  const change = (key: keyof CertificateDraft, value: string) => setDraft(current => ({ ...current, [key]: value }));
+  const change = <K extends keyof CertificateDraft>(key: K, value: CertificateDraft[K]) => setDraft(current => ({ ...current, [key]: value }));
   const clear = () => { setDraft(empty); setEditing(null); if (certificatePem.current) certificatePem.current.value = ""; if (privateKeyPem.current) privateKeyPem.current.value = ""; };
   const submit = async (event: Event) => {
     event.preventDefault();
     setBusy(true);
     try {
-      const body = { name: draft.name, certificatePem: certificatePem.current?.value ?? "", privateKeyPem: privateKeyPem.current?.value ?? "" };
-      const certificate = editing ? await api.replaceCertificate(editing, body) : await api.createCertificate(body);
+      const body: CertificateRequest = draft.kind === "Upload"
+        ? { name: draft.name, kind: "Upload", certificatePem: certificatePem.current?.value ?? "", privateKeyPem: privateKeyPem.current?.value ?? "" }
+        : draft.kind === "Path"
+          ? { name: draft.name, kind: "Path", certificatePath: draft.certificatePath, privateKeyPath: draft.privateKeyPath, domain: draft.domain }
+          : { name: draft.name, kind: "Acme", domain: draft.domain, acmeEmail: draft.acmeEmail, acmeChallenge: draft.acmeChallenge, acmeDnsToken: draft.acmeDnsToken || undefined };
+      const certificate = editing ? await api.replaceCertificate(editing.id, body) : await api.createCertificate(body);
       setCertificates(editing ? certificates.map(item => item.id === certificate.id ? certificate : item) : [...certificates, certificate]);
       clear();
-      setError(editing ? "证书已替换。" : "证书已上传。");
-    } catch (reason) { setError(messageFor(reason, editing ? "无法替换证书" : "无法上传证书")); }
+      setError(editing ? "证书已更新，使用它的服务会自动重新部署。" : "证书已添加。");
+    } catch (reason) { setError(messageFor(reason, editing ? "无法更新证书，请检查填写内容" : "无法添加证书，请检查填写内容")); }
     finally { setBusy(false); }
   };
-  const edit = (certificate: Certificate) => { setEditing(certificate.id); setDraft({ name: certificate.name }); };
+  const edit = (certificate: Certificate) => {
+    setEditing(certificate);
+    setDraft({
+      ...empty,
+      name: certificate.name,
+      kind: certificate.kind,
+      certificatePath: certificate.certificatePath ?? "",
+      privateKeyPath: certificate.privateKeyPath ?? "",
+      domain: certificate.san[0]?.replace(/^DNS[:=]/, "") ?? "",
+      acmeEmail: certificate.acmeEmail ?? "",
+      acmeChallenge: certificate.acmeChallenge ?? "http",
+    });
+  };
+  const remove = async (certificate: Certificate) => {
+    if (!confirm(`删除证书“${certificate.name}”？`)) return;
+    try {
+      await api.deleteCertificate(certificate.id);
+      setCertificates(certificates.filter(item => item.id !== certificate.id));
+      if (editing?.id === certificate.id) clear();
+      setError("证书已删除。");
+    } catch (reason) {
+      setError(reason instanceof ApiError && reason.status === 409 ? "证书仍被服务使用，请先在服务中换用其他证书。" : messageFor(reason, "无法删除证书"));
+    }
+  };
+  const detail = (certificate: Certificate) => certificate.kind === "Upload"
+    ? `${certificate.san.join(", ") || certificate.subject || "无 SAN"} · 有效期至 ${certificate.expiresAtUtc ? formatDate(certificate.expiresAtUtc) : "未知"}`
+    : certificate.kind === "Path"
+      ? `${certificate.san.join(", ")} · ${certificate.certificatePath}`
+      : `${certificate.san.join(", ")} · ${certificate.acmeChallenge ? acmeChallengeLabels[certificate.acmeChallenge] : ""}`;
   return <section className="card panel certificate-panel">
-    <SectionTitle title="TLS 证书" description="集中管理证书，并在 Hysteria 2 服务中按 ID 选择。" />
-    {certificates.length ? <div className="certificate-list">{certificates.map(certificate => <article className="certificate-row" key={certificate.id}><div><strong>{certificate.name}</strong><small>{certificate.subject} · {certificate.san.join(", ") || "无 SAN"}</small><small>有效期至 {formatDate(certificate.expiresAtUtc)} · 使用中 {certificate.usedBy} 个服务</small></div><button className="button button-secondary" type="button" onClick={() => edit(certificate)}>替换</button></article>)}</div> : <p className="muted">还没有上传证书。</p>}
+    <SectionTitle title="TLS 证书" description="Hysteria 2 服务使用的证书。支持手动上传、节点本地文件路径，或由节点自动申请并续签。" />
+    {certificates.length ? <div className="certificate-list">{certificates.map(certificate => <article className="certificate-row" key={certificate.id}>
+      <div>
+        <strong>{certificate.name} <span className="badge">{certificateKindLabels[certificate.kind]}</span></strong>
+        <small>{detail(certificate)}</small>
+        <small>使用中 {certificate.usedBy} 个服务</small>
+      </div>
+      <div className="row-actions">
+        <button className="button button-secondary button-small" type="button" onClick={() => edit(certificate)}>编辑</button>
+        <button className="link-button" type="button" disabled={certificate.usedBy > 0} title={certificate.usedBy > 0 ? "仍被服务使用" : undefined} onClick={() => void remove(certificate)}>删除</button>
+      </div>
+    </article>)}</div> : <p className="muted">还没有证书。</p>}
     <form className="certificate-form" onSubmit={event => void submit(event)}>
-      <h3>{editing ? "替换证书" : "上传证书"}</h3>
-      <div className="form-grid"><label>名称<input required value={draft.name} onInput={event => change("name", event.currentTarget.value)} /></label><label>证书 PEM<textarea required ref={certificatePem} placeholder={editing ? "粘贴新的证书 PEM" : "-----BEGIN CERTIFICATE-----"} /></label><label>私钥 PEM<textarea required ref={privateKeyPem} placeholder={editing ? "粘贴新的私钥 PEM" : "-----BEGIN PRIVATE KEY-----"} /></label></div>
-      <div className="row-actions"><button className="button button-primary" type="submit" disabled={busy}>{busy ? "提交中…" : editing ? "替换证书" : "上传证书"}</button>{editing && <button className="button button-secondary" type="button" onClick={clear}>取消</button>}</div>
+      <div className="section-toolbar">
+        <h3>{editing ? `编辑 ${editing.name}` : "添加证书"}</h3>
+        <div className="segmented" role="tablist" aria-label="证书来源">
+          {(Object.keys(certificateKindLabels) as CertificateKind[]).map(kind => <button key={kind} type="button" role="tab" aria-selected={draft.kind === kind} className={draft.kind === kind ? "active" : ""} onClick={() => change("kind", kind)}>{certificateKindLabels[kind]}</button>)}
+        </div>
+      </div>
+      <label>名称<input required value={draft.name} placeholder="例如 hk-hy2" onInput={event => change("name", event.currentTarget.value)} /></label>
+      {draft.kind === "Upload" && <>
+        <p className="field-help">粘贴证书和私钥，由面板加密保存并下发到节点。到期前需要手动替换。</p>
+        <div className="form-grid">
+          <label>证书 PEM<textarea required ref={certificatePem} placeholder="-----BEGIN CERTIFICATE-----" /></label>
+          <label>私钥 PEM<textarea required ref={privateKeyPem} placeholder="-----BEGIN PRIVATE KEY-----" /></label>
+        </div>
+      </>}
+      {draft.kind === "Path" && <>
+        <p className="field-help">使用节点上已有的证书文件（例如 certbot / acme.sh 维护的证书），文件更新后重启服务即可生效。Agent 以 <code>hypanel-agent</code> 用户运行，需要能读取这两个文件，例如：<code>setfacl -m u:hypanel-agent:r 证书 私钥</code>（目录也需可进入）。</p>
+        <div className="form-grid">
+          <label>证书文件路径<input required placeholder="/etc/letsencrypt/live/example.com/fullchain.pem" value={draft.certificatePath} onInput={event => change("certificatePath", event.currentTarget.value)} /></label>
+          <label>私钥文件路径<input required placeholder="/etc/letsencrypt/live/example.com/privkey.pem" value={draft.privateKeyPath} onInput={event => change("privateKeyPath", event.currentTarget.value)} /></label>
+          <label>证书域名<input required placeholder="example.com（用作订阅 SNI）" value={draft.domain} onInput={event => change("domain", event.currentTarget.value)} /></label>
+        </div>
+      </>}
+      {draft.kind === "Acme" && <>
+        <p className="field-help">由节点上的 Hysteria 自动向 Let's Encrypt 申请并在到期前自动续签，无需任何维护。域名需解析到使用该证书的节点。</p>
+        <div className="form-grid">
+          <label>域名<input required placeholder="hy.example.com" value={draft.domain} onInput={event => change("domain", event.currentTarget.value)} /></label>
+          <label>联系邮箱<input required type="email" placeholder="用于证书到期通知" value={draft.acmeEmail} onInput={event => change("acmeEmail", event.currentTarget.value)} /></label>
+          <label>验证方式<select value={draft.acmeChallenge} onChange={event => change("acmeChallenge", event.currentTarget.value as AcmeChallenge)}>
+            {(Object.keys(acmeChallengeLabels) as AcmeChallenge[]).map(value => <option key={value} value={value}>{acmeChallengeLabels[value]}</option>)}
+          </select></label>
+          {draft.acmeChallenge === "cloudflare" && <label>Cloudflare API Token<input type="password" autoComplete="off" required={!editing?.hasAcmeDnsToken} placeholder={editing?.hasAcmeDnsToken ? "已保存，留空则保持不变" : "需要 Zone.DNS 编辑权限"} value={draft.acmeDnsToken} onInput={event => change("acmeDnsToken", event.currentTarget.value)} /></label>}
+        </div>
+        {draft.acmeChallenge !== "cloudflare" && <p className="field-help">HTTP / TLS 验证要求节点的 TCP {draft.acmeChallenge === "http" ? "80" : "443"} 端口可从公网访问且未被占用；较早安装的节点需重新运行一次安装命令，以授予 Agent 绑定低端口的权限。</p>}
+      </>}
+      <div className="row-actions">
+        <button className="button button-primary" type="submit" disabled={busy}>{busy ? "提交中…" : editing ? "保存修改" : "添加证书"}</button>
+        {editing && <button className="button button-secondary" type="button" onClick={clear}>取消</button>}
+      </div>
     </form>
   </section>;
 }
@@ -1992,7 +2094,7 @@ function ServiceEditor({
             <option value="">选择证书</option>
             {certificates.map((certificate) => (
               <option key={certificate.id} value={certificate.id}>
-                {certificate.name} · 到期 {formatDate(certificate.expiresAtUtc)}
+                {certificate.name} · {certificateSummary(certificate)}
               </option>
             ))}
           </select>

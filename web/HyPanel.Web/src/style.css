@@ -394,7 +394,12 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 .certificate-row small, .backup-row small { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap }
 .certificate-form, .backup-restore { display: grid; gap: 12px; padding-top: 16px; border-top: 1px solid var(--border) }
 .certificate-form h3, .backup-restore h3, .backup-restore p { margin: 0 }
-.certificate-form .form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)) }
+.certificate-form .form-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)) }
+.certificate-form .section-toolbar { margin-bottom: 0 }
+.certificate-form .field-help { margin: 0 }
+.section-toolbar > .segmented { display: inline-flex }
+.certificate-row > .row-actions { display: flex; flex-wrap: nowrap; gap: 12px }
+.certificate-row strong .badge { margin-left: 6px; vertical-align: middle }
 .restore-controls { display: grid; gap: 12px; max-width: 520px }
 
 /* ---------- motion ---------- */

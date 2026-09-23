@@ -423,6 +423,17 @@ GET /s/<token>?format=base64
 
 Subscription token must be random, revocable, and unrelated to the user's password/session token.
 
+### TLS certificate sources
+
+`TlsCertificateAsset.Kind` selects how a Hysteria2 service obtains its certificate:
+
+- `Upload`: PEM pair stored encrypted on the Server and written to `tls/<fingerprint>/` in the instance directory.
+- `Path`: absolute certificate/key paths on the node, read directly by the backend (the `hypanel-agent` user
+  needs read access). The Server stores the domain as `DNS:<domain>` for subscription SNI.
+- `Acme`: domain, email and challenge (`http` = TCP 80, `tls` = TCP 443, `cloudflare` = DNS-01 with an encrypted API
+  token). Hysteria issues and renews the certificate itself with state under `acme/` in the instance directory; HTTP
+  and TLS challenges claim their TCP port for conflict detection.
+
 ## 11. Error shape
 
 Prefer one small consistent API error contract:

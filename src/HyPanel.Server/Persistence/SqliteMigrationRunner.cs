@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 15;
+    public const long CurrentSchemaVersion = 16;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -20,6 +20,7 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
     private const long AgentPublicIpv4SchemaVersion = 13;
     private const long RevokedAgentsSchemaVersion = 14;
     private const long RecoverableSubscriptionTokenSchemaVersion = 15;
+    private const long CertificateSourcesSchemaVersion = 16;
 
     public async Task MigrateAsync(CancellationToken cancellationToken)
     {
@@ -408,6 +409,50 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             insertMigration.CommandText =
                 "INSERT INTO schema_migrations (version,applied_at_utc) VALUES (@version,@at);";
             insertMigration.Parameters.AddWithValue("@version", RecoverableSubscriptionTokenSchemaVersion);
+            insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+            await insertMigration.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, CertificateSourcesSchemaVersion, cancellationToken))
+        {
+            // Certificates can now be uploaded PEM, a path on the node, or ACME-issued by the backend.
+            // SQLite cannot relax NOT NULL in place, so the table is rebuilt with the upload columns optional.
+            await ExecuteAsync(connection, transaction, """
+                CREATE TABLE certificates_v16 (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    normalized_name TEXT NOT NULL UNIQUE COLLATE BINARY,
+                    kind TEXT NOT NULL DEFAULT 'Upload' CHECK (kind IN ('Upload','Path','Acme')),
+                    certificate_pem TEXT NULL,
+                    key_nonce BLOB NULL CHECK (key_nonce IS NULL OR length(key_nonce)=12),
+                    key_ciphertext BLOB NULL,
+                    key_tag BLOB NULL CHECK (key_tag IS NULL OR length(key_tag)=16),
+                    created_at_utc TEXT NOT NULL,
+                    not_before_utc TEXT NULL,
+                    expires_at_utc TEXT NULL,
+                    fingerprint TEXT NULL UNIQUE,
+                    subject TEXT NULL,
+                    san TEXT NOT NULL DEFAULT '',
+                    certificate_path TEXT NULL,
+                    private_key_path TEXT NULL,
+                    acme_email TEXT NULL,
+                    acme_challenge TEXT NULL CHECK (acme_challenge IS NULL OR acme_challenge IN ('http','tls','cloudflare')),
+                    acme_token_nonce BLOB NULL,
+                    acme_token_ciphertext BLOB NULL,
+                    acme_token_tag BLOB NULL
+                );
+                INSERT INTO certificates_v16 (id,name,normalized_name,kind,certificate_pem,key_nonce,key_ciphertext,key_tag,
+                    created_at_utc,not_before_utc,expires_at_utc,fingerprint,subject,san)
+                SELECT id,name,normalized_name,'Upload',certificate_pem,key_nonce,key_ciphertext,key_tag,
+                    created_at_utc,not_before_utc,expires_at_utc,fingerprint,subject,san FROM certificates;
+                DROP TABLE certificates;
+                ALTER TABLE certificates_v16 RENAME TO certificates;
+                """, cancellationToken);
+            await using var insertMigration = connection.CreateCommand();
+            insertMigration.Transaction = transaction;
+            insertMigration.CommandText =
+                "INSERT INTO schema_migrations (version,applied_at_utc) VALUES (@version,@at);";
+            insertMigration.Parameters.AddWithValue("@version", CertificateSourcesSchemaVersion);
             insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
             await insertMigration.ExecuteNonQueryAsync(cancellationToken);
         }

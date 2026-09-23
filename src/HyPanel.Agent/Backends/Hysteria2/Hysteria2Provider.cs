@@ -61,9 +61,17 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
             return ValueTask.FromResult(Invalid("invalid_control_port", "Invalid Hysteria2 control port."));
         }
 
+        var tcpPorts = new List<int>();
+        if (desiredState.ControlPort is { } port) tcpPorts.Add(port);
+        if (desiredState.TlsCertificate is { Kind: TlsCertificateKinds.Acme } acme)
+        {
+            if (acme.AcmeChallenge == AcmeChallenges.Http) tcpPorts.Add(80);
+            else if (acme.AcmeChallenge == AcmeChallenges.Tls) tcpPorts.Add(443);
+        }
+
         return ValueTask.FromResult(new BackendValidationResult(
             true,
-            desiredState.ControlPort is { } port ? [port] : Array.Empty<int>(),
+            tcpPorts,
             [config.ListenPort],
             null,
             null));
@@ -87,7 +95,7 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
             throw new InvalidOperationException("Hysteria2 user list is invalid.");
         }
 
-        var yaml = RenderYaml(config, desiredState.TlsCertificate?.Fingerprint, users, desiredState.ControlPort,
+        var yaml = RenderYaml(config, desiredState.TlsCertificate, users, desiredState.ControlPort,
             StatsSecret(desiredState));
         var content = Encoding.UTF8.GetBytes(yaml);
         var sha256 = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
@@ -271,10 +279,26 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
     private static bool HasValidCertificate(Hysteria2Config config, ServiceDesiredState desiredState)
     {
         if (config.CertificateId != Guid.Empty && desiredState.TlsCertificate is { } tls)
-            return tls.CertificateId == config.CertificateId && IsSha256(tls.Fingerprint);
+            return tls.CertificateId == config.CertificateId && tls.Kind switch
+            {
+                TlsCertificateKinds.Upload => IsSha256(tls.Fingerprint),
+                TlsCertificateKinds.Path => IsAbsolutePath(tls.CertificatePath) && IsAbsolutePath(tls.PrivateKeyPath)
+                                            && !PathsEqual(tls.CertificatePath!, tls.PrivateKeyPath!),
+                TlsCertificateKinds.Acme => tls.AcmeDomains is { Count: > 0 } domains
+                                            && domains.All(IsDnsName)
+                                            && tls.AcmeEmail is { Length: > 3 } email && email.Contains('@')
+                                            && tls.AcmeChallenge is AcmeChallenges.Http or AcmeChallenges.Tls
+                                                or AcmeChallenges.Cloudflare
+                                            && (tls.AcmeChallenge != AcmeChallenges.Cloudflare
+                                                || !string.IsNullOrWhiteSpace(tls.AcmeDnsToken)),
+                _ => false
+            };
         return IsAbsolutePath(config.CertificatePath) && IsAbsolutePath(config.PrivateKeyPath) &&
                !PathsEqual(config.CertificatePath!, config.PrivateKeyPath!);
     }
+
+    private static bool IsDnsName(string value) =>
+        value.Length is > 0 and <= 253 && Uri.CheckHostName(value) == UriHostNameType.Dns && !value.Contains('*');
 
     private static bool IsAbsolutePath(string? path) =>
         !string.IsNullOrWhiteSpace(path) && Path.IsPathFullyQualified(path);
@@ -291,7 +315,7 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
         uri.Scheme == Uri.UriSchemeHttps &&
         !string.IsNullOrEmpty(uri.Host);
 
-    private static string RenderYaml(Hysteria2Config config, string? fingerprint,
+    private static string RenderYaml(Hysteria2Config config, TlsCertificateAsset? tls,
         IReadOnlyList<BackendUser> users, int? controlPort, string statsSecret)
     {
         var listenAddress = config.ListenHost!.Contains(':')
@@ -300,11 +324,41 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
 
         var yaml = new StringBuilder();
         yaml.Append("listen: ").Append(QuoteYaml(listenAddress)).AppendLine();
-        yaml.AppendLine("tls:");
-        var certificatePath = fingerprint is null ? config.CertificatePath! : $"tls/{fingerprint}/cert.pem";
-        var privateKeyPath = fingerprint is null ? config.PrivateKeyPath! : $"tls/{fingerprint}/key.pem";
-        yaml.Append("  cert: ").Append(QuoteYaml(certificatePath)).AppendLine();
-        yaml.Append("  key: ").Append(QuoteYaml(privateKeyPath)).AppendLine();
+        if (tls?.Kind == TlsCertificateKinds.Acme)
+        {
+            // Hysteria issues and renews the certificate itself; state lives in the instance directory.
+            yaml.AppendLine("acme:");
+            yaml.AppendLine("  domains:");
+            foreach (var domain in tls.AcmeDomains!)
+                yaml.Append("    - ").Append(QuoteYaml(domain)).AppendLine();
+            yaml.Append("  email: ").Append(QuoteYaml(tls.AcmeEmail!)).AppendLine();
+            yaml.AppendLine("  ca: \"letsencrypt\"");
+            yaml.AppendLine("  dir: \"acme\"");
+            if (tls.AcmeChallenge == AcmeChallenges.Cloudflare)
+            {
+                yaml.AppendLine("  type: \"dns\"");
+                yaml.AppendLine("  dns:");
+                yaml.AppendLine("    name: \"cloudflare\"");
+                yaml.AppendLine("    config:");
+                yaml.Append("      cloudflare_api_token: ").Append(QuoteYaml(tls.AcmeDnsToken!)).AppendLine();
+            }
+            else
+            {
+                yaml.Append("  type: ").Append(QuoteYaml(tls.AcmeChallenge!)).AppendLine();
+            }
+        }
+        else
+        {
+            yaml.AppendLine("tls:");
+            var (certificatePath, privateKeyPath) = tls?.Kind switch
+            {
+                TlsCertificateKinds.Path => (tls.CertificatePath!, tls.PrivateKeyPath!),
+                TlsCertificateKinds.Upload => ($"tls/{tls.Fingerprint}/cert.pem", $"tls/{tls.Fingerprint}/key.pem"),
+                _ => (config.CertificatePath!, config.PrivateKeyPath!)
+            };
+            yaml.Append("  cert: ").Append(QuoteYaml(certificatePath)).AppendLine();
+            yaml.Append("  key: ").Append(QuoteYaml(privateKeyPath)).AppendLine();
+        }
         yaml.AppendLine("auth:");
         if (users.Count > 0)
         {

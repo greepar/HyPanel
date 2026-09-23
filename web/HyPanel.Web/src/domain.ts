@@ -5,7 +5,10 @@ export type AppRoute = AdminRoute | 'subscription'
 export type Role = 'Admin' | 'User'
 export type ServerUpdate = { currentVersion: string; latestVersion: string | null; deploymentMode: 'BareMetal' | 'Docker'; updateAvailable: boolean; status: string; error: string | null }
 export type GlobalSettings = { agentUpdateDefaultPolicy: 'Manual' | 'Auto'; backendUpdateDefaultPolicy: 'Manual' | 'Auto'; githubMirrorBaseUrl: string | null; agentReleaseVersion: string | null; backendReleases: Record<string, string>; server: ServerUpdate; dataDirectory: string; databaseSizeBytes: number }
-export type Certificate = { id: string; name: string; createdAtUtc: string; notBeforeUtc: string; expiresAtUtc: string; fingerprint: string; subject: string; san: string[]; usedBy: number }
+export type CertificateKind = 'Upload' | 'Path' | 'Acme'
+export type AcmeChallenge = 'http' | 'tls' | 'cloudflare'
+export type Certificate = { id: string; name: string; kind: CertificateKind; createdAtUtc: string; notBeforeUtc: string | null; expiresAtUtc: string | null; fingerprint: string | null; subject: string | null; san: string[]; usedBy: number; certificatePath: string | null; privateKeyPath: string | null; acmeEmail: string | null; acmeChallenge: AcmeChallenge | null; hasAcmeDnsToken: boolean }
+export type CertificateRequest = { name: string; kind: CertificateKind; certificatePem?: string; privateKeyPem?: string; certificatePath?: string; privateKeyPath?: string; domain?: string; acmeEmail?: string; acmeChallenge?: AcmeChallenge; acmeDnsToken?: string }
 export type Backup = { id: string; createdAtUtc: string; sizeBytes: number; serverVersion: string; schemaVersion: number }
 export type BackupValidation = { validationId: string; valid: boolean; error: string | null; formatVersion: number | null; createdAtUtc: string | null; serverVersion: string | null; schemaVersion: number | null; databaseSizeBytes: number | null; databaseIntegrity: boolean; masterKeyCompatible: boolean }
 

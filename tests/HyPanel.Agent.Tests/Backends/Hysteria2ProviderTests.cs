@@ -185,6 +185,55 @@ public sealed class Hysteria2ProviderTests
     }
 
     [TestMethod]
+    public async Task RenderConfigAsync_PathCertificate_UsesNodeFiles()
+    {
+        var desired = CreateDesiredState() with
+        {
+            TlsCertificate = new TlsCertificateAsset(CertificateId, string.Empty, null, null, TlsCertificateKinds.Path,
+                "/etc/ssl/hy/fullchain.pem", "/etc/ssl/hy/privkey.pem")
+        };
+
+        Assert.IsTrue((await provider.ValidateAsync(desired, CancellationToken.None)).IsValid);
+        var yaml = Encoding.UTF8.GetString((await provider.RenderConfigAsync(desired, CancellationToken.None)).Content.Span);
+        StringAssert.Contains(yaml, "  cert: \"/etc/ssl/hy/fullchain.pem\"");
+        StringAssert.Contains(yaml, "  key: \"/etc/ssl/hy/privkey.pem\"");
+    }
+
+    [TestMethod]
+    public async Task RenderConfigAsync_AcmeCloudflare_RendersDnsChallengeWithoutTlsFiles()
+    {
+        var desired = CreateDesiredState() with
+        {
+            TlsCertificate = new TlsCertificateAsset(CertificateId, string.Empty, null, null, TlsCertificateKinds.Acme,
+                AcmeDomains: ["hy.example.com"], AcmeEmail: "ops@example.com",
+                AcmeChallenge: AcmeChallenges.Cloudflare, AcmeDnsToken: "cf-token-123")
+        };
+
+        var validation = await provider.ValidateAsync(desired, CancellationToken.None);
+        var yaml = Encoding.UTF8.GetString((await provider.RenderConfigAsync(desired, CancellationToken.None)).Content.Span);
+
+        Assert.IsTrue(validation.IsValid);
+        Assert.IsFalse(yaml.Contains("\ntls:", StringComparison.Ordinal));
+        StringAssert.Contains(yaml, "acme:\n  domains:\n    - \"hy.example.com\"");
+        StringAssert.Contains(yaml, "  type: \"dns\"");
+        StringAssert.Contains(yaml, "      cloudflare_api_token: \"cf-token-123\"");
+    }
+
+    [TestMethod]
+    public async Task ValidateAsync_AcmeHttpChallenge_ClaimsTcp80AndRejectsMissingToken()
+    {
+        var http = CreateDesiredState() with
+        {
+            TlsCertificate = new TlsCertificateAsset(CertificateId, string.Empty, null, null, TlsCertificateKinds.Acme,
+                AcmeDomains: ["hy.example.com"], AcmeEmail: "ops@example.com", AcmeChallenge: AcmeChallenges.Http)
+        };
+        var missingToken = http with { TlsCertificate = http.TlsCertificate! with { AcmeChallenge = AcmeChallenges.Cloudflare } };
+
+        CollectionAssert.Contains((await provider.ValidateAsync(http, CancellationToken.None)).TcpPorts.ToArray(), 80);
+        Assert.IsFalse((await provider.ValidateAsync(missingToken, CancellationToken.None)).IsValid);
+    }
+
+    [TestMethod]
     public void ParseTraffic_MapsTxToUploadRxToDownloadAndIgnoresUnknownIdentities()
     {
         var alice = Guid.NewGuid();

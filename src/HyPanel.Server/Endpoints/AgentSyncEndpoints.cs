@@ -106,8 +106,17 @@ internal static class AgentSyncEndpoints
                 {
                     var certificate = await repository.GetCertificateWithKeyAsync(certificateId, cancellationToken);
                     if (certificate is not null)
-                        tls = new TlsCertificateAsset(certificate.Id, certificate.Fingerprint,
-                            certificate.CertificatePem, certificate.PrivateKeyPem);
+                        tls = certificate.Kind switch
+                        {
+                            TlsCertificateKinds.Path => new TlsCertificateAsset(certificate.Id, string.Empty, null, null,
+                                TlsCertificateKinds.Path, certificate.CertificatePath, certificate.PrivateKeyPath),
+                            TlsCertificateKinds.Acme => new TlsCertificateAsset(certificate.Id, string.Empty, null, null,
+                                TlsCertificateKinds.Acme, AcmeDomains: [SqliteServerRepository.FirstDnsName(certificate.San)!],
+                                AcmeEmail: certificate.AcmeEmail, AcmeChallenge: certificate.AcmeChallenge,
+                                AcmeDnsToken: certificate.AcmeDnsToken),
+                            _ => new TlsCertificateAsset(certificate.Id, certificate.Fingerprint!,
+                                certificate.CertificatePem, certificate.PrivateKeyPem)
+                        };
                 }
                 desiredServices.Add(new ServiceDesiredState(service.Id, service.Name, service.BackendType,
                     service.BackendVersion, service.Enabled, service.ConfigSchemaVersion, service.ConfigJson, users,
