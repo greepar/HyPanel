@@ -1,5 +1,6 @@
 namespace HyPanel.Agent.Updates;
 
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO.Compression;
@@ -89,19 +90,25 @@ public sealed class AgentUpdater(
             await stateStore.SaveAsync(state, cancellationToken);
             var archivePath = StagingArchivePath(installPath);
             var stagedPath = StagedExecutablePath(installPath);
+            var stage = UpdateStage.Prepare;
             try
             {
-                DiskSpace.Require(Path.GetDirectoryName(installPath)!, offer.Size);
+                var installDirectory = Path.GetDirectoryName(installPath)!;
+                EnsureWritableDirectory(installDirectory);
+                DiskSpace.Require(installDirectory, offer.Size);
+                stage = UpdateStage.Download;
                 logger.LogInformation("Downloading Agent update {Version} for {Rid}.", offer.Version, offer.Rid);
                 await DownloadAsync(offer, credentials, archivePath, cancellationToken);
+                stage = UpdateStage.Extract;
                 logger.LogInformation("Extracting verified Agent update {Version}.", offer.Version);
                 await ExtractAgentAsync(archivePath, stagedPath, cancellationToken);
-                DiskSpace.Require(Path.GetDirectoryName(installPath)!,
-                    checked(new FileInfo(stagedPath).Length * 2));
+                DiskSpace.Require(installDirectory, checked(new FileInfo(stagedPath).Length * 2));
+                stage = UpdateStage.SelfTest;
                 logger.LogInformation("Running self-test for Agent update {Version}.", offer.Version);
                 await RunSelfTestAsync(stagedPath, offer, cancellationToken);
                 state = state with { Status = AgentUpdateStatus.Staged };
                 await stateStore.SaveAsync(state, cancellationToken);
+                stage = UpdateStage.Apply;
                 await ApplyAsync(state, stagedPath, credentials, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -110,9 +117,11 @@ public sealed class AgentUpdater(
             }
             catch (Exception exception)
             {
-                logger.LogError(exception, "Agent update to {Version} failed before restart.", offer.Version);
+                var failure = SafeError(exception, stage);
+                logger.LogError(exception, "Agent update to {Version} failed during {Stage}: {Error}.", offer.Version,
+                    stage, failure);
                 CleanupStaging(installPath);
-                await FailAsync(state, SafeError(exception), CancellationToken.None);
+                await FailAsync(state, failure, CancellationToken.None);
             }
         }
         finally
@@ -282,20 +291,57 @@ public sealed class AgentUpdater(
     private static async Task RunSelfTestAsync(string executable, AgentUpdateDescriptor offer,
         CancellationToken cancellationToken)
     {
-        using var process = Process.Start(new ProcessStartInfo(executable, "--self-test")
+        Process? started;
+        try
         {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        }) ?? throw new InvalidOperationException("self_test_start_failed");
+            started = Process.Start(new ProcessStartInfo(executable, "--self-test")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            });
+        }
+        catch (Win32Exception)
+        {
+            // Typically a noexec mount or a mandatory access control policy on the install directory.
+            throw new InvalidDataException("self_test_start_failed");
+        }
+        using var process = started ?? throw new InvalidDataException("self_test_start_failed");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(SelfTestTimeout);
-        await process.WaitForExitAsync(timeout.Token);
-        var output = (await process.StandardOutput.ReadToEndAsync(cancellationToken)).Trim();
-        if (process.ExitCode != 0 || output != $"{offer.Version}\t{offer.Rid}")
+        // Drain both pipes concurrently so a chatty child can never block on a full pipe buffer.
+        var stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
+        var stderr = process.StandardError.ReadToEndAsync(timeout.Token);
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+            await Task.WhenAll(stdout, stderr);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            throw new InvalidDataException("self_test_timeout");
+        }
+        if (process.ExitCode != 0 || (await stdout).Trim() != $"{offer.Version}\t{offer.Rid}")
             throw new InvalidDataException("self_test_failed");
     }
+
+    private static void EnsureWritableDirectory(string directory)
+    {
+        var probe = Path.Combine(directory, $".hypanel-write-probe-{Guid.NewGuid():N}");
+        try
+        {
+            using (File.Create(probe, 1, FileOptions.DeleteOnClose)) { }
+        }
+        catch (Exception exception) when (exception is UnauthorizedAccessException or IOException)
+        {
+            // Older installers left the install directory owned by root; re-running the installer repairs it.
+            throw new InvalidDataException("install_dir_not_writable");
+        }
+    }
+
+    internal enum UpdateStage { Prepare, Download, Extract, SelfTest, Apply }
 
     private async Task TryRollbackAsync(AgentUpdateLocalState state, string error, CancellationToken cancellationToken)
     {
@@ -350,11 +396,23 @@ public sealed class AgentUpdater(
         && value == Path.GetFileName(value) && !value.Contains('/') && !value.Contains('\\') && !value.Contains('\0');
     private static bool IsSha256(string value) => value.Length == 64 && value.All(character =>
         character is >= '0' and <= '9' or >= 'a' and <= 'f');
-    private static string SafeError(Exception exception) => exception switch
+    internal static string SafeError(Exception exception, UpdateStage stage) => exception switch
     {
         InvalidDataException => exception.Message,
         IOException ioException when (ioException.HResult & 0xffff) is 28 or 112 => "insufficient_space",
-        _ => "update_failed"
+        UnauthorizedAccessException => "permission_denied",
+        HttpRequestException { StatusCode: { } status } => $"download_http_{(int)status}",
+        HttpRequestException => "download_failed",
+        OperationCanceledException when stage == UpdateStage.Download => "download_timeout",
+        Win32Exception when stage == UpdateStage.Apply => "exec_failed",
+        _ => stage switch
+        {
+            UpdateStage.Prepare => "prepare_failed",
+            UpdateStage.Download => "download_failed",
+            UpdateStage.Extract => "extract_failed",
+            UpdateStage.SelfTest => "self_test_failed",
+            _ => "apply_failed"
+        }
     };
     private static string Quote(string value) => '"' + value.Replace("\"", "\\\"", StringComparison.Ordinal) + '"';
     internal static string PreviousPath(string installPath) => installPath + ".previous";

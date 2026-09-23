@@ -23,6 +23,15 @@ internal sealed class AgentAuthentication(SqliteServerRepository repository)
         return agent;
     }
 
+    /// <summary>True when the request carries the credentials of an Agent whose Node was deleted.</summary>
+    public async Task<bool> IsRevokedAsync(HttpRequest request, CancellationToken cancellationToken)
+    {
+        if (!TryGetAgentId(request, out var agentId) || !TryGetBearerSecret(request, out var secret)) return false;
+        var hash = await repository.GetRevokedAgentSecretHashAsync(agentId, cancellationToken);
+        return hash is not null
+               && CryptographicOperations.FixedTimeEquals(SHA256.HashData(Encoding.UTF8.GetBytes(secret)), hash);
+    }
+
     private static bool TryGetAgentId(HttpRequest request, out Guid agentId) =>
         Guid.TryParse(request.Headers["X-HyPanel-Agent-Id"].ToString(), out agentId);
 

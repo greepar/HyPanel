@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string] $ManifestUrl = $env:HYPANEL_MANIFEST_URL)
+param([string] $ManifestUrl = $env:HYPANEL_MANIFEST_URL, [switch] $Uninstall, [switch] $KeepData)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -77,7 +77,38 @@ function Safe-Zip([string] $ZipPath, [string] $StagingPath) {
     if (-not (Test-Path (Join-Path $StagingPath 'HyPanel.Agent.exe') -PathType Leaf)) { Fail 'Archive extraction did not produce HyPanel.Agent.exe.' }
 }
 
+function Wait-ServiceStopped {
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        $service = Get-Service -Name HyPanelAgent -ErrorAction SilentlyContinue
+        if ($null -eq $service -or $service.Status -eq 'Stopped') { return }
+        Start-Sleep -Milliseconds 500
+    }
+    Get-Process -Name HyPanel.Agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+}
+function Uninstall-Agent {
+    $root = Join-Path $env:ProgramFiles 'HyPanel'
+    $dataDir = Join-Path $env:ProgramData 'HyPanel\Agent'
+    if ((sc.exe query HyPanelAgent 2>$null) -match 'SERVICE_NAME') {
+        sc.exe stop HyPanelAgent | Out-Null
+        Wait-ServiceStopped
+        sc.exe delete HyPanelAgent | Out-Null
+    }
+    # Backends run from the data directory; make sure none survive the Agent.
+    Get-Process -ErrorAction SilentlyContinue | Where-Object {
+        try { $_.Path -and ($_.Path.StartsWith($root, 'OrdinalIgnoreCase') -or $_.Path.StartsWith($dataDir, 'OrdinalIgnoreCase')) } catch { $false }
+    } | Stop-Process -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $root 'Agent'), (Join-Path $root 'Agent.bak') -Recurse -Force -ErrorAction SilentlyContinue
+    if (-not (Get-ChildItem $root -ErrorAction SilentlyContinue)) { Remove-Item $root -Force -ErrorAction SilentlyContinue }
+    if ($KeepData) { Write-Host "HyPanel Agent removed; data preserved in $dataDir"; return }
+    Remove-Item $dataDir -Recurse -Force -ErrorAction SilentlyContinue
+    $parent = Split-Path $dataDir
+    if (-not (Get-ChildItem $parent -ErrorAction SilentlyContinue)) { Remove-Item $parent -Force -ErrorAction SilentlyContinue }
+    Write-Host 'HyPanel Agent, services and data were removed. Delete the Node in the Panel as well.'
+}
+
 try {
+    if ($Uninstall -or $env:HYPANEL_UNINSTALL -eq '1') { Uninstall-Agent; exit 0 }
     $panel = Panel-Uri (Required 'HYPANEL_PANEL_URL' $env:HYPANEL_PANEL_URL)
     $token = Required 'HYPANEL_ENROLLMENT_TOKEN' $env:HYPANEL_ENROLLMENT_TOKEN
     $rid = Target-Rid
@@ -134,9 +165,9 @@ try {
         Safe-Zip $download $staging
         if ($stagingMode) { exit 0 }
         $serviceExists = (-not $dryRoot) -and ((sc.exe query HyPanelAgent 2>$null) -match 'SERVICE_NAME')
-        if ($serviceExists) { sc.exe stop HyPanelAgent | Out-Null; Start-Sleep -Seconds 1 }
+        if ($serviceExists) { sc.exe stop HyPanelAgent | Out-Null; Wait-ServiceStopped }
         New-Item -ItemType Directory -Path $stateBackup | Out-Null
-        foreach ($stateName in @('credentials.json', 'state.json', 'command-state.json', 'usage-state.json')) {
+        foreach ($stateName in @('credentials.json', 'state.json', 'command-state.json', 'usage-state.json', 'agent-update-state.json', 'revoked')) {
             $statePath = Join-Path $dataDir $stateName
             if (Test-Path $statePath) { Move-Item $statePath $stateBackup }
         }
@@ -152,6 +183,9 @@ try {
             New-ItemProperty -Path $serviceKey -Name Environment -PropertyType MultiString -Value @("HYPANEL_PANEL_URL=$($panel.AbsoluteUri)", "HYPANEL_ENROLLMENT_TOKEN=$token") -Force | Out-Null
             if (-not $serviceExists) { sc.exe create HyPanelAgent binPath= "`"$(Join-Path $agentDir 'HyPanel.Agent.exe')`"" start= auto | Out-Null }
             sc.exe config HyPanelAgent binPath= "`"$(Join-Path $agentDir 'HyPanel.Agent.exe')`"" start= auto | Out-Null
+            # Restart after any crash, forever: the node must keep working without manual attention.
+            sc.exe failure HyPanelAgent reset= 86400 actions= restart/10000/restart/10000/restart/60000 | Out-Null
+            sc.exe failureflag HyPanelAgent 1 | Out-Null
             sc.exe start HyPanelAgent | Out-Null
             $credentials = Join-Path $dataDir 'credentials.json'
             $deadline = (Get-Date).AddSeconds(30)
@@ -163,7 +197,7 @@ try {
         }
     } catch {
         if (Test-Path $stateBackup) {
-            foreach ($stateName in @('credentials.json', 'state.json', 'command-state.json', 'usage-state.json')) {
+            foreach ($stateName in @('credentials.json', 'state.json', 'command-state.json', 'usage-state.json', 'agent-update-state.json', 'revoked')) {
                 $statePath = Join-Path $dataDir $stateName
                 if (Test-Path $statePath) { Remove-Item $statePath -Force }
                 $backupPath = Join-Path $stateBackup $stateName

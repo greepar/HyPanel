@@ -38,7 +38,10 @@ internal static class AgentSyncEndpoints
         var agent = await authentication.AuthenticateAsync(httpRequest, cancellationToken);
         if (agent is null)
         {
-            return Results.Unauthorized();
+            // 410 tells a deleted Node's Agent to stop its backends and stand down for good.
+            return await authentication.IsRevokedAsync(httpRequest, cancellationToken)
+                ? Results.StatusCode(StatusCodes.Status410Gone)
+                : Results.Unauthorized();
         }
 
         var nowUtc = timeProvider.GetUtcNow();

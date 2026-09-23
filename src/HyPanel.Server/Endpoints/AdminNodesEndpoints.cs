@@ -14,6 +14,15 @@ internal static class AdminNodesEndpoints
         endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/agent-update-policy", SetUpdatePolicyAsync);
         endpoints.MapPost("/api/admin/v1/nodes/{nodeId:guid}/agent-update", RequestUpdateAsync);
         endpoints.MapPost("/api/admin/v1/nodes/agent-update", RequestBatchUpdateAsync);
+        endpoints.MapDelete("/api/admin/v1/nodes/{nodeId:guid}", DeleteAsync);
+    }
+
+    private static async Task<IResult> DeleteAsync(Guid nodeId, HttpRequest httpRequest,
+        AdminAuthorization authorization, SqliteServerRepository repository, CancellationToken cancellationToken)
+    {
+        var access = await authorization.AuthorizeAsync(httpRequest, cancellationToken);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        return await repository.DeleteNodeAsync(nodeId, cancellationToken) ? Results.NoContent() : Results.NotFound();
     }
 
     private static async Task<IResult> SetUpdatePolicyAsync(Guid nodeId, SetAgentUpdatePolicyRequest request,

@@ -95,6 +95,12 @@ Optional sync interval/config
 
 Do not resend a large desired-state blob if the Agent is already on the current revision unless there is a concrete reason.
 
+Authentication outcomes:
+
+- `401 Unauthorized`: unknown or wrong credentials. The Agent keeps Backends running and retries every 5 minutes.
+- `410 Gone`: the credentials belong to an Agent whose Node was deleted (`revoked_agents` tombstone, secret verified).
+  The Agent stops Backends, deletes identity/service state, writes a `revoked` marker and exits with code 0.
+
 The Agent resolves its outward-facing IPv4 from the fixed HTTPS endpoint `https://4.qwq.lu`, with a short timeout,
 bounded response, strict canonical IPv4 parsing and multi-hour success caching. Discovery failure is non-fatal and does
 not clear the Server's last valid observation. For older Agents, the Server may record the public IPv4 of an
@@ -129,6 +135,11 @@ AgentUpdateReport
 - PreviousVersion?
 - LastError?
 ```
+
+`LastError` is a short machine code such as `install_dir_not_writable`, `permission_denied`, `download_http_<status>`,
+`download_timeout`, `sha256_mismatch`, `self_test_start_failed`, `self_test_timeout`, `self_test_failed`,
+`exec_failed`, `insufficient_space`, `restart_failed` or `verification_restart`; unexpected faults fall back to
+`<stage>_failed`. The Web UI maps codes to human-readable causes.
 
 The Agent persists this report independently from command state. Repeated offers with the same `UpdateId` are
 idempotent. `FinalizeInterruptedCommands` does not process Agent updates. `Succeeded` means the replacement Agent has

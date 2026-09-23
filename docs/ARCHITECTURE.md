@@ -397,8 +397,18 @@ cache and per-service metadata are quarantined with a `.corrupt-*` name and rebu
 running Backends stay up, retries use bounded exponential backoff with jitter, and only the first outage is logged at
 warning level.
 
-Linux uninstall stops the Agent and all managed Backends, disables/removes the unit and executable, and preserves
-`/var/lib/hypanel-agent` by default. `--purge` additionally removes DataDir. Reinstall without an enrollment token is a
+Uninstall (`install.sh --uninstall`, or `HYPANEL_UNINSTALL=1` / `-Uninstall` for `install.ps1`) is a complete cleanup on
+every supported service manager (systemd, OpenRC, procd, launchd, Windows SCM): it stops the Agent and all managed
+Backends, removes the service definition, executable, DataDir and the `hypanel-agent` service account. `--keep-data`
+(`-KeepData`) preserves DataDir; `--purge` is accepted as an alias of `--uninstall`. Service definitions never give up
+restarting a crashed Agent (systemd `StartLimitIntervalSec=0`, OpenRC `supervise-daemon`, procd unlimited respawn,
+Windows SCM failure actions), so a node needs no manual attention after the single install command.
+
+Deleting a Node in the Panel removes the Node, its Agent identity, services and every referencing row, and stores the
+Agent's secret hash in `revoked_agents`. A sync presenting those credentials receives `410 Gone`; the Agent then stops
+all managed Backends, deletes its identity and service state, writes a `revoked` marker and exits cleanly. A plain `401`
+is treated as a possibly transient Panel-side fault: Backends keep running and the Agent retries every five minutes.
+Re-running the installer with a fresh enrollment token clears the marker. Reinstall without an enrollment token is a
 same-node repair that preserves identity, desired state, Backend cache, usage state, and service directories. Supplying
 a fresh token explicitly selects re-enrollment; `HYPANEL_FORCE_REENROLL=0` can be used for a binary repair even when an
 ambient token exists.

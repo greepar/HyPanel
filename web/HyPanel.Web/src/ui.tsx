@@ -19,10 +19,9 @@ export function AppShell({ children, theme, setTheme, route, navigate, identity,
   const activeRoute = route?.startsWith('nodes/') ? 'nodes' : route
   return <div className="app-shell">
     <header className="topbar">
-      <a className="brand" href={role === 'User' ? '#/subscription' : '#/overview'}>HyPanel</a>
+      <a className="brand" href={role === 'User' ? '#/subscription' : '#/overview'}><span className="brand-mark" aria-hidden="true">H</span>HyPanel</a>
       <div className="topbar-actions">
-        <span className="status"><i className="status-dot" />{identity ?? '安全控制平面'}</span>
-        <details className="user-menu"><summary>账户 <ChevronDown size={14} /></summary><div className="user-menu-popover"><p>主题</p>{themes.map(value => { const Icon = value === 'light' ? Sun : value === 'dark' ? Moon : Monitor; return <button key={value} type="button" onClick={() => setTheme(value)}><Icon size={16} />{themeLabels[value]}{theme === value && <Check size={15} />}</button> })}{logout && <button type="button" onClick={logout}><LogOut size={16} />退出</button>}</div></details>
+        <details className="user-menu"><summary><span className="avatar-sm" aria-hidden="true">{(identity ?? 'H').slice(0, 1).toUpperCase()}</span><span className="user-menu-name">{identity ?? '账户'}</span><ChevronDown size={14} /></summary><div className="user-menu-popover"><p>主题</p>{themes.map(value => { const Icon = value === 'light' ? Sun : value === 'dark' ? Moon : Monitor; return <button key={value} type="button" onClick={() => setTheme(value)}><Icon size={16} />{themeLabels[value]}{theme === value && <Check size={15} />}</button> })}{logout && <button type="button" onClick={logout}><LogOut size={16} />退出</button>}</div></details>
       </div>
     </header>
     {route && navigate && role ? <div className="workspace">
@@ -35,8 +34,8 @@ export function AppShell({ children, theme, setTheme, route, navigate, identity,
   </div>
 }
 
-export function Page({ title, description, actions, children, eyebrow = '管理工作区' }: { title: string; description: string; actions?: ComponentChildren; children: ComponentChildren; eyebrow?: string }) {
-  return <><header className="page-header"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{description}</p></div>{actions && <div className="page-actions">{actions}</div>}</header><div className="page-content">{children}</div></>
+export function Page({ title, description, actions, children, eyebrow }: { title: ComponentChildren; description: ComponentChildren; actions?: ComponentChildren; children: ComponentChildren; eyebrow?: ComponentChildren }) {
+  return <><header className="page-header"><div>{eyebrow && <p className="eyebrow">{eyebrow}</p>}<h1>{title}</h1><p>{description}</p></div>{actions && <div className="page-actions">{actions}</div>}</header><div className="page-content">{children}</div></>
 }
 
 export function Loading({ label = '正在加载…' }: { label?: string }) { return <div className="state" role="status"><span className="spinner" />{label}</div> }
@@ -68,7 +67,32 @@ export function Modal({ title, description, close, children }: { title: string; 
   }, [])
   return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) close() }}><section ref={dialog} className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header><div><h2 id="modal-title">{title}</h2>{description && <p>{description}</p>}</div><button className="icon-button" type="button" aria-label="关闭" onClick={close}>×</button></header>{children}</section></div>
 }
-export function Stat({ label, value, note }: { label: string; value: string; note: string }) { return <article className="card stat-card"><span>{label}</span><strong>{value}</strong><small>{note}</small></article> }
+export function Stat({ label, value, note, percent, tone }: { label: string; value: string; note: string; percent?: number | null; tone?: 'good' | 'warn' | 'bad' }) {
+  return <article className={`card stat-card${tone ? ` tone-${tone}` : ''}`}><span>{label}</span><strong>{value}</strong>{percent != null && <Meter value={percent} />}<small>{note}</small></article>
+}
+/** Horizontal usage bar; turns amber above 75 % and red above 90 %. */
+export function Meter({ value, label }: { value: number; label?: string }) {
+  const clamped = Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0))
+  const level = clamped >= 90 ? 'bad' : clamped >= 75 ? 'warn' : 'good'
+  return <span className={`meter meter-${level}`} role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(clamped)} aria-label={label}><span style={{ width: `${clamped}%` }} /></span>
+}
+export const percentOf = (used: number, total: number) => total > 0 ? (used / total) * 100 : 0
+export const formatRelative = (value: string | null) => {
+  if (!value) return '从未'
+  const seconds = Math.round((Date.now() - new Date(value).getTime()) / 1000)
+  if (seconds < 45) return '刚刚'
+  if (seconds < 3600) return `${Math.max(1, Math.round(seconds / 60))} 分钟前`
+  if (seconds < 86400) return `${Math.round(seconds / 3600)} 小时前`
+  return `${Math.round(seconds / 86400)} 天前`
+}
+export async function copyText(value: string) {
+  try { await navigator.clipboard.writeText(value); return }
+  catch { /* clipboard API unavailable (HTTP or denied); fall back below */ }
+  const area = document.createElement('textarea')
+  area.value = value; area.setAttribute('readonly', ''); area.style.position = 'fixed'; area.style.opacity = '0'
+  document.body.append(area); area.select()
+  try { if (!document.execCommand('copy')) throw new Error('无法复制，请手动选择文本。') } finally { area.remove() }
+}
 
 export const formatBytes = (value: number) => {
   if (!value) return '0 B'

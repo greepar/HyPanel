@@ -4,7 +4,7 @@ using System.Text.Json;
 
 public sealed class AgentCredentialStore(AgentEnrollmentOptions options, ILogger<AgentCredentialStore> logger)
 {
-    private const string CredentialsFileName = "credentials.json";
+    internal const string CredentialsFileName = "credentials.json";
 
     public string CredentialsPath => Path.Combine(options.DataDirectory, CredentialsFileName);
 

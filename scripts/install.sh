@@ -8,12 +8,15 @@ note() { printf '%s\n' "install.sh: $*" >&2; }
 
 OS=$(uname -s 2>/dev/null || true)
 MODE=install
-case "${1:-}" in
-    '') ;;
-    --uninstall) MODE=uninstall ;;
-    --purge) MODE=purge ;;
-    *) fail "usage: install.sh [--uninstall|--purge]" ;;
-esac
+KEEP_DATA=0
+for argument in "$@"; do
+    case "$argument" in
+        --uninstall|--purge) MODE=uninstall ;;
+        --keep-data) KEEP_DATA=1 ;;
+        *) fail "usage: install.sh [--uninstall [--keep-data]]" ;;
+    esac
+done
+[ "${HYPANEL_UNINSTALL:-}" = 1 ] && MODE=uninstall
 MACOS_USER_INSTALL=0
 if [ -z "${HYPANEL_INSTALL_ROOT:-}" ]; then
     if [ "$(id -u)" != "0" ]; then
@@ -24,27 +27,73 @@ if [ -z "${HYPANEL_INSTALL_ROOT:-}" ]; then
     fi
 fi
 
-if [ "$MODE" != install ]; then
-    [ "$OS" = Linux ] || fail "$MODE is currently supported only for Linux"
-    [ "$(id -u)" = 0 ] || fail "$MODE must be run as root"
-    command -v systemctl >/dev/null 2>&1 || fail "$MODE requires systemd"
-    note "stopping and disabling hypanel-agent.service"
-    if systemctl cat hypanel-agent.service >/dev/null 2>&1; then
-        systemctl stop hypanel-agent.service || fail "could not stop hypanel-agent.service"
-        if systemctl is-active --quiet hypanel-agent.service; then fail "hypanel-agent.service is still running"; fi
-    elif pgrep -f '^/opt/hypanel/agent/HyPanel.Agent$' >/dev/null 2>&1; then
-        fail "Agent is running without the expected systemd unit; stop it before uninstalling"
+# Removes every trace of the Agent: service definition, running Agent and backend processes,
+# binaries, data (unless --keep-data), and the dedicated service account.  Safe to run repeatedly.
+uninstall_agent() {
+    agent_user=hypanel-agent
+    case "$OS" in
+        Linux)
+            install_root=/opt/hypanel/agent
+            data_dir=${HYPANEL_DATA_DIR:-/var/lib/hypanel-agent}
+            if command -v systemctl >/dev/null 2>&1 && systemctl cat hypanel-agent.service >/dev/null 2>&1; then
+                note "stopping hypanel-agent.service"
+                systemctl disable --now hypanel-agent.service >/dev/null 2>&1 || systemctl stop hypanel-agent.service || true
+            fi
+            if [ -x /etc/init.d/hypanel-agent ]; then
+                /etc/init.d/hypanel-agent stop >/dev/null 2>&1 || true
+                if [ -f /etc/openwrt_release ]; then /etc/init.d/hypanel-agent disable >/dev/null 2>&1 || true
+                elif command -v rc-update >/dev/null 2>&1; then rc-update del hypanel-agent default >/dev/null 2>&1 || true
+                fi
+            fi
+            rm -f /etc/systemd/system/hypanel-agent.service /etc/init.d/hypanel-agent /run/hypanel-agent.pid
+            command -v systemctl >/dev/null 2>&1 && { systemctl daemon-reload >/dev/null 2>&1 || true; systemctl reset-failed hypanel-agent.service >/dev/null 2>&1 || true; }
+            ;;
+        Darwin)
+            if [ "$MACOS_USER_INSTALL" = 1 ]; then
+                install_root="$HOME/Library/Application Support/HyPanel/Agent"
+                data_dir=${HYPANEL_DATA_DIR:-"$HOME/Library/Application Support/HyPanel"}
+                plist="$HOME/Library/LaunchAgents/com.hypanel.agent.plist"
+                domain="gui/$(id -u)"
+            else
+                install_root=/usr/local/libexec/hypanel-agent
+                data_dir=${HYPANEL_DATA_DIR:-"/Library/Application Support/HyPanel"}
+                plist=/Library/LaunchDaemons/com.hypanel.agent.plist
+                domain=system
+            fi
+            launchctl bootout "$domain/com.hypanel.agent" >/dev/null 2>&1 || launchctl bootout "$domain" "$plist" >/dev/null 2>&1 || true
+            rm -f "$plist"
+            ;;
+        *) fail "unsupported operating system: $OS" ;;
+    esac
+    # Backend processes (xray, hysteria, ...) run from the data directory; make sure none survive.
+    if command -v pkill >/dev/null 2>&1; then
+        pkill -f "^$install_root/HyPanel.Agent" >/dev/null 2>&1 || true
+        pkill -f "$data_dir/backends/" >/dev/null 2>&1 || true
+        [ "$OS" = Linux ] && id "$agent_user" >/dev/null 2>&1 && pkill -u "$agent_user" >/dev/null 2>&1 || true
     fi
-    systemctl disable hypanel-agent.service || true
-    rm -f /etc/systemd/system/hypanel-agent.service
-    systemctl daemon-reload
-    rm -rf /opt/hypanel/agent
-    if [ "$MODE" = purge ]; then
-        rm -rf /var/lib/hypanel-agent
-        note "Agent executable, service, and data were removed"
+    rm -rf "$install_root" "$install_root".previous.*
+    [ "$OS" = Linux ] && rmdir /opt/hypanel >/dev/null 2>&1 || true
+    if [ "$KEEP_DATA" = 1 ]; then
+        note "Agent removed; data preserved in $data_dir"
     else
-        note "Agent executable and service were removed; /var/lib/hypanel-agent was preserved"
+        rm -rf "$data_dir"
+        rm -f /etc/hypanel/agent.env && rmdir /etc/hypanel >/dev/null 2>&1 || true
+        if [ "$OS" = Linux ] && id "$agent_user" >/dev/null 2>&1; then
+            if command -v userdel >/dev/null 2>&1; then userdel "$agent_user" >/dev/null 2>&1 || true
+            elif command -v deluser >/dev/null 2>&1; then deluser "$agent_user" >/dev/null 2>&1 || true
+            fi
+            if command -v groupdel >/dev/null 2>&1; then groupdel "$agent_user" >/dev/null 2>&1 || true
+            elif command -v delgroup >/dev/null 2>&1; then delgroup "$agent_user" >/dev/null 2>&1 || true
+            fi
+        fi
+        note "Agent, services, data and service account were removed"
     fi
+    note "delete the Node in the Panel as well if you have not done so already"
+}
+
+if [ "$MODE" = uninstall ]; then
+    [ -z "${HYPANEL_INSTALL_ROOT:-}" ] || fail "uninstall does not support HYPANEL_INSTALL_ROOT"
+    uninstall_agent
     exit 0
 fi
 
@@ -368,7 +417,8 @@ if [ "$STAGING_INSTALL" = 0 ] && [ "$OS" = Linux ] && { command -v systemctl >/d
         fi
     fi
     mkdir -p "$INSTALL_ROOT"
-    chown "$AGENT_USER:$AGENT_USER" "$DATA_DIR" "$INSTALL_ROOT"
+    # Repair ownership left behind by older installers so self-update can always write here.
+    chown -R "$AGENT_USER:$AGENT_USER" "$DATA_DIR" "$INSTALL_ROOT"
     chmod 750 "$INSTALL_ROOT"
 fi
 umask 077
@@ -445,7 +495,7 @@ service_stop
 mkdir "$REENROLL_BACKUP"
 chmod 700 "$REENROLL_BACKUP"
 if [ "$HAS_CREDENTIALS" = 0 ] || [ "$FORCE_REENROLL" = 1 ]; then
-    for state_file in credentials.json state.json command-state.json usage-state.json agent-update-state.json; do
+    for state_file in credentials.json state.json command-state.json usage-state.json agent-update-state.json revoked; do
         if [ -e "$DATA_DIR/$state_file" ]; then mv "$DATA_DIR/$state_file" "$REENROLL_BACKUP/$state_file"; fi
     done
     if [ -d "$DATA_DIR/services" ]; then mv "$DATA_DIR/services" "$REENROLL_BACKUP/services"; fi
@@ -459,6 +509,8 @@ if [ -n "$AGENT_USER" ]; then
 else
     chmod 755 "$INSTALL_ROOT"
 fi
+# Files moved out of /tmp keep a tmp SELinux label that systemd refuses to execute when enforcing.
+if command -v restorecon >/dev/null 2>&1; then restorecon -R "$INSTALL_ROOT" "$DATA_DIR" >/dev/null 2>&1 || true; fi
 
 case "$OS" in
     Linux)
@@ -467,7 +519,7 @@ case "$OS" in
 #!/bin/sh /etc/rc.common
 START=95
 USE_PROCD=1
-start_service() { . "$BOOTSTRAP_ENV"; export HYPANEL_PANEL_URL HYPANEL_ENROLLMENT_TOKEN HYPANEL_DATA_DIR; procd_open_instance; procd_set_param command "$AGENT_PATH"; procd_set_param respawn; procd_close_instance; }
+start_service() { . "$BOOTSTRAP_ENV"; export HYPANEL_PANEL_URL HYPANEL_ENROLLMENT_TOKEN HYPANEL_DATA_DIR; procd_open_instance; procd_set_param command "$AGENT_PATH"; procd_set_param respawn 3600 10 0; procd_close_instance; }
 EOF
             chmod 755 /etc/init.d/hypanel-agent
             /etc/init.d/hypanel-agent enable
@@ -477,8 +529,7 @@ EOF
 Description=HyPanel Agent
 After=network-online.target
 Wants=network-online.target
-StartLimitIntervalSec=300
-StartLimitBurst=5
+StartLimitIntervalSec=0
 [Service]
 Type=simple
 EnvironmentFile=$BOOTSTRAP_ENV
@@ -486,7 +537,7 @@ ExecStartPre=/bin/sh -c 'if [ -f $AGENT_PATH.previous ] && grep -q '"'"'"status"
 ExecStart=$AGENT_PATH
 WorkingDirectory=$DATA_DIR
 Restart=on-failure
-RestartSec=5
+RestartSec=10
 KillSignal=SIGTERM
 KillMode=control-group
 TimeoutStopSec=30
@@ -505,11 +556,16 @@ EOF
 #!/sbin/openrc-run
 name="HyPanel Agent"
 command="$AGENT_PATH"
-command_background=true
+supervisor=supervise-daemon
+respawn_delay=10
+respawn_max=0
+directory="$DATA_DIR"
 pidfile=/run/hypanel-agent.pid
 command_user="$AGENT_USER:$AGENT_USER"
+depend() { need net; after firewall; }
+set -a
 . "$BOOTSTRAP_ENV"
-export HYPANEL_PANEL_URL HYPANEL_ENROLLMENT_TOKEN HYPANEL_DATA_DIR
+set +a
 EOF
             chmod 755 /etc/init.d/hypanel-agent
             rc-update add hypanel-agent default

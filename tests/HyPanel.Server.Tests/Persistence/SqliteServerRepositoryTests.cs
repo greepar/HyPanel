@@ -35,7 +35,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -430,6 +430,32 @@ public sealed class SqliteServerRepositoryTests
             (await fixture.Repository.GetBoundServicesAsync(user.User.Id, CancellationToken.None)).Count);
         Assert.IsNull(await fixture.Repository.GetServicePublicEndpointAsync(nodeId, service.Id,
             CancellationToken.None));
+    }
+
+    [TestMethod]
+    public async Task DeleteNode_RemovesEveryReferenceAndKeepsRevocationTombstone()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        var keptNodeId = Guid.NewGuid();
+        var agentId = await CreateAgentAsync(fixture, nodeId, "delete-node-token", "delete-node-secret");
+        await CreateAgentAsync(fixture, keptNodeId, "kept-node-token", "kept-node-secret");
+        var service = await fixture.Repository.CreateServiceAsync(XrayService(CreateService(nodeId, Guid.NewGuid(), "doomed")),
+            CancellationToken.None);
+        var user = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Bound", "bound", "hash", "User",
+            true, null, null, "bound-token", CancellationToken.None);
+        Assert.IsTrue(await fixture.Repository.BindServiceAsync(user.User.Id, service.Service!.Id, CancellationToken.None));
+        Assert.IsNotNull(await fixture.Repository.CreateCollectServiceLogsCommandAsync(Guid.NewGuid(), nodeId,
+            service.Service.Id, fixture.Time.GetUtcNow().AddMinutes(2), CancellationToken.None));
+
+        Assert.IsTrue(await fixture.Repository.DeleteNodeAsync(nodeId, CancellationToken.None));
+
+        Assert.IsFalse(await fixture.Repository.DeleteNodeAsync(nodeId, CancellationToken.None));
+        Assert.IsNull(await fixture.Repository.GetAgentAuthenticationAsync(agentId, CancellationToken.None));
+        Assert.IsNotNull(await fixture.Repository.GetRevokedAgentSecretHashAsync(agentId, CancellationToken.None));
+        Assert.AreEqual(0, (await fixture.Repository.GetBoundServicesAsync(user.User.Id, CancellationToken.None)).Count);
+        var remaining = await fixture.Repository.GetNodeObservationsAsync(CancellationToken.None);
+        Assert.AreEqual(keptNodeId, remaining.Single().Id);
     }
 
     [TestMethod]

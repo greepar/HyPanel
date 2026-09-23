@@ -17,6 +17,23 @@ public sealed class AgentUpdaterTests
 {
     private string directory = null!;
 
+    [TestMethod]
+    public void SafeError_ReportsActionableCodeForEachFailureStage()
+    {
+        Assert.AreEqual("install_dir_not_writable",
+            AgentUpdater.SafeError(new InvalidDataException("install_dir_not_writable"), AgentUpdater.UpdateStage.Prepare));
+        Assert.AreEqual("permission_denied",
+            AgentUpdater.SafeError(new UnauthorizedAccessException(), AgentUpdater.UpdateStage.Download));
+        Assert.AreEqual("download_http_404",
+            AgentUpdater.SafeError(new HttpRequestException("x", null, HttpStatusCode.NotFound), AgentUpdater.UpdateStage.Download));
+        Assert.AreEqual("download_timeout",
+            AgentUpdater.SafeError(new TaskCanceledException(), AgentUpdater.UpdateStage.Download));
+        Assert.AreEqual("exec_failed",
+            AgentUpdater.SafeError(new System.ComponentModel.Win32Exception(13), AgentUpdater.UpdateStage.Apply));
+        Assert.AreEqual("extract_failed",
+            AgentUpdater.SafeError(new InvalidOperationException(), AgentUpdater.UpdateStage.Extract));
+    }
+
     [TestInitialize]
     public void Initialize() => directory = Directory.CreateTempSubdirectory("HyPanel.Agent.Update-").FullName;
 

@@ -5,6 +5,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using HyPanel.Shared.Contracts;
 using HyPanel.Shared.Serialization;
+using HyPanel.Agent.Backends.Infrastructure;
 using HyPanel.Agent.Reconciliation;
 using HyPanel.Agent.Updates;
 
@@ -21,6 +22,8 @@ public sealed class SyncWorker(
     PublicIpv4Resolver publicIpv4Resolver,
     ServiceLogCollector logCollector,
     ServiceReconciler reconciler,
+    BackendProcessSupervisor processSupervisor,
+    AgentEnrollmentOptions enrollmentOptions,
     HttpClient httpClient,
     TimeProvider timeProvider,
     IHostApplicationLifetime applicationLifetime) : BackgroundService
@@ -28,6 +31,8 @@ public sealed class SyncWorker(
     private static readonly Uri SyncPath = new("/api/agent/v1/sync", UriKind.Relative);
     private const int DefaultIntervalSeconds = 8;
     private const int MaxRecentCommands = 1024;
+    private const int CredentialRejectedRetrySeconds = 300;
+    internal const string RevokedMarkerFileName = "revoked";
     private static readonly TimeSpan SyncRequestTimeout = TimeSpan.FromSeconds(30);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -35,6 +40,13 @@ public sealed class SyncWorker(
         AgentCredentials credentials;
         AgentLocalState state;
         AgentCommandStoreState commandState;
+        if (File.Exists(Path.Combine(enrollmentOptions.DataDirectory, RevokedMarkerFileName)))
+        {
+            logger.LogCritical("This Agent's Node was deleted from the Panel. Uninstall the Agent or reinstall it with a new enrollment command.");
+            applicationLifetime.StopApplication();
+            return;
+        }
+
         try
         {
             await updater.RecoverAsync(stoppingToken);
@@ -101,11 +113,21 @@ public sealed class SyncWorker(
                         ? credentials.SyncIntervalSeconds
                         : DefaultIntervalSeconds;
             }
+            catch (AgentRevokedException)
+            {
+                await StandDownAsync();
+                return;
+            }
             catch (AgentCredentialException)
             {
-                logger.LogCritical("Agent credentials were rejected by the Panel; stopping the Agent.");
-                applicationLifetime.StopApplication();
-                return;
+                // A rejected credential is usually a Panel-side problem (restored backup, proxy misconfiguration).
+                // Keep managed services running and retry slowly so the node heals once the Panel is fixed.
+                var firstFailure = backoffSeconds < CredentialRejectedRetrySeconds;
+                backoffSeconds = CredentialRejectedRetrySeconds;
+                nextDelaySeconds = CredentialRejectedRetrySeconds;
+                if (firstFailure)
+                    logger.LogCritical("Agent credentials were rejected by the Panel; retrying every {Seconds} seconds.",
+                        CredentialRejectedRetrySeconds);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -158,6 +180,11 @@ public sealed class SyncWorker(
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(SyncRequestTimeout);
         using var response = await httpClient.SendAsync(message, timeout.Token);
+        if (response.StatusCode == HttpStatusCode.Gone)
+        {
+            throw new AgentRevokedException();
+        }
+
         if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
             throw new AgentCredentialException();
@@ -296,4 +323,41 @@ public sealed class SyncWorker(
 
     private static bool IsTransient(Exception exception) => exception is HttpRequestException or TaskCanceledException;
     private sealed class AgentCredentialException : Exception;
+    private sealed class AgentRevokedException : Exception;
+
+    /// <summary>
+    /// The Node was deleted in the Panel: stop every managed backend, forget the identity and local
+    /// service state, and exit cleanly so the service manager does not restart the Agent.
+    /// </summary>
+    private async Task StandDownAsync()
+    {
+        logger.LogCritical("This Agent's Node was deleted from the Panel; stopping managed services and standing down.");
+        try { await processSupervisor.StopAllAsync(CancellationToken.None); }
+        catch (Exception exception) { logger.LogError(exception, "Some managed services could not be stopped."); }
+        var dataDirectory = enrollmentOptions.DataDirectory;
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(dataDirectory, RevokedMarkerFileName),
+                timeProvider.GetUtcNow().ToString("O"));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            logger.LogError(exception, "The revocation marker could not be written.");
+        }
+        foreach (var name in new[]
+                 {
+                     AgentCredentialStore.CredentialsFileName, "state.json", "command-state.json", "usage-state.json",
+                     AgentUpdateStateStore.FileName
+                 })
+            TryDelete(() => File.Delete(Path.Combine(dataDirectory, name)));
+        TryDelete(() => Directory.Delete(Path.Combine(dataDirectory, "services"), recursive: true));
+        Environment.ExitCode = 0;
+        applicationLifetime.StopApplication();
+    }
+
+    private static void TryDelete(Action delete)
+    {
+        try { delete(); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+    }
 }

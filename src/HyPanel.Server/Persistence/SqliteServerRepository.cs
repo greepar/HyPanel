@@ -196,6 +196,69 @@ internal sealed partial class SqliteServerRepository(
             reader.GetFieldValue<byte[]>(2));
     }
 
+    public async Task<byte[]?> GetRevokedAgentSecretHashAsync(Guid agentId, CancellationToken cancellationToken)
+    {
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT secret_hash FROM revoked_agents WHERE agent_id = @id;";
+        command.Parameters.AddWithValue("@id", agentId.ToString("D"));
+        return await command.ExecuteScalarAsync(cancellationToken) as byte[];
+    }
+
+    /// <summary>
+    /// Removes a Node together with its Agent identity, services and every row that references them.
+    /// The Agent's secret hash is kept as a tombstone so the Agent can be told to stand down.
+    /// </summary>
+    public async Task<bool> DeleteNodeAsync(Guid nodeId, CancellationToken cancellationToken)
+    {
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            var node = nodeId.ToString("D");
+            async Task<int> ExecAsync(string sql)
+            {
+                await using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = sql;
+                command.Parameters.AddWithValue("@node", node);
+                command.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+                return await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            const string services = "SELECT id FROM service_instances WHERE node_id = @node";
+            const string agents = "SELECT id FROM agents WHERE node_id = @node";
+            await ExecAsync($"DELETE FROM agent_commands WHERE agent_id IN ({agents}) OR target_service_id IN ({services});");
+            foreach (var table in new[]
+                     {
+                         "usage_totals", "user_service_credentials", "user_service_bindings", "service_public_endpoints",
+                         "service_runtime_states"
+                     })
+                await ExecAsync($"DELETE FROM {table} WHERE service_id IN ({services});");
+            await ExecAsync("DELETE FROM service_instances WHERE node_id = @node;");
+            await ExecAsync($"DELETE FROM usage_batches WHERE agent_id IN ({agents});");
+            await ExecAsync("DELETE FROM enrollment_tokens WHERE node_id = @node;");
+            await ExecAsync($"""
+                INSERT OR REPLACE INTO revoked_agents (agent_id, secret_hash, revoked_at_utc)
+                SELECT id, secret_hash, @now FROM agents WHERE node_id = @node;
+                """);
+            await ExecAsync("DELETE FROM agents WHERE node_id = @node;");
+            if (await ExecAsync("DELETE FROM nodes WHERE id = @node;") != 1)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return false;
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+            return true;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+    }
+
     public async Task<bool> TryUpdateAgentReportAsync(
         Guid agentId,
         string reportedVersion,

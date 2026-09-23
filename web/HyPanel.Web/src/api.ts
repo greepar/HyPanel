@@ -33,6 +33,7 @@ export class ApiClient {
   }
   nodes = () => this.request<Node[]>('/api/admin/v1/nodes')
   health = () => this.request<HealthSummary>('/api/admin/v1/health-summary')
+  deleteNode = (nodeId: string) => this.request<void>(`/api/admin/v1/nodes/${nodeId}`, { method: 'DELETE' })
   createNode = (displayName: string) => this.request<NodeIdentity>('/api/admin/v1/nodes', { method: 'POST', body: JSON.stringify({ displayName }) })
   installCommand = (nodeId: string, platform: 'unix' | 'powershell') => this.request<{ command: string }>(`/api/admin/v1/nodes/${nodeId}/install-command`, { method: 'POST', body: JSON.stringify({ platform }) })
   healthCheck = (agentId: string) => this.request<{ commandId: string }>(`/api/admin/v1/agents/${agentId}/commands/health-check`, { method: 'POST' })

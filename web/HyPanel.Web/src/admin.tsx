@@ -34,15 +34,19 @@ import type {
   UserServiceAccess,
 } from "./domain";
 import {
+  copyText,
   Empty,
   ErrorState,
   formatBytes,
+  formatRelative,
   formatUptime,
   Loading,
   messageFor,
+  Meter,
   Modal,
   Notice,
   Page,
+  percentOf,
   Stat,
   usedBytes,
 } from "./ui";
@@ -234,7 +238,7 @@ function OverviewPage({ api, setError }: PageProps) {
   if (!loading && loadError)
     return (
       <Page
-        title="基础设施概览"
+        title="概览"
         description="节点连通性、配置收敛和服务运行状态。"
       >
         <ErrorState message={loadError} retry={() => void load()} />
@@ -242,7 +246,7 @@ function OverviewPage({ api, setError }: PageProps) {
     );
   return (
     <Page
-      title="基础设施概览"
+      title="概览"
       description="节点连通性、配置收敛和服务运行状态。"
       actions={
         <button
@@ -263,21 +267,25 @@ function OverviewPage({ api, setError }: PageProps) {
               label="在线节点"
               value={`${health.counts.nodesOnline} / ${health.counts.nodesTotal}`}
               note="30 秒内有 Agent 上报"
+              tone={health.counts.nodesOnline === health.counts.nodesTotal ? "good" : "warn"}
             />
             <Stat
               label="运行服务"
               value={`${health.counts.servicesRunning} / ${health.counts.servicesTotal}`}
               note="最近观测为运行中"
+              tone={health.counts.servicesRunning === health.counts.servicesTotal ? "good" : "warn"}
             />
             <Stat
               label="配置漂移"
               value={String(health.counts.nodesDrifted)}
               note="期望与应用版本不同"
+              tone={health.counts.nodesDrifted ? "warn" : undefined}
             />
             <Stat
               label="失败服务"
               value={String(health.counts.servicesFailed)}
               note="需要立即处理"
+              tone={health.counts.servicesFailed ? "bad" : undefined}
             />
           </div>
           <div className="overview-grid">
@@ -289,11 +297,12 @@ function OverviewPage({ api, setError }: PageProps) {
               {health.issues.length ? (
                 <div className="issue-list">
                   {health.issues.map((issue) => (
-                    <article
+                    <a
                       className="issue"
+                      href={`#/nodes/${issue.nodeId}/${issue.serviceId ? "services" : issue.kind === "offline" ? "settings" : "overview"}`}
                       key={`${issue.kind}-${issue.nodeId}-${issue.serviceId}`}
                     >
-                      <span className="danger-dot" />
+                      <span className={issue.kind === "offline" ? "offline-dot" : issue.kind === "revisionDrift" ? "warn-dot" : "danger-dot"} />
                       <div>
                         <strong>
                           {issue.kind === "offline"
@@ -306,9 +315,14 @@ function OverviewPage({ api, setError }: PageProps) {
                           {issue.nodeDisplayName}
                           {issue.serviceName ? ` · ${issue.serviceName}` : ""}
                           {issue.errorMessage ? ` — ${issue.errorMessage}` : ""}
+                          {issue.kind === "offline" && (() => {
+                            const node = nodes.find((item) => item.id === issue.nodeId);
+                            return node ? ` · 最后上报 ${formatRelative(node.lastSeenAt)}` : "";
+                          })()}
                         </p>
                       </div>
-                    </article>
+                      <span className="issue-arrow" aria-hidden="true">›</span>
+                    </a>
                   ))}
                 </div>
               ) : (
@@ -322,8 +336,11 @@ function OverviewPage({ api, setError }: PageProps) {
               <SectionTitle title="节点快照" description="最近 Agent 状态" />
               {nodes.length ? (
                 <div className="compact-list">
-                  {nodes.map((node) => (
-                    <NodeSummary key={node.id} node={node} />
+                  {visibleNodes(nodes, "all", "").map((node) => (
+                    <a className="snapshot-row" key={node.id} href={node.agentId ? `#/nodes/${node.id}/overview` : "#/nodes"}>
+                      <NodeSummary node={node} />
+                      <NodeResources node={node} />
+                    </a>
                   ))}
                 </div>
               ) : (
@@ -357,6 +374,9 @@ function NodesPage({ api, setError }: PageProps) {
     command: string;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [filter, setFilter] = useState<"all" | "online" | "offline">("all");
+  const [query, setQuery] = useState("");
+  const [deleting, setDeleting] = useState<Node | null>(null);
   const load = async () => {
     setLoading(true);
     setLoadError("");
@@ -440,11 +460,23 @@ function NodesPage({ api, setError }: PageProps) {
       setBusy(false);
     }
   };
+  const updateOne = async (node: Node) => {
+    setBusy(true);
+    try {
+      const result = await api.updateAgent(node.id);
+      setError(`已请求 ${node.displayName} 更新到 ${result.version}。`);
+      await load();
+    } catch (reason) {
+      setError(messageFor(reason, "无法请求 Agent 更新"));
+    } finally {
+      setBusy(false);
+    }
+  };
   if (!loading && loadError)
     return (
       <Page
         title="节点"
-        description="创建机器记录、安装 Agent，并检查控制面连通性。"
+        description="每个节点运行一个 Agent，可承载多个独立的代理服务。"
       >
         <ErrorState message={loadError} retry={() => void load()} />
       </Page>
@@ -452,7 +484,7 @@ function NodesPage({ api, setError }: PageProps) {
   return (
     <Page
       title="节点"
-      description="创建机器记录、安装 Agent，并检查控制面连通性。"
+      description="每个节点运行一个 Agent，可承载多个独立的代理服务。"
       actions={
         <>
           {updateable.length > 0 && (
@@ -478,95 +510,142 @@ function NodesPage({ api, setError }: PageProps) {
       {loading ? (
         <Loading />
       ) : nodes.length ? (
-        <section className="node-list">
-          <div className="table-header">
-            <span>节点</span>
-            <span>Agent</span>
-            <span>版本收敛</span>
-            <span>最后上报</span>
-            <span />
+        <>
+          <div className="list-toolbar">
+            <div className="segmented" role="tablist" aria-label="按状态筛选">
+              {([
+                ["all", `全部 ${nodes.length}`],
+                ["online", `在线 ${nodes.filter((node) => node.online).length}`],
+                ["offline", `离线 ${nodes.filter((node) => !node.online).length}`],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="tab"
+                  aria-selected={filter === value}
+                  className={filter === value ? "active" : ""}
+                  onClick={() => setFilter(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <input
+              className="search-input"
+              type="search"
+              placeholder="搜索名称、IP 或平台"
+              value={query}
+              onInput={(event) => setQuery(event.currentTarget.value)}
+            />
           </div>
-          {nodes.map((node) => (
-            <div
-              className={
-                node.agentId
-                  ? "table-row node-table-row clickable"
-                  : "table-row node-table-row"
-              }
-              key={node.id}
-              role={node.agentId ? "link" : undefined}
-              tabIndex={node.agentId ? 0 : undefined}
-              onClick={() => {
-                if (node.agentId) location.hash = `/nodes/${node.id}/overview`;
-              }}
-              onKeyDown={(event) => {
-                if (
-                  node.agentId &&
-                  (event.key === "Enter" || event.key === " ")
-                )
-                  location.hash = `/nodes/${node.id}/overview`;
-              }}
-            >
-              <NodeSummary node={node} />
-              <span>
-                {node.platform ?? "等待安装"}
-                <small>
-                  Agent {node.reportedVersion ?? "—"}
-                  {node.agentUpdateStatus === "Available"
-                    ? ` · 可更新至 ${node.latestAgentVersion}`
-                    : node.desiredAgentVersion &&
-                        node.reportedVersion !== node.desiredAgentVersion
-                      ? ` · ${agentUpdateLabel(node)}`
-                      : ""}
-                </small>
-              </span>
-              <span>
-                {node.appliedRevision === node.desiredRevision
-                  ? "已收敛"
-                  : `${node.appliedRevision ?? "—"} → ${node.desiredRevision}`}
-              </span>
-              <span>
-                {node.lastSeenAt ? formatDate(node.lastSeenAt) : "从未"}
-              </span>
+          <section className="node-list">
+            <div className="table-header">
+              <span>节点</span>
+              <span>Agent</span>
+              <span>资源</span>
+              <span>最后上报</span>
+              <span />
+            </div>
+            {visibleNodes(nodes, filter, query).map((node) => (
               <div
-                className="row-actions"
-                onClick={(event) => event.stopPropagation()}
+                className={
+                  node.agentId
+                    ? "table-row node-table-row clickable"
+                    : "table-row node-table-row"
+                }
+                key={node.id}
+                role={node.agentId ? "link" : undefined}
+                tabIndex={node.agentId ? 0 : undefined}
+                onClick={() => {
+                  if (node.agentId) location.hash = `/nodes/${node.id}/overview`;
+                }}
+                onKeyDown={(event) => {
+                  if (
+                    event.target === event.currentTarget &&
+                    node.agentId &&
+                    (event.key === "Enter" || event.key === " ")
+                  )
+                    location.hash = `/nodes/${node.id}/overview`;
+                }}
               >
-                {!node.agentId && (
-                  <button
-                    className="button button-primary"
-                    type="button"
-                    onClick={() => void generate(node, "unix")}
-                  >
-                    安装 Agent
-                  </button>
-                )}
-                {node.agentId && (
+                <NodeSummary node={node} />
+                <span className="node-agent">
+                  <span>
+                    {node.platform ?? "等待安装"}
+                    {node.reportedVersion && (
+                      <span className="version-tag">v{node.reportedVersion}</span>
+                    )}
+                  </span>
+                  <AgentUpdatePill node={node} />
+                </span>
+                <NodeResources node={node} />
+                <span className="node-seen" title={node.lastSeenAt ? formatDate(node.lastSeenAt) : undefined}>
+                  {formatRelative(node.lastSeenAt)}
+                  {node.appliedRevision !== node.desiredRevision && node.agentId && (
+                    <small>配置 {node.appliedRevision ?? "—"} → {node.desiredRevision}</small>
+                  )}
+                </span>
+                <div
+                  className="row-actions"
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
+                >
+                  {!node.agentId && (
+                    <button
+                      className="button button-primary button-small"
+                      type="button"
+                      onClick={() => void generate(node, "unix")}
+                    >
+                      安装 Agent
+                    </button>
+                  )}
                   <details className="more-menu">
                     <summary aria-label={`${node.displayName} 更多操作`}>
                       •••
                     </summary>
                     <div>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => void check(node)}
-                      >
-                        健康检查
-                      </button>
+                      {node.agentId && (
+                        <button
+                          type="button"
+                          disabled={busy || !node.online}
+                          onClick={() => void check(node)}
+                        >
+                          健康检查
+                        </button>
+                      )}
+                      {(node.agentUpdateStatus === "Available" ||
+                        node.agentUpdateStatus === "Failed") && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void updateOne(node)}
+                        >
+                          {node.agentUpdateStatus === "Failed" ? "重试更新" : "更新 Agent"}
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => void generate(node, "unix")}
                       >
-                        重新安装
+                        {node.agentId ? "重新安装" : "安装命令"}
+                      </button>
+                      <button
+                        type="button"
+                        className="danger"
+                        onClick={() => setDeleting(node)}
+                      >
+                        删除节点
                       </button>
                     </div>
                   </details>
-                )}
+                </div>
               </div>
-            </div>
-          ))}
-        </section>
+            ))}
+            {!visibleNodes(nodes, filter, query).length && (
+              <p className="list-empty">没有匹配的节点。</p>
+            )}
+          </section>
+        </>
       ) : (
         <section className="card">
           <Empty
@@ -617,6 +696,18 @@ function NodesPage({ api, setError }: PageProps) {
           </form>
         </Modal>
       )}
+      {deleting && (
+        <DeleteNodeModal
+          api={api}
+          node={deleting}
+          close={() => setDeleting(null)}
+          deleted={() => {
+            setDeleting(null);
+            void load();
+          }}
+          setError={setError}
+        />
+      )}
       {install && (
         <InstallModal
           value={install}
@@ -627,6 +718,153 @@ function NodesPage({ api, setError }: PageProps) {
         />
       )}
     </Page>
+  );
+}
+
+function visibleNodes(nodes: Node[], filter: "all" | "online" | "offline", query: string) {
+  const needle = query.trim().toLowerCase();
+  return nodes
+    .filter((node) => filter === "all" || (filter === "online") === node.online)
+    .filter((node) =>
+      !needle ||
+      [node.displayName, node.publicIpv4, node.platform, node.reportedVersion]
+        .some((value) => value?.toLowerCase().includes(needle)),
+    )
+    .sort((left, right) => Number(right.online) - Number(left.online) || left.displayName.localeCompare(right.displayName));
+}
+
+const uninstallCommands = () => ({
+  unix: `curl -fsSL ${location.origin}/install.sh | sh -s -- --uninstall`,
+  powershell: `$env:HYPANEL_UNINSTALL='1'; irm ${location.origin}/install.ps1 | iex`,
+});
+
+function UninstallCommands({ setError }: { setError: (value: string) => void }) {
+  const commands = uninstallCommands();
+  const copy = async (value: string) => {
+    try {
+      await copyText(value);
+      setError("卸载命令已复制。");
+    } catch (reason) {
+      setError(messageFor(reason, "无法复制命令"));
+    }
+  };
+  return (
+    <div className="command-list">
+      {([["Linux / macOS", commands.unix], ["Windows (管理员 PowerShell)", commands.powershell]] as const).map(([label, command]) => (
+        <div key={label}>
+          <span>{label}</span>
+          <code>{command}</code>
+          <button className="button button-secondary button-small" type="button" onClick={() => void copy(command)}>
+            复制
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DeleteNodeModal({
+  api,
+  node,
+  close,
+  deleted,
+  setError,
+}: {
+  api: ApiClient;
+  node: Node;
+  close: () => void;
+  deleted: () => void;
+  setError: (value: string) => void;
+}) {
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const remove = async (event: Event) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await api.deleteNode(node.id);
+      setDone(true);
+    } catch (reason) {
+      setError(messageFor(reason, "无法删除节点"));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (done)
+    return (
+      <Modal title="节点已删除" description={`${node.displayName} 已从 Panel 移除。`} close={deleted}>
+        <div className="modal-form">
+          <Notice kind="success">
+            {node.online
+              ? "该 Agent 将在下次同步时自动停止所有代理服务并清除身份。"
+              : "该 Agent 当前离线；若它再次上线，会自动停止代理服务并清除身份。"}
+          </Notice>
+          <p className="muted">如需从机器上彻底移除 Agent、数据和服务账户，请在目标机器以 root / 管理员运行：</p>
+          <UninstallCommands setError={setError} />
+          <footer>
+            <button className="button button-primary" type="button" onClick={deleted}>
+              完成
+            </button>
+          </footer>
+        </div>
+      </Modal>
+    );
+  return (
+    <Modal title={`删除 ${node.displayName}`} description="此操作不可撤销。" close={close}>
+      <form className="modal-form" onSubmit={(event) => void remove(event)}>
+        <Notice kind="error">
+          将永久删除该节点、其 Agent 身份、所有服务实例，以及用户在这些服务上的授权和流量记录。
+        </Notice>
+        <label>
+          输入节点名称 <b>{node.displayName}</b> 以确认
+          <input
+            autoFocus
+            autoComplete="off"
+            value={confirmation}
+            onInput={(event) => setConfirmation(event.currentTarget.value)}
+          />
+        </label>
+        <footer>
+          <button className="button button-secondary" type="button" onClick={close}>
+            取消
+          </button>
+          <button
+            className="button button-danger"
+            disabled={busy || confirmation.trim() !== node.displayName}
+          >
+            {busy ? "正在删除…" : "永久删除"}
+          </button>
+        </footer>
+      </form>
+    </Modal>
+  );
+}
+
+function AgentUpdatePill({ node, detailed = false }: { node: Node; detailed?: boolean }) {
+  const status = node.agentUpdateStatus;
+  if (!node.agentId || status === "UpToDate" || (status === "Succeeded" && node.reportedVersion === node.latestAgentVersion))
+    return null;
+  const tone =
+    status === "Failed" ? "bad" : status === "Available" ? "info" : status === "Succeeded" ? "good" : "warn";
+  const reason = status === "Failed" && node.agentUpdateError ? agentUpdateErrorLabel(node.agentUpdateError) : "";
+  return (
+    <span className={`pill pill-${tone}`} title={reason || undefined}>
+      {status === "Succeeded" ? `可更新至 ${node.latestAgentVersion}` : agentUpdateLabel(node)}
+      {reason && detailed && <span className="pill-detail">：{reason}</span>}
+    </span>
+  );
+}
+
+function NodeResources({ node }: { node: Node }) {
+  const metrics = node.metrics;
+  if (!metrics || !node.online) return <span className="node-resources muted">{node.agentId ? "—" : "未安装"}</span>;
+  const memory = percentOf(usedBytes(metrics.memoryTotalBytes, metrics.memoryAvailableBytes), metrics.memoryTotalBytes);
+  return (
+    <span className="node-resources">
+      <span><b>CPU</b><Meter value={metrics.cpuUsagePercent} label="CPU" /><em>{metrics.cpuUsagePercent.toFixed(0)}%</em></span>
+      <span><b>内存</b><Meter value={memory} label="内存" /><em>{memory.toFixed(0)}%</em></span>
+    </span>
   );
 }
 
@@ -649,7 +887,7 @@ function InstallModal({
 }) {
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(value.command);
+      await copyText(value.command);
       setError("安装命令已复制。它包含 15 分钟有效的一次性令牌，请勿分享。");
     } catch (reason) {
       setError(messageFor(reason, "无法复制命令"));
@@ -759,20 +997,30 @@ function NodeDetailPage({
     ) : tab === "logs" ? (
       <NodeLogs services={services} />
     ) : tab === "settings" ? (
-      <NodeSettings api={api} node={node} setError={setError} />
+      <NodeSettings api={api} node={node} setError={setError} reload={() => void load()} />
     ) : (
       <NodeOverview node={node} services={services} />
     );
   return (
     <Page
-      eyebrow="节点详情"
-      title={node.displayName}
-      description={`${node.platform ?? "未知平台"} · Agent ${node.reportedVersion ?? "未上报"} · ${node.online ? "在线" : "离线"}`}
+      eyebrow={<a className="breadcrumb" href="#/nodes">← 全部节点</a>}
+      title={
+        <span className="title-with-status">
+          <i className={node.online ? "online-dot" : "offline-dot"} />
+          {node.displayName}
+        </span>
+      }
+      description={
+        <span className="meta-line">
+          <span>{node.online ? "在线" : `离线 · ${formatRelative(node.lastSeenAt)}`}</span>
+          {node.publicIpv4 && <span className="mono">{node.publicIpv4}</span>}
+          <span>{node.platform ?? "未知平台"}</span>
+          <span>Agent {node.reportedVersion ?? "未上报"}</span>
+          <AgentUpdatePill node={node} />
+        </span>
+      }
       actions={
         <>
-          <a className="button button-secondary" href="#/nodes">
-            返回节点
-          </a>
           <button
             className="button button-secondary"
             type="button"
@@ -807,15 +1055,17 @@ function NodeOverview({ node, services }: { node: Node; services: Service[] }) {
         <Stat
           label="CPU"
           value={metrics ? `${metrics.cpuUsagePercent.toFixed(1)}%` : "无数据"}
+          percent={metrics?.cpuUsagePercent ?? null}
           note="Agent 主机采样"
         />
         <Stat
-          label="RAM"
+          label="内存"
           value={
             metrics
               ? `${formatBytes(usedBytes(metrics.memoryTotalBytes, metrics.memoryAvailableBytes))} / ${formatBytes(metrics.memoryTotalBytes)}`
               : "无数据"
           }
+          percent={metrics ? percentOf(usedBytes(metrics.memoryTotalBytes, metrics.memoryAvailableBytes), metrics.memoryTotalBytes) : null}
           note="已用 / 总量"
         />
         <Stat
@@ -825,6 +1075,7 @@ function NodeOverview({ node, services }: { node: Node; services: Service[] }) {
               ? `${formatBytes(usedBytes(metrics.diskTotalBytes, metrics.diskAvailableBytes))} / ${formatBytes(metrics.diskTotalBytes)}`
               : "无数据"
           }
+          percent={metrics ? percentOf(usedBytes(metrics.diskTotalBytes, metrics.diskAvailableBytes), metrics.diskTotalBytes) : null}
           note="已用 / 总量"
         />
         <Stat
@@ -867,8 +1118,18 @@ function NodeOverview({ node, services }: { node: Node; services: Service[] }) {
           <div>
             <dt>配置版本</dt>
             <dd>
-              {node.appliedRevision ?? "—"} / {node.desiredRevision}
+              {node.appliedRevision === node.desiredRevision
+                ? `已收敛 · r${node.desiredRevision}`
+                : `${node.appliedRevision ?? "—"} → ${node.desiredRevision}（等待 Agent 应用）`}
             </dd>
+          </div>
+          <div>
+            <dt>公网 IPv4</dt>
+            <dd className="mono">{node.publicIpv4 ?? "未知"}</dd>
+          </div>
+          <div>
+            <dt>自动更新</dt>
+            <dd>{node.agentUpdatePolicy === "Auto" ? "开启" : "关闭"}</dd>
           </div>
         </dl>
       </section>
@@ -951,11 +1212,14 @@ function NodeSettings({
   api,
   node,
   setError,
+  reload,
 }: {
   api: ApiClient;
   node: Node;
   setError: (value: string) => void;
+  reload: () => void;
 }) {
+  const [deleting, setDeleting] = useState(false);
   const check = async () => {
     if (!node.agentId) return;
     try {
@@ -968,7 +1232,7 @@ function NodeSettings({
   const reinstall = async () => {
     try {
       const result = await api.installCommand(node.id, "unix");
-      await navigator.clipboard.writeText(result.command);
+      await copyText(result.command);
       setError("重新安装命令已复制。");
     } catch (reason) {
       setError(reason instanceof ApiError && reason.status === 400
@@ -980,6 +1244,7 @@ function NodeSettings({
     try {
       const result = await api.updateAgent(node.id);
       setError(`已请求更新到 ${result.version}。`);
+      reload();
     } catch (reason) {
       setError(messageFor(reason, "无法请求 Agent 更新"));
     }
@@ -988,6 +1253,7 @@ function NodeSettings({
     try {
       await api.setAgentUpdatePolicy(node.id, enabled ? "Auto" : "Manual");
       setError(`Agent 自动更新已${enabled ? "开启" : "关闭"}。`);
+      reload();
     } catch (reason) {
       setError(messageFor(reason, "无法修改自动更新策略"));
     }
@@ -1013,8 +1279,11 @@ function NodeSettings({
             <dd>{node.desiredAgentVersion ?? "无"}</dd>
           </div>
         </dl>
-        {node.agentUpdateError && (
-          <Notice kind="error">更新失败：{node.agentUpdateError}</Notice>
+        {node.agentUpdateStatus === "Failed" && node.agentUpdateError && (
+          <Notice kind="error">
+            更新失败：{agentUpdateErrorLabel(node.agentUpdateError)}
+            <code className="error-code">{node.agentUpdateError}</code>
+          </Notice>
         )}
         <div className="section-toolbar update-controls">
           <label className="switch">
@@ -1057,7 +1326,34 @@ function NodeSettings({
             复制重新安装命令
           </button>
         </div>
+        <p className="muted small">
+          重新安装会保留节点身份与服务，并修复文件权限与服务定义；Agent 故障或更新失败时优先使用。
+        </p>
       </section>
+      <section className="card panel danger-zone">
+        <SectionTitle
+          title="删除节点"
+          description="从 Panel 永久移除此节点；在线的 Agent 会自动停止所有代理服务。"
+        />
+        <UninstallCommands setError={setError} />
+        <div className="section-toolbar">
+          <span>先在机器上运行卸载命令，或直接删除节点后再卸载均可。</span>
+          <button className="button button-danger" type="button" onClick={() => setDeleting(true)}>
+            删除节点
+          </button>
+        </div>
+      </section>
+      {deleting && (
+        <DeleteNodeModal
+          api={api}
+          node={node}
+          close={() => setDeleting(false)}
+          deleted={() => {
+            location.hash = "/nodes";
+          }}
+          setError={setError}
+        />
+      )}
     </div>
   );
 }
@@ -2577,7 +2873,7 @@ function TokenModal({
   ];
   const copy = async (value: string) => {
     try {
-      await navigator.clipboard.writeText(value);
+      await copyText(value);
       setError("订阅链接已复制。");
     } catch (reason) {
       setError(messageFor(reason, "无法复制链接"));
@@ -2636,11 +2932,12 @@ function SectionTitle({
 function NodeSummary({ node }: { node: Node }) {
   return (
     <div className="node-summary">
-      <i className={node.online ? "online-dot" : "offline-dot"} />
+      <i className={node.online ? "online-dot" : node.agentId ? "offline-dot" : "pending-dot"} />
       <span>
         <strong>{node.displayName}</strong>
         <small>
           {node.online ? "在线" : node.agentId ? "离线" : "等待安装"}
+          {node.publicIpv4 && <span className="mono"> · {node.publicIpv4}</span>}
         </small>
       </span>
     </div>
@@ -2687,6 +2984,31 @@ function agentUpdateLabel(node: Node) {
     Failed: "更新失败",
   };
   return labels[node.agentUpdateStatus];
+}
+/** Maps the Agent's machine-readable update error code to an actionable explanation. */
+function agentUpdateErrorLabel(code: string) {
+  const labels: Record<string, string> = {
+    install_dir_not_writable: "安装目录不可写，请在节点上重新运行一次安装命令修复权限",
+    permission_denied: "权限不足，请在节点上重新运行一次安装命令修复权限",
+    insufficient_space: "磁盘空间不足",
+    download_failed: "下载更新包失败，请检查节点到 Panel 的网络",
+    download_timeout: "下载更新包超时",
+    sha256_mismatch: "更新包校验失败",
+    size_mismatch: "更新包大小不符",
+    self_test_start_failed: "新版本无法执行（安装目录可能挂载了 noexec 或被 SELinux 拦截）",
+    self_test_timeout: "新版本自检超时",
+    self_test_failed: "新版本自检失败",
+    exec_failed: "切换到新版本失败，已回滚",
+    restart_failed: "重启后未能启动新版本，已回滚",
+    startup_failed: "新版本启动失败，已回滚",
+    verification_restart: "新版本未能完成首次同步，已回滚",
+    update_interrupted: "更新过程被中断",
+    update_failed: "旧版 Agent 未报告具体原因；在节点上重新运行一次安装命令即可修复并升级",
+  };
+  if (labels[code]) return labels[code];
+  const http = code.match(/^download_http_(\d+)$/);
+  if (http) return `下载更新包失败（HTTP ${http[1]}）`;
+  return code;
 }
 const formatDate = (value: string) =>
   new Date(value).toLocaleString("zh-CN", {

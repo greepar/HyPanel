@@ -46,6 +46,7 @@ export type Node = {
   desiredAgentVersion: string | null
   agentUpdateStatus: 'UpToDate' | 'Available' | 'Requested' | 'Downloading' | 'Staged' | 'Applying' | 'WaitingForReconnect' | 'Succeeded' | 'Failed'
   agentUpdateError: string | null
+  publicIpv4?: string | null
 }
 
 export type Runtime = {
