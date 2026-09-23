@@ -35,7 +35,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -440,6 +440,20 @@ public sealed class SqliteServerRepositoryTests
         Assert.AreEqual(1, await fixture.Repository.GrantAllServicesToUserAsync(late.User.Id, CancellationToken.None));
         Assert.AreEqual(1, (await fixture.Repository.GetServiceCredentialsAsync(hysteria.Service.Id, true,
             CancellationToken.None)).Count(item => item.UserId == late.User.Id));
+    }
+
+    [TestMethod]
+    public async Task SubscriptionToken_IsRecoverableAfterCreateAndRotate()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var user = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Viewer", "viewer", "hash", "User",
+            true, null, null, "first-token", CancellationToken.None);
+        Assert.AreEqual("first-token", await fixture.Repository.GetSubscriptionTokenAsync(user.User.Id, CancellationToken.None));
+
+        await fixture.Repository.RotateSubscriptionTokenAsync(user.User.Id, "second-token", CancellationToken.None);
+
+        Assert.AreEqual("second-token", await fixture.Repository.GetSubscriptionTokenAsync(user.User.Id, CancellationToken.None));
+        Assert.IsNull(await fixture.Repository.GetSubscriptionTokenAsync(Guid.NewGuid(), CancellationToken.None));
     }
 
     [DataTestMethod]

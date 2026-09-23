@@ -365,8 +365,10 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 .qr-panel small { color: #6b6b74; text-align: center }
 
 /* ---------- diagnostics, certificates, backups ---------- */
+.log-picker { margin-bottom: 14px; flex-wrap: wrap }
+.log-picker .danger-dot { margin-right: 4px; vertical-align: middle }
 .diagnostic-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 4px 20px 0 }
-.diagnostic-list { display: grid; gap: 12px; padding: 14px 20px 20px }
+.diagnostic-list { display: grid; gap: 12px }
 .diagnostic-list article { overflow: hidden; border: 1px solid var(--border); border-radius: 10px }
 .diagnostic-list header { display: flex; justify-content: space-between; gap: 16px; padding: 9px 12px; background: var(--surface-2); font-size: 12px }
 .diagnostic-list time { color: var(--muted) }

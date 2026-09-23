@@ -29,6 +29,7 @@ internal sealed partial class SqliteServerRepository
         command.Parameters.Add("@token", SqliteType.Blob).Value = hash;
         command.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(now));
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await StoreRecoverableTokenAsync(connection, id, subscriptionToken, cancellationToken);
         return new UserIssue(
             new UserRecord(id, username, normalizedUsername, role, enabled, trafficLimitBytes, expiresAtUtc, now, now),
             subscriptionToken);
@@ -113,7 +114,42 @@ internal sealed partial class SqliteServerRepository
         cmd.Parameters.Add("@hash", SqliteType.Blob).Value = TokenHash(token);
         cmd.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
         cmd.Parameters.AddWithValue("@id", id.ToString("D"));
-        return await cmd.ExecuteNonQueryAsync(ct) == 1 ? token : null;
+        if (await cmd.ExecuteNonQueryAsync(ct) != 1) return null;
+        await StoreRecoverableTokenAsync(c, id, token, ct);
+        return token;
+    }
+
+    /// <summary>Returns the current subscription token, or null when it was issued before tokens became recoverable.</summary>
+    public async Task<string?> GetSubscriptionTokenAsync(Guid id, CancellationToken ct)
+    {
+        if (!credentialProtector.IsConfigured) return null;
+        await using var c = await connectionFactory.OpenAsync(ct);
+        await using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT subscription_token_nonce,subscription_token_ciphertext,subscription_token_tag FROM users WHERE id=@id AND subscription_token_nonce IS NOT NULL;";
+        cmd.Parameters.AddWithValue("@id", id.ToString("D"));
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        if (!await r.ReadAsync(ct)) return null;
+        return credentialProtector.UnprotectSubscriptionToken(id,
+            new ProtectedCredential((byte[])r[0], (byte[])r[1], (byte[])r[2]));
+    }
+
+    private async Task StoreRecoverableTokenAsync(SqliteConnection c, Guid id, string token, CancellationToken ct)
+    {
+        await using var cmd = c.CreateCommand();
+        if (credentialProtector.IsConfigured)
+        {
+            var value = credentialProtector.ProtectSubscriptionToken(id, token);
+            cmd.CommandText = "UPDATE users SET subscription_token_nonce=@nonce,subscription_token_ciphertext=@cipher,subscription_token_tag=@tag WHERE id=@id;";
+            cmd.Parameters.Add("@nonce", SqliteType.Blob).Value = value.Nonce;
+            cmd.Parameters.Add("@cipher", SqliteType.Blob).Value = value.Ciphertext;
+            cmd.Parameters.Add("@tag", SqliteType.Blob).Value = value.Tag;
+        }
+        else
+        {
+            cmd.CommandText = "UPDATE users SET subscription_token_nonce=NULL,subscription_token_ciphertext=NULL,subscription_token_tag=NULL WHERE id=@id;";
+        }
+        cmd.Parameters.AddWithValue("@id", id.ToString("D"));
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 
     public async Task<IReadOnlyList<UserRecord>> GetUsersAsync(CancellationToken ct)

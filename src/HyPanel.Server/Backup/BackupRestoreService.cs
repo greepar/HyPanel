@@ -400,7 +400,8 @@ internal sealed class BackupRestoreService
                 throw new BackupException("candidate_repository_invalid");
         var credentials = version >= 9 && await HasRowsAsync(connection, "user_service_credentials", cancellationToken);
         var certificates = version >= 12 && await HasRowsAsync(connection, "certificates", cancellationToken);
-        return new DatabaseInspection(version, credentials || certificates);
+        var tokens = version >= 15 && await HasEncryptedSubscriptionTokensAsync(connection, cancellationToken);
+        return new DatabaseInspection(version, credentials || certificates || tokens);
     }
 
     private async Task ValidateSecretsAsync(string path, long schemaVersion, CancellationToken cancellationToken)
@@ -448,6 +449,33 @@ internal sealed class BackupRestoreService
                     throw new BackupException("encrypted_certificate_key_invalid");
             }
         }
+        if (schemaVersion >= 15)
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT id,subscription_token_nonce,subscription_token_ciphertext,subscription_token_tag FROM users WHERE subscription_token_nonce IS NOT NULL;";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(protector.UnprotectSubscriptionToken(Guid.Parse(reader.GetString(0)),
+                            new ProtectedCredential((byte[])reader[1], (byte[])reader[2], (byte[])reader[3]))))
+                        throw new BackupException("encrypted_subscription_token_invalid");
+                }
+                catch (Exception exception) when (exception is InvalidOperationException or FormatException)
+                {
+                    throw new BackupException("encrypted_subscription_token_invalid", exception);
+                }
+            }
+        }
+    }
+
+    private static async Task<bool> HasEncryptedSubscriptionTokensAsync(SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT EXISTS(SELECT 1 FROM users WHERE subscription_token_nonce IS NOT NULL);";
+        return (long)(await command.ExecuteScalarAsync(cancellationToken) ?? 0L) != 0;
     }
 
     private async Task ValidateLiveDatabaseAsync(CancellationToken cancellationToken)

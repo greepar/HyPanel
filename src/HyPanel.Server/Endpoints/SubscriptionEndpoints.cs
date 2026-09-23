@@ -165,7 +165,7 @@ internal static class SubscriptionEndpoints
     private static string RenderMihomo(IEnumerable<SubscriptionProxy> proxies)
     {
         var items = proxies.ToArray();
-        var yaml = new StringBuilder("proxies:\n");
+        var yaml = new StringBuilder(MihomoTemplate.Header).Append("proxies:\n");
         foreach (var proxy in items)
         {
             if (proxy is Hysteria2Proxy hysteria)
@@ -200,12 +200,13 @@ internal static class SubscriptionEndpoints
             }
         }
 
-        yaml.Append("proxy-groups:\n  - name: HyPanel\n    type: select\n    proxies:");
-        if (items.Length == 0) yaml.Append(" []\n");
-        else
-            foreach (var proxy in items)
-                yaml.Append("\n      - ").Append(Yaml(proxy.Name));
-        return yaml.Append('\n').ToString();
+        if (items.Length == 0) yaml.Append("  []\n");
+        yaml.Append("proxy-groups:\n  - name: ").Append(MihomoTemplate.ProxyGroupName).Append("\n    type: select\n    proxies:");
+        foreach (var proxy in items)
+            yaml.Append("\n      - ").Append(Yaml(proxy.Name));
+        // DIRECT keeps the group valid when the user has no usable proxy yet.
+        yaml.Append("\n      - DIRECT\n");
+        return yaml.Append(MihomoTemplate.RuleProvidersAndRules).ToString();
     }
 
     private static string RenderSingBox(IEnumerable<SubscriptionProxy> proxies)

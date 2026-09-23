@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 14;
+    public const long CurrentSchemaVersion = 15;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -19,6 +19,7 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
     private const long CertificatesSchemaVersion = 12;
     private const long AgentPublicIpv4SchemaVersion = 13;
     private const long RevokedAgentsSchemaVersion = 14;
+    private const long RecoverableSubscriptionTokenSchemaVersion = 15;
 
     public async Task MigrateAsync(CancellationToken cancellationToken)
     {
@@ -389,6 +390,24 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             insertMigration.CommandText =
                 "INSERT INTO schema_migrations (version,applied_at_utc) VALUES (@version,@at);";
             insertMigration.Parameters.AddWithValue("@version", RevokedAgentsSchemaVersion);
+            insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+            await insertMigration.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, RecoverableSubscriptionTokenSchemaVersion, cancellationToken))
+        {
+            // The subscription token is also kept encrypted with the master key so its link can be shown again
+            // without rotating it. Tokens issued before this migration exist only as a hash until next rotation.
+            await ExecuteAsync(connection, transaction, """
+                ALTER TABLE users ADD COLUMN subscription_token_nonce BLOB NULL;
+                ALTER TABLE users ADD COLUMN subscription_token_ciphertext BLOB NULL;
+                ALTER TABLE users ADD COLUMN subscription_token_tag BLOB NULL;
+                """, cancellationToken);
+            await using var insertMigration = connection.CreateCommand();
+            insertMigration.Transaction = transaction;
+            insertMigration.CommandText =
+                "INSERT INTO schema_migrations (version,applied_at_utc) VALUES (@version,@at);";
+            insertMigration.Parameters.AddWithValue("@version", RecoverableSubscriptionTokenSchemaVersion);
             insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
             await insertMigration.ExecuteNonQueryAsync(cancellationToken);
         }

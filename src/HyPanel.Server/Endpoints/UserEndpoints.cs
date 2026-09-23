@@ -18,6 +18,7 @@ internal static class UserEndpoints
         endpoints.MapPut("/api/admin/v1/users/{id:guid}", UpdateUserAsync);
         endpoints.MapDelete("/api/admin/v1/users/{id:guid}", DeleteUserAsync);
         endpoints.MapPost("/api/admin/v1/users/{id:guid}/subscription-token/rotate", RotateAsync);
+        endpoints.MapGet("/api/admin/v1/users/{id:guid}/subscription-token", GetTokenAsync);
         endpoints.MapGet("/api/admin/v1/users/{id:guid}/services", GetServicesAsync);
         endpoints.MapGet("/api/admin/v1/users/{id:guid}/service-access", GetServiceAccessAsync);
         endpoints.MapPut("/api/admin/v1/users/{id:guid}/services/{serviceId:guid}", BindAsync);
@@ -27,6 +28,7 @@ internal static class UserEndpoints
         endpoints.MapGet("/api/admin/v1/usage", GetAdminUsageAsync);
         endpoints.MapGet("/api/user/v1/usage", GetUserUsageAsync);
         endpoints.MapPost("/api/user/v1/subscription-token/rotate", RotateOwnSubscriptionTokenAsync);
+        endpoints.MapGet("/api/user/v1/subscription-token", GetOwnTokenAsync);
     }
 
     private static async Task<IResult> LoginAsync(LoginRequest request, SqliteServerRepository repository,
@@ -213,6 +215,31 @@ internal static class UserEndpoints
             ? Results.Unauthorized()
             : Results.Json((await r.GetUsageTotalsAsync(user.Id, null, ct)).Select(ToResponse).ToArray(),
                 ServerJsonSerializerContext.Default.UsageTotalResponseArray);
+    }
+
+    /// <summary>Current subscription token; 404 when it predates recoverable tokens and must be rotated once.</summary>
+    private static async Task<IResult> GetTokenAsync(Guid id, HttpRequest request, AdminAuthorization authorization,
+        SqliteServerRepository r, CancellationToken ct)
+    {
+        var access = await authorization.AuthorizeAsync(request, ct);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        var token = await r.GetSubscriptionTokenAsync(id, ct);
+        return token is null
+            ? Results.NotFound()
+            : Results.Json(new RotateSubscriptionTokenResponse(token),
+                ServerJsonSerializerContext.Default.RotateSubscriptionTokenResponse);
+    }
+
+    private static async Task<IResult> GetOwnTokenAsync(HttpRequest request, UserAuthentication auth,
+        SqliteServerRepository repository, CancellationToken ct)
+    {
+        var user = await auth.AuthenticateAsync(request, ct);
+        if (user is null) return Results.Unauthorized();
+        var token = await repository.GetSubscriptionTokenAsync(user.Id, ct);
+        return token is null
+            ? Results.NotFound()
+            : Results.Json(new RotateSubscriptionTokenResponse(token),
+                ServerJsonSerializerContext.Default.RotateSubscriptionTokenResponse);
     }
 
     private static async Task<IResult> RotateOwnSubscriptionTokenAsync(HttpRequest request, UserAuthentication auth,

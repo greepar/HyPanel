@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ApiError, type ApiClient } from "./api";
+import { SubscriptionLinks } from "./subscription";
 import {
   backendFor,
   emptyService,
@@ -995,7 +996,7 @@ function NodeDetailPage({
     ) : tab === "network" ? (
       <NodeNetwork api={api} services={services} />
     ) : tab === "logs" ? (
-      <NodeLogs services={services} />
+      <NodeLogs api={api} nodeId={node.id} services={services} setError={setError} />
     ) : tab === "settings" ? (
       <NodeSettings api={api} node={node} setError={setError} reload={() => void load()} />
     ) : (
@@ -1209,43 +1210,50 @@ function NodeNetwork({ api, services }: { api: ApiClient; services: Service[] })
     </>
   );
 }
-function NodeLogs({ services }: { services: Service[] }) {
-  const errors = services.filter((service) => service.runtime?.errorMessage);
+function NodeLogs({
+  api,
+  nodeId,
+  services,
+  setError,
+}: {
+  api: ApiClient;
+  nodeId: string;
+  services: Service[];
+  setError: (value: string) => void;
+}) {
+  const [selectedId, setSelectedId] = useState(
+    () => services.find((service) => service.runtime?.errorMessage)?.id ?? services[0]?.id ?? "",
+  );
+  const selected = services.find((service) => service.id === selectedId) ?? services[0];
+  if (!selected)
+    return (
+      <section className="card">
+        <Empty title="此节点没有服务" description="添加服务后可以在这里查看运行日志。" />
+      </section>
+    );
   return (
-    <section className="card panel">
-      <SectionTitle
-        title="节点日志"
-        description="完整诊断日志可在服务页按实例安全收集"
-      />
-      {errors.length ? (
-        <div className="issue-list">
-          {errors.map((service) => (
-            <article className="issue" key={service.id}>
-              <span className="danger-dot" />
-              <div>
-                <strong>{service.name}</strong>
-                <p>{service.runtime?.errorMessage}</p>
-              </div>
-            </article>
+    <>
+      {services.length > 1 && (
+        <div className="segmented log-picker" role="tablist" aria-label="选择服务">
+          {services.map((service) => (
+            <button
+              key={service.id}
+              type="button"
+              role="tab"
+              aria-selected={service.id === selected.id}
+              className={service.id === selected.id ? "active" : ""}
+              onClick={() => setSelectedId(service.id)}
+            >
+              {service.runtime?.errorMessage && <i className="danger-dot" />} {service.name}
+            </button>
           ))}
         </div>
-      ) : (
-        <Empty
-          title="没有运行错误"
-          description="前往服务标签可对具体实例发起受限日志收集。"
-          action={
-            <a
-              className="button button-primary"
-              href={`${location.hash.replace(/\/logs$/, "/services")}`}
-            >
-              查看服务
-            </a>
-          }
-        />
       )}
-    </section>
+      <ServiceLogPanel api={api} nodeId={nodeId} service={selected} setError={setError} />
+    </>
   );
 }
+
 function NodeSettings({
   api,
   node,
@@ -1630,11 +1638,6 @@ function ServiceCard({
   const [endpoint, setEndpoint] = useState<PublicEndpoint | null>(null);
   const [endpointLoading, setEndpointLoading] = useState(false);
   const [endpointOpen, setEndpointOpen] = useState(false);
-  const [diagnostics, setDiagnostics] = useState<ServiceDiagnostic[] | null>(
-    null,
-  );
-  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [updatingBackend, setUpdatingBackend] = useState(false);
   const listenPort = Number(parseConfig(service.configJson)?.listenPort) || null;
   const autoAddress = publicIpv4 && listenPort ? `${publicIpv4}:${listenPort}` : null;
@@ -1677,32 +1680,6 @@ function ServiceCard({
       setError("自定义连接地址已保存。");
     } catch (reason) {
       setError(messageFor(reason, "无法保存连接地址"));
-    }
-  };
-  const loadDiagnostics = async () => {
-    setDiagnosticsLoading(true);
-    try {
-      setDiagnostics(await api.diagnostics(nodeId, service.id));
-    } catch (reason) {
-      setError(messageFor(reason, "无法加载诊断记录"));
-    } finally {
-      setDiagnosticsLoading(false);
-    }
-  };
-  const openDiagnostics = () => {
-    setDiagnosticsOpen(true);
-    void loadDiagnostics();
-  };
-  const collectLogs = async () => {
-    setDiagnosticsLoading(true);
-    try {
-      await api.collectLogs(nodeId, service.id);
-      setError("日志收集已排队，Agent 将在下次同步时返回结果。");
-      await loadDiagnostics();
-    } catch (reason) {
-      setError(messageFor(reason, "无法排队日志收集"));
-    } finally {
-      setDiagnosticsLoading(false);
     }
   };
   const updateBackend = async () => {
@@ -1816,13 +1793,6 @@ function ServiceCard({
           >
             连接地址：{endpoint ? `${endpoint.host}:${endpoint.port}（自定义）` : autoAddress ?? "等待节点上报公网 IP"}
           </button>
-          <button
-            className="link-button"
-            type="button"
-            onClick={openDiagnostics}
-          >
-            诊断日志
-          </button>
         </div>
         <label className="switch">
           <input
@@ -1896,113 +1866,87 @@ function ServiceCard({
           )}
         </form>
       )}
-      {diagnosticsOpen && (
-        <DiagnosticsModal
-          service={service}
-          records={diagnostics}
-          loading={diagnosticsLoading}
-          close={() => setDiagnosticsOpen(false)}
-          refresh={loadDiagnostics}
-          collect={collectLogs}
-        />
-      )}
     </article>
   );
 }
 
-function DiagnosticsModal({
+/** Bounded stdout/stderr collection for one service, shown inline on the node 日志 tab. */
+function ServiceLogPanel({
+  api,
+  nodeId,
   service,
-  records,
-  loading,
-  close,
-  refresh,
-  collect,
+  setError,
 }: {
+  api: ApiClient;
+  nodeId: string;
   service: Service;
-  records: ServiceDiagnostic[] | null;
-  loading: boolean;
-  close: () => void;
-  refresh: () => Promise<void>;
-  collect: () => Promise<void>;
+  setError: (value: string) => void;
 }) {
+  const [records, setRecords] = useState<ServiceDiagnostic[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = async () => {
+    try {
+      setRecords(await api.diagnostics(nodeId, service.id));
+    } catch (reason) {
+      setError(messageFor(reason, "无法加载日志记录"));
+    }
+  };
+  const waiting = records?.some((record) => record.status === "Pending" || record.status === "Running") ?? false;
+  useEffect(() => {
+    setRecords(null);
+    void load();
+  }, [nodeId, service.id]);
+  // While the Agent has a collection in flight, poll until it reports back on its next sync.
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setInterval(() => void load(), 3000);
+    return () => clearInterval(timer);
+  }, [waiting, service.id]);
+  const collect = async () => {
+    setBusy(true);
+    try {
+      await api.collectLogs(nodeId, service.id);
+      await load();
+    } catch (reason) {
+      setError(messageFor(reason, "无法收集日志"));
+    } finally {
+      setBusy(false);
+    }
+  };
   const label = (status: ServiceDiagnostic["status"]) =>
-    status === "Succeeded"
-      ? "收集成功"
-      : status === "Failed"
-        ? "收集失败"
-        : status === "Expired"
-          ? "已过期"
-          : "等待 Agent";
+    status === "Succeeded" ? "收集成功" : status === "Failed" ? "收集失败" : status === "Expired" ? "已过期" : "等待 Agent…";
   return (
-    <Modal
-      title={`${service.name} · 诊断日志`}
-      description="仅收集 Agent 内存中最近的受管进程 stdout/stderr；不读取任意文件。"
-      close={close}
-    >
-      <div className="diagnostic-actions">
-        <button
-          className="button button-secondary"
-          type="button"
-          disabled={loading}
-          onClick={() => void refresh()}
-        >
-          刷新
-        </button>
-        <button
-          className="button button-primary"
-          type="button"
-          disabled={
-            loading ||
-            records?.some(
-              (record) =>
-                record.status === "Pending" || record.status === "Running",
-            )
-          }
-          onClick={() => void collect()}
-        >
-          收集最新日志
+    <section className="card panel">
+      <div className="section-toolbar">
+        <div>
+          <h2>{service.name}</h2>
+          <span>仅收集 Agent 内存中该服务进程最近的输出，不读取任意文件。</span>
+        </div>
+        <button className="button button-primary" type="button" disabled={busy || waiting} onClick={() => void collect()}>
+          {waiting ? "等待 Agent 返回…" : "收集最新日志"}
         </button>
       </div>
-      {loading && records === null ? (
+      {service.runtime?.errorMessage && <Notice kind="error">当前错误：{service.runtime.errorMessage}</Notice>}
+      {records === null ? (
         <Loading />
-      ) : records?.length ? (
+      ) : records.length ? (
         <div className="diagnostic-list">
           {records.map((record) => (
             <article key={record.commandId}>
               <header>
                 <strong>{label(record.status)}</strong>
-                <time>
-                  {new Date(record.createdAtUtc).toLocaleString("zh-CN")}
-                </time>
+                <time>{new Date(record.createdAtUtc).toLocaleString("zh-CN")}</time>
               </header>
-              {record.output !== null && (
-                <pre>{record.output || "日志缓冲区为空。"}</pre>
-              )}
-              {record.status === "Expired" && (
-                <Notice>Agent 未在有效期内领取或完成命令，可重新收集。</Notice>
-              )}
-              {record.errorMessage && (
-                <Notice kind="error">{record.errorMessage}</Notice>
-              )}
+              {record.output !== null && <pre>{record.output || "日志缓冲区为空。"}</pre>}
+              {record.status === "Expired" && <Notice>Agent 未在有效期内完成，可重新收集。</Notice>}
+              {record.errorMessage && <Notice kind="error">{record.errorMessage}</Notice>}
             </article>
           ))}
         </div>
       ) : (
-        <Empty
-          title="还没有诊断记录"
-          description="发起收集后，Agent 会通过下一次出站同步返回有界日志。"
-        />
+        <Empty title="还没有日志记录" description="点击“收集最新日志”，Agent 会在下次同步（几秒内）返回结果。" />
       )}
-      <footer className="modal-actions">
-        <button
-          className="button button-secondary"
-          type="button"
-          onClick={close}
-        >
-          关闭
-        </button>
-      </footer>
-    </Modal>
+    </section>
   );
 }
 
@@ -2297,6 +2241,7 @@ function UsersPage({ api, setError }: PageProps) {
   const [token, setToken] = useState<{
     username: string;
     value: string;
+    fresh: boolean;
   } | null>(null);
   const rotationInFlight = useRef(false);
   const load = async () => {
@@ -2380,6 +2325,7 @@ function UsersPage({ api, setError }: PageProps) {
         setToken({
           username: result.user.username,
           value: result.subscriptionToken,
+          fresh: true,
         });
       }
       setEditor(null);
@@ -2398,10 +2344,10 @@ function UsersPage({ api, setError }: PageProps) {
       setError(messageFor(reason, "无法删除用户"));
     }
   };
-  const rotate = async (user: User) => {
+  const rotate = async (user: User, confirmed = false) => {
     if (
       rotationInFlight.current ||
-      !confirm(`轮换“${user.username}”的订阅令牌？旧链接会立即失效。`)
+      (!confirmed && !confirm(`重置“${user.username}”的订阅链接？旧链接会立即失效，客户端需要重新导入。`))
     )
       return;
     rotationInFlight.current = true;
@@ -2411,12 +2357,27 @@ function UsersPage({ api, setError }: PageProps) {
         `/api/admin/v1/users/${user.id}/subscription-token/rotate`,
         { method: "POST" },
       );
-      setToken({ username: user.username, value: result.subscriptionToken });
+      setToken({ username: user.username, value: result.subscriptionToken, fresh: true });
     } catch (reason) {
       setError(messageFor(reason, "无法轮换令牌"));
     } finally {
       rotationInFlight.current = false;
       setRotatingUserId(null);
+    }
+  };
+  const showLink = async (user: User) => {
+    try {
+      const result = await api.request<{ subscriptionToken: string }>(
+        `/api/admin/v1/users/${user.id}/subscription-token`,
+      );
+      setToken({ username: user.username, value: result.subscriptionToken, fresh: false });
+    } catch (reason) {
+      if (reason instanceof ApiError && reason.status === 404) {
+        if (confirm(`“${user.username}”的订阅链接由旧版本签发，无法再次显示。要签发新链接吗？旧链接会失效。`))
+          await rotate(user, true);
+        return;
+      }
+      setError(messageFor(reason, "无法读取订阅链接"));
     }
   };
   const toggle = async (userId: string, service: ServiceRef) => {
@@ -2627,12 +2588,19 @@ function UsersPage({ api, setError }: PageProps) {
                 </details>
                 <footer>
                   <button
+                    className="button button-secondary button-small"
+                    type="button"
+                    onClick={() => void showLink(user)}
+                  >
+                    订阅链接
+                  </button>
+                  <button
                     className="link-button"
                     type="button"
                     disabled={rotatingUserId !== null}
                     onClick={() => void rotate(user)}
                   >
-                    {rotatingUserId === user.id ? "正在轮换…" : "轮换订阅令牌"}
+                    {rotatingUserId === user.id ? "正在重置…" : "重置链接"}
                   </button>
                 </footer>
               </article>
@@ -2665,12 +2633,18 @@ function UsersPage({ api, setError }: PageProps) {
         />
       )}
       {token && (
-        <TokenModal
-          username={token.username}
-          token={token.value}
+        <Modal
+          title={`${token.username} 的订阅链接`}
+          description={token.fresh ? "新链接已生效（如有旧链接则已失效），之后可随时在这里再次查看。" : "随时可以在这里再次查看，不会影响已导入的客户端。"}
           close={() => setToken(null)}
-          setError={setError}
-        />
+        >
+          <SubscriptionLinks token={token.value} setError={setError} />
+          <footer className="modal-actions">
+            <button className="button button-primary" type="button" onClick={() => setToken(null)}>
+              完成
+            </button>
+          </footer>
+        </Modal>
       )}
     </Page>
   );
@@ -2781,65 +2755,6 @@ function UserEditor({
           <button className="button button-primary">保存用户</button>
         </footer>
       </form>
-    </Modal>
-  );
-}
-
-function TokenModal({
-  username,
-  token,
-  close,
-  setError,
-}: {
-  username: string;
-  token: string;
-  close: () => void;
-  setError: (value: string) => void;
-}) {
-  const links = [
-    ["原始链接", "raw"],
-    ["Base64", "base64"],
-    ["Mihomo", "mihomo"],
-    ["sing-box", "singbox"],
-  ];
-  const copy = async (value: string) => {
-    try {
-      await copyText(value);
-      setError("订阅链接已复制。");
-    } catch (reason) {
-      setError(messageFor(reason, "无法复制链接"));
-    }
-  };
-  return (
-    <Modal
-      title={`${username} 的新订阅令牌`}
-      description="关闭后无法再次查看；旧令牌已经失效。"
-      close={close}
-    >
-      <Notice kind="success">请立即保存以下链接。</Notice>
-      <div className="token-list">
-        {links.map(([label, format]) => {
-          const link = `${location.origin}/s/${encodeURIComponent(token)}?format=${format}`;
-          return (
-            <div key={format}>
-              <span>{label}</span>
-              <code>{link}</code>
-              <button
-                className="button button-secondary"
-                type="button"
-                onClick={() => void copy(link)}
-              >
-                复制
-              </button>
-            </div>
-          );
-        })}
-      </div>
-      <footer className="modal-actions">
-        <button className="button button-primary" type="button" onClick={close}>
-          我已保存
-        </button>
-      </footer>
     </Modal>
   );
 }
