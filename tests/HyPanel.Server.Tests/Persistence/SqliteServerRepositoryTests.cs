@@ -518,6 +518,16 @@ public sealed class SqliteServerRepositoryTests
     }
 
     [DataTestMethod]
+    [DataRow("DNS:*.greepar.uk", "uk", "uk.greepar.uk")]
+    [DataRow("DNS:*.greepar.uk, DNS:greepar.uk", "uk", "greepar.uk")]
+    [DataRow("DNS:*.example.com", "伦敦 Edge#1", "edge-1.example.com")]
+    [DataRow("DNS:*.example.com", "节点", "hy2.example.com")]
+    [DataRow("DNS:hy.example.com", "uk", "hy.example.com")]
+    [DataRow("", "uk", null)]
+    public void ServerNameFor_WildcardCertificateGetsConcreteNodeName(string san, string node, string? expected) =>
+        Assert.AreEqual(expected, SqliteServerRepository.ServerNameFor(san, node));
+
+    [DataTestMethod]
     [DataRow("DNS:hy.example.com, DNS:www.example.com", "hy.example.com")]
     [DataRow("DNS:*.example.com, DNS=edge.example.com", "edge.example.com")]
     [DataRow("IP Address:203.0.113.1", null)]

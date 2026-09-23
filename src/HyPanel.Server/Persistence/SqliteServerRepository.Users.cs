@@ -509,7 +509,7 @@ internal sealed partial class SqliteServerRepository
                                   COALESCE(p.host,a.public_ipv4),
                                   COALESCE(p.port,CAST(json_extract(s.config_json,'$.listenPort') AS INTEGER)),
                                   p.tls_server_name,COALESCE(p.updated_at_utc,a.last_seen_at_utc),
-                                   k.nonce,k.ciphertext,k.tag,c.san,c.certificate_pem
+                                   k.nonce,k.ciphertext,k.tag,c.san,c.certificate_pem,n.display_name
                            FROM user_service_bindings b
                            JOIN service_instances s ON s.id=b.service_id
                            JOIN nodes n ON n.id=s.node_id
@@ -534,7 +534,7 @@ internal sealed partial class SqliteServerRepository
             // is sent as SNI; a self-signed certificate is pinned by fingerprint instead of verified by a CA.
             var san = r.IsDBNull(11) ? null : r.GetString(11);
             var pem = r.IsDBNull(12) ? null : r.GetString(12);
-            var serverName = r.IsDBNull(6) ? FirstDnsName(san) : r.GetString(6);
+            var serverName = r.IsDBNull(6) ? ServerNameFor(san, r.GetString(13)) : r.GetString(6);
             services.Add(new SubscriptionServiceRecord(SqliteValue.ToGuid(userId), serviceId, r.GetString(1), backend, r.GetString(3), credential,
                 new ServicePublicEndpointRecord(serviceId, r.GetString(4), r.GetInt32(5),
                     serverName, SqliteValue.ToDateTimeOffset(r.GetString(7))), SelfSignedFingerprint(pem)));
@@ -558,6 +558,34 @@ internal sealed partial class SqliteServerRepository
         if (!await r.ReadAsync(ct)) return null;
         return new SubscriptionUserInfo(r.GetInt64(0), r.GetInt64(1), r.IsDBNull(2) ? null : r.GetInt64(2),
             r.IsDBNull(3) ? null : SqliteValue.ToDateTimeOffset(r.GetString(3)));
+    }
+
+    /// <summary>
+    /// SNI for a subscription entry: the certificate's first concrete DNS name, or, when it only covers a wildcard
+    /// (<c>*.example.com</c>), a name under that wildcard derived from the node (<c>uk.example.com</c>). Hysteria
+    /// rejects handshakes whose SNI is not covered by the certificate, so an empty SNI would never connect.
+    /// </summary>
+    internal static string? ServerNameFor(string? san, string nodeName)
+    {
+        if (FirstDnsName(san) is { } concrete) return concrete;
+        var wildcard = DnsNames(san).FirstOrDefault(name => name.StartsWith("*.", StringComparison.Ordinal));
+        if (wildcard is null) return null;
+        var label = new string(nodeName.ToLowerInvariant()
+            .Select(character => char.IsAsciiLetterOrDigit(character) ? character : '-').ToArray()).Trim('-');
+        if (label.Length is 0 or > 63) label = "hy2";
+        return label + wildcard[1..];
+    }
+
+    private static IEnumerable<string> DnsNames(string? san)
+    {
+        if (string.IsNullOrWhiteSpace(san)) yield break;
+        foreach (var part in san.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var separator = part.IndexOfAny([':', '=']);
+            if (separator > 0 && part[..separator].Trim().Equals("DNS", StringComparison.OrdinalIgnoreCase) &&
+                part[(separator + 1)..].Trim() is { Length: > 0 } name)
+                yield return name;
+        }
     }
 
     internal static string? FirstDnsName(string? san)
