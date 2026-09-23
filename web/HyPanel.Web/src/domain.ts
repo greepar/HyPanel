@@ -19,7 +19,10 @@ export type User = {
   enabled: boolean
   trafficLimitBytes: number | null
   expiresAtUtc: string | null
+  groupId?: string | null
 }
+
+export type UserGroup = { id: string; name: string; isDefault: boolean; autoIncludeNewServices: boolean; serviceIds: string[]; memberCount: number }
 
 export type NodeMetrics = {
   observedAt: string
@@ -113,7 +116,7 @@ export type PublicEndpoint = { host: string; port: number; tlsServerName: string
 export type ServiceDiagnostic = { commandId: string; status: 'Pending' | 'Running' | 'Succeeded' | 'Failed' | 'Expired'; createdAtUtc: string; startedAtUtc: string | null; completedAtUtc: string | null; expiresAtUtc: string | null; errorCode: string | null; errorMessage: string | null; output: string | null }
 export type NodeIdentity = Pick<Node, 'id' | 'displayName'>
 export type ServiceRef = Service & { nodeId: string; nodeName: string }
-export type UserForm = { username: string; password: string; role: Role; enabled: boolean; trafficLimitBytes: string; expiresAtUtc: string }
+export type UserForm = { username: string; password: string; role: Role; enabled: boolean; trafficLimitBytes: string; expiresAtUtc: string; groupId: string }
 
 export type BackendFieldKind = 'text' | 'password' | 'number' | 'certificate' | 'select' | 'fixed'
 export type BackendField = {

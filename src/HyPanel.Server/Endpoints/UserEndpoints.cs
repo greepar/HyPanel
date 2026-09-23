@@ -66,7 +66,9 @@ internal static class UserEndpoints
     {
         var access = await authorization.AuthorizeAsync(request, ct);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
-        return Results.Json((await repo.GetUsersAsync(ct)).Select(ToResponse).ToArray(),
+        var groups = await repo.GetUserGroupMapAsync(ct);
+        return Results.Json((await repo.GetUsersAsync(ct))
+                .Select(user => ToResponse(user) with { GroupId = groups.GetValueOrDefault(user.Id) }).ToArray(),
             ServerJsonSerializerContext.Default.UserResponseArray);
     }
 
@@ -83,7 +85,9 @@ internal static class UserEndpoints
         {
             var issue = await repo.CreateUserAsync(Guid.NewGuid(), username, normalized, passwords.Hash(body.Password),
                 body.Role, body.Enabled, body.TrafficLimitBytes, body.ExpiresAtUtc, NewToken(), ct);
-            await repo.GrantAllServicesToUserAsync(issue.User.Id, ct);
+            // Every user belongs to a group; its service list decides what the user can use.
+            if (!await repo.SetUserGroupAsync(issue.User.Id, body.GroupId ?? SqliteServerRepository.DefaultGroupId, ct))
+                await repo.SetUserGroupAsync(issue.User.Id, SqliteServerRepository.DefaultGroupId, ct);
             return Results.Json(new CreateUserResponse(ToResponse(issue.User), issue.SubscriptionToken),
                 ServerJsonSerializerContext.Default.CreateUserResponse);
         }
@@ -107,9 +111,9 @@ internal static class UserEndpoints
             var user = await repo.UpdateUserAsync(id, username, normalized,
                 body.Password is null ? null : passwords.Hash(body.Password), body.Role, body.Enabled,
                 body.TrafficLimitBytes, body.ExpiresAtUtc, ct);
-            return user is null
-                ? Results.NotFound()
-                : Results.Json(ToResponse(user), ServerJsonSerializerContext.Default.UserResponse);
+            if (user is null) return Results.NotFound();
+            if (body.GroupId is { } groupId && !await repo.SetUserGroupAsync(id, groupId, ct)) return Results.BadRequest();
+            return Results.Json(ToResponse(user) with { GroupId = body.GroupId }, ServerJsonSerializerContext.Default.UserResponse);
         }
         catch (SqliteException ex) when (ex.SqliteErrorCode == 19)
         {

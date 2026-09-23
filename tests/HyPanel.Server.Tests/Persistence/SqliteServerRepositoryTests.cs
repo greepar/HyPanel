@@ -35,7 +35,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -418,28 +418,38 @@ public sealed class SqliteServerRepositoryTests
     }
 
     [TestMethod]
-    public async Task AutoGrant_NewServiceReachesEnabledUsersAndNewUserReceivesExistingServices()
+    public async Task Groups_ControlBindingsForMembersAndNewServices()
     {
         await using var fixture = await TestDatabase.CreateAsync();
         var nodeId = Guid.NewGuid();
         await fixture.Repository.CreateNodeAsync(nodeId, "grant", CancellationToken.None);
-        var active = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Active", "active", "hash", "User",
-            true, null, null, "active-token", CancellationToken.None);
-        var disabled = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Off", "off", "hash", "User",
-            false, null, null, "off-token", CancellationToken.None);
-        var hysteria = await fixture.Repository.CreateServiceAsync(CreateService(nodeId, Guid.NewGuid(), "hy"),
-            CancellationToken.None);
+        var first = await fixture.Repository.CreateServiceAsync(CreateService(nodeId, Guid.NewGuid(), "hy-a"), CancellationToken.None);
+        var second = await fixture.Repository.CreateServiceAsync(CreateService(nodeId, Guid.NewGuid(), "hy-b"), CancellationToken.None);
+        await fixture.Repository.AddServiceToAutoGroupsAsync(first.Service!.Id, CancellationToken.None);
+        await fixture.Repository.AddServiceToAutoGroupsAsync(second.Service!.Id, CancellationToken.None);
+        var user = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Member", "member", "hash", "User",
+            true, null, null, "member-token", CancellationToken.None);
 
-        Assert.AreEqual(1, await fixture.Repository.GrantServiceToAllUsersAsync(hysteria.Service!.Id, CancellationToken.None));
-        CollectionAssert.AreEqual(new[] { hysteria.Service.Id },
-            (await fixture.Repository.GetBoundServicesAsync(active.User.Id, CancellationToken.None)).ToArray());
-        Assert.AreEqual(0, (await fixture.Repository.GetBoundServicesAsync(disabled.User.Id, CancellationToken.None)).Count);
+        Assert.IsTrue(await fixture.Repository.SetUserGroupAsync(user.User.Id, SqliteServerRepository.DefaultGroupId, CancellationToken.None));
+        Assert.AreEqual(2, (await fixture.Repository.GetBoundServicesAsync(user.User.Id, CancellationToken.None)).Count);
 
-        var late = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Late", "late", "hash", "User",
-            true, null, null, "late-token", CancellationToken.None);
-        Assert.AreEqual(1, await fixture.Repository.GrantAllServicesToUserAsync(late.User.Id, CancellationToken.None));
-        Assert.AreEqual(1, (await fixture.Repository.GetServiceCredentialsAsync(hysteria.Service.Id, true,
-            CancellationToken.None)).Count(item => item.UserId == late.User.Id));
+        var vip = Guid.NewGuid();
+        Assert.IsTrue(await fixture.Repository.SaveGroupAsync(vip, "VIP", false, [second.Service.Id], true, CancellationToken.None));
+        Assert.IsFalse(await fixture.Repository.SaveGroupAsync(Guid.NewGuid(), "vip", false, [], true, CancellationToken.None),
+            "group names are unique ignoring case");
+        Assert.IsTrue(await fixture.Repository.SetUserGroupAsync(user.User.Id, vip, CancellationToken.None));
+        CollectionAssert.AreEqual(new[] { second.Service.Id },
+            (await fixture.Repository.GetBoundServicesAsync(user.User.Id, CancellationToken.None)).ToArray());
+
+        var third = await fixture.Repository.CreateServiceAsync(CreateService(nodeId, Guid.NewGuid(), "hy-c"), CancellationToken.None);
+        await fixture.Repository.AddServiceToAutoGroupsAsync(third.Service!.Id, CancellationToken.None);
+        Assert.AreEqual(1, (await fixture.Repository.GetBoundServicesAsync(user.User.Id, CancellationToken.None)).Count,
+            "a group without auto-include does not receive new services");
+
+        Assert.AreEqual(true, await fixture.Repository.DeleteGroupAsync(vip, CancellationToken.None));
+        Assert.AreEqual(3, (await fixture.Repository.GetBoundServicesAsync(user.User.Id, CancellationToken.None)).Count,
+            "members of a deleted group fall back to the default group");
+        Assert.IsNull(await fixture.Repository.DeleteGroupAsync(SqliteServerRepository.DefaultGroupId, CancellationToken.None));
     }
 
     [TestMethod]

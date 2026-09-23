@@ -57,11 +57,10 @@ internal static class AdminServicesEndpoints
             new ServiceInstanceRecord(Guid.NewGuid(), nodeId, name, backendType, version, true,
                 request.ConfigSchemaVersion, configJson, now, now), cancellationToken);
         if (result.Service is null) return Results.NotFound();
-        // A new service is immediately usable: every enabled user receives their own credential for it.
-        var revision = result.Revision;
-        if (Backends.BackendCapabilities.IsMultiUser(backendType)
-            && await repository.GrantServiceToAllUsersAsync(result.Service.Id, cancellationToken) > 0)
-            revision = (await repository.GetNodeAsync(nodeId, cancellationToken))?.DesiredRevision ?? revision;
+        // A new service is immediately usable: groups that auto-include new services grant it to their members.
+        if (Backends.BackendCapabilities.IsMultiUser(backendType))
+            await repository.AddServiceToAutoGroupsAsync(result.Service.Id, cancellationToken);
+        var revision = (await repository.GetNodeAsync(nodeId, cancellationToken))?.DesiredRevision ?? result.Revision;
         return Results.Json(new ServiceMutationResponse(result.Service.Id, revision),
             ServerJsonSerializerContext.Default.ServiceMutationResponse, statusCode: StatusCodes.Status201Created);
     }

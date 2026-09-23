@@ -104,7 +104,8 @@ internal sealed record UserResponse(
     string Role,
     bool Enabled,
     long? TrafficLimitBytes,
-    DateTimeOffset? ExpiresAtUtc);
+    DateTimeOffset? ExpiresAtUtc,
+    Guid? GroupId = null);
 
 internal sealed record LoginResponse(string Token, DateTimeOffset ExpiresAtUtc, UserResponse User);
 
@@ -114,7 +115,8 @@ internal sealed record CreateUserRequest(
     string Role,
     bool Enabled,
     long? TrafficLimitBytes,
-    DateTimeOffset? ExpiresAtUtc);
+    DateTimeOffset? ExpiresAtUtc,
+    Guid? GroupId = null);
 
 internal sealed record UpdateUserRequest(
     string Username,
@@ -122,7 +124,12 @@ internal sealed record UpdateUserRequest(
     string Role,
     bool Enabled,
     long? TrafficLimitBytes,
-    DateTimeOffset? ExpiresAtUtc);
+    DateTimeOffset? ExpiresAtUtc,
+    Guid? GroupId = null);
+
+internal sealed record UserGroupRequest(string Name, bool AutoIncludeNewServices, Guid[]? ServiceIds);
+internal sealed record UserGroupResponse(Guid Id, string Name, bool IsDefault, bool AutoIncludeNewServices,
+    Guid[] ServiceIds, int MemberCount);
 
 internal sealed record CreateUserResponse(UserResponse User, string SubscriptionToken);
 

@@ -1,4 +1,4 @@
-import type { BackendDefinition, Backup, BackupValidation, Certificate, CertificateRequest, GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Usage, User, UserForm } from './domain'
+import type { BackendDefinition, Backup, BackupValidation, Certificate, CertificateRequest, GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Usage, User, UserForm, UserGroup } from './domain'
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message) }
@@ -47,6 +47,9 @@ export class ApiClient {
   updateBackend = (nodeId: string, serviceId: string) => this.request<{ version: string; revision: number }>(`/api/admin/v1/nodes/${nodeId}/services/${serviceId}/backend-update`, { method: 'POST' })
   setBackendUpdatePolicy = (nodeId: string, serviceId: string, policy: 'Manual' | 'Auto') => this.request<void>(`/api/admin/v1/nodes/${nodeId}/services/${serviceId}/backend-update-policy`, { method: 'PUT', body: JSON.stringify({ policy }) })
   users = () => this.request<User[]>('/api/admin/v1/users')
+  groups = () => this.request<UserGroup[]>('/api/admin/v1/groups')
+  saveGroup = (id: string | null, value: { name: string; autoIncludeNewServices: boolean; serviceIds: string[] }) => this.request<UserGroup>(id ? `/api/admin/v1/groups/${id}` : '/api/admin/v1/groups', { method: id ? 'PUT' : 'POST', body: JSON.stringify(value) })
+  deleteGroup = (id: string) => this.request<void>(`/api/admin/v1/groups/${id}`, { method: 'DELETE' })
   usage = () => this.request<Usage[]>('/api/admin/v1/usage')
   serverUpdate = () => this.request<ServerUpdate>('/api/admin/v1/server-update')
   updateServer = () => this.request<{ version: string }>('/api/admin/v1/server-update', { method: 'POST' })
@@ -94,5 +97,5 @@ export class ApiClient {
     return await response.json() as BackupValidation
   }
   restoreBackup = (validationId: string) => this.request<{ status: string }>('/api/admin/v1/backups/restore', { method: 'POST', body: JSON.stringify({ validationId, confirmation: 'RESTORE' }) })
-  createUser = (form: UserForm) => this.request<{ user: User; subscriptionToken: string }>('/api/admin/v1/users', { method: 'POST', body: JSON.stringify({ ...form, trafficLimitBytes: form.trafficLimitBytes ? Number(form.trafficLimitBytes) : null, expiresAtUtc: form.expiresAtUtc || null }) })
+  createUser = (form: UserForm) => this.request<{ user: User; subscriptionToken: string }>('/api/admin/v1/users', { method: 'POST', body: JSON.stringify({ ...form, trafficLimitBytes: form.trafficLimitBytes ? Number(form.trafficLimitBytes) : null, expiresAtUtc: form.expiresAtUtc || null, groupId: form.groupId || null }) })
 }

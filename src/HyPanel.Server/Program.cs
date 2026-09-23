@@ -90,6 +90,8 @@ public static class Program
             .InitializeProxyCredentialsAsync(CancellationToken.None);
         await app.Services.GetRequiredService<SqliteServerRepository>()
             .InitializeCertificatesAsync(CancellationToken.None);
+        await app.Services.GetRequiredService<SqliteServerRepository>()
+            .SyncAllUserBindingsAsync(CancellationToken.None);
 
         app.MapGet("/health", static () =>
             Results.Json(HealthResponse.Instance, HealthJsonSerializerContext.Default.HealthResponse));
@@ -98,6 +100,7 @@ public static class Program
         AdminCertificatesEndpoints.Map(app);
         AdminBackendEndpoints.Map(app);
         AdminServiceBatchEndpoints.Map(app);
+        AdminGroupEndpoints.Map(app);
         AdminObservationEndpoints.Map(app);
         AdminHealthSummaryEndpoints.Map(app);
         AdminDiagnosticsEndpoints.Map(app);

@@ -232,7 +232,7 @@ internal sealed partial class SqliteServerRepository(
             foreach (var table in new[]
                      {
                          "usage_totals", "user_service_credentials", "user_service_bindings", "service_public_endpoints",
-                         "service_runtime_states"
+                         "service_runtime_states", "user_group_services"
                      })
                 await ExecAsync($"DELETE FROM {table} WHERE service_id IN ({services});");
             await ExecAsync("DELETE FROM service_instances WHERE node_id = @node;");
@@ -755,7 +755,7 @@ internal sealed partial class SqliteServerRepository(
                      {
                          "agent_commands",
                           "usage_totals", "user_service_credentials", "user_service_bindings", "service_public_endpoints",
-                         "service_runtime_states"
+                         "service_runtime_states", "user_group_services"
                      })
             {
                 await using var child = connection.CreateCommand();

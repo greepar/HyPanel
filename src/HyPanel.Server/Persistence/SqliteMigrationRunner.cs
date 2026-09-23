@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 16;
+    public const long CurrentSchemaVersion = 17;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -21,6 +21,8 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
     private const long RevokedAgentsSchemaVersion = 14;
     private const long RecoverableSubscriptionTokenSchemaVersion = 15;
     private const long CertificateSourcesSchemaVersion = 16;
+    private const long UserGroupsSchemaVersion = 17;
+    public const string DefaultGroupId = "00000000-0000-0000-0000-000000000001";
 
     public async Task MigrateAsync(CancellationToken cancellationToken)
     {
@@ -453,6 +455,43 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             insertMigration.CommandText =
                 "INSERT INTO schema_migrations (version,applied_at_utc) VALUES (@version,@at);";
             insertMigration.Parameters.AddWithValue("@version", CertificateSourcesSchemaVersion);
+            insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+            await insertMigration.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, UserGroupsSchemaVersion, cancellationToken))
+        {
+            // Access is granted per group: a user's service bindings mirror their group's service list.
+            // The default group starts with every multi-user service and receives new services automatically.
+            await ExecuteAsync(connection, transaction, $"""
+                CREATE TABLE user_groups (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    normalized_name TEXT NOT NULL UNIQUE,
+                    is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0,1)),
+                    auto_include_new_services INTEGER NOT NULL DEFAULT 0 CHECK (auto_include_new_services IN (0,1)),
+                    created_at_utc TEXT NOT NULL
+                );
+                CREATE TABLE user_group_services (
+                    group_id TEXT NOT NULL,
+                    service_id TEXT NOT NULL,
+                    PRIMARY KEY (group_id, service_id),
+                    FOREIGN KEY (group_id) REFERENCES user_groups (id) ON DELETE RESTRICT,
+                    FOREIGN KEY (service_id) REFERENCES service_instances (id) ON DELETE RESTRICT
+                );
+                CREATE INDEX ix_user_group_services_service ON user_group_services (service_id);
+                ALTER TABLE users ADD COLUMN group_id TEXT NULL;
+                INSERT INTO user_groups (id,name,normalized_name,is_default,auto_include_new_services,created_at_utc)
+                VALUES ('{DefaultGroupId}','默认组','默认组',1,1,'{SqliteValue.ToUtcText(timeProvider.GetUtcNow())}');
+                INSERT INTO user_group_services (group_id,service_id)
+                SELECT '{DefaultGroupId}',id FROM service_instances WHERE backend_type IN ('xray','hysteria2');
+                UPDATE users SET group_id='{DefaultGroupId}';
+                """, cancellationToken);
+            await using var insertMigration = connection.CreateCommand();
+            insertMigration.Transaction = transaction;
+            insertMigration.CommandText =
+                "INSERT INTO schema_migrations (version,applied_at_utc) VALUES (@version,@at);";
+            insertMigration.Parameters.AddWithValue("@version", UserGroupsSchemaVersion);
             insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
             await insertMigration.ExecuteNonQueryAsync(cancellationToken);
         }

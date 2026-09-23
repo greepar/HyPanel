@@ -405,8 +405,10 @@ Hysteria2 users authenticate with `userpass` identities `hypanel-<userId:N>` / b
 assigns a loopback control port on which the Agent enables Hysteria2 `trafficStats` (service-scoped secret) and reads
 cumulative per-user `tx`/`rx` counters (`tx` = user upload, `rx` = user download; verified against Hysteria 2.12).
 
-Grants are automatic: creating a multi-user service grants it to every enabled user, and creating a user grants every
-existing multi-user service. Admins can still revoke individual grants.
+Grants are group-based (schema v17). Every user belongs to one `UserGroup`; a group lists the multi-user services its
+members may use, and the Server keeps each member's `UserServiceBinding`s identical to that list (on group edit, on
+membership change and at startup). The built-in default group cannot be deleted; deleting another group moves its
+members there. Groups with `AutoIncludeNewServices` (the default group initially) receive newly created services.
 
 Subscription connection address: an explicit Service public endpoint wins. Otherwise the node's discovered public
 IPv4 and the service listen port are used; for Hysteria2 the SNI is the first DNS SAN of the bound certificate, and a

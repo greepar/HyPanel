@@ -34,6 +34,7 @@ import type {
   Usage,
   User,
   UserForm,
+  UserGroup,
   UserServiceAccess,
 } from "./domain";
 import {
@@ -63,6 +64,7 @@ const emptyUser: UserForm = {
   enabled: true,
   trafficLimitBytes: "",
   expiresAtUtc: "",
+  groupId: "",
 };
 
 export function AdminApp({
@@ -2288,6 +2290,8 @@ function ServiceEditor({
 
 function UsersPage({ api, setError }: PageProps) {
   const [users, setUsers] = useState<User[]>([]);
+  const [groups, setGroups] = useState<UserGroup[]>([]);
+  const [groupEditor, setGroupEditor] = useState<{ group: UserGroup | null; name: string; autoInclude: boolean; serviceIds: string[] } | null>(null);
   const [services, setServices] = useState<ServiceRef[]>([]);
   const [usage, setUsage] = useState<Usage[]>([]);
   const [bindings, setBindings] = useState<Record<string, string[]>>({});
@@ -2310,11 +2314,13 @@ function UsersPage({ api, setError }: PageProps) {
     setLoading(true);
     setLoadError("");
     try {
-      const [nextUsers, nodes, nextUsage] = await Promise.all([
+      const [nextUsers, nodes, nextUsage, nextGroups] = await Promise.all([
         api.users(),
         api.nodes(),
         api.usage(),
+        api.groups(),
       ]);
+      setGroups(nextGroups);
       const nested = await Promise.all(
         nodes.map(async (node) =>
           (await api.services(node.id)).map((service) => ({
@@ -2377,6 +2383,7 @@ function UsersPage({ api, setError }: PageProps) {
               ? Number(editor.form.trafficLimitBytes)
               : null,
             expiresAtUtc,
+            groupId: editor.form.groupId || null,
           }),
         });
       } else {
@@ -2442,20 +2449,50 @@ function UsersPage({ api, setError }: PageProps) {
       setError(messageFor(reason, "无法读取订阅链接"));
     }
   };
-  const toggle = async (userId: string, service: ServiceRef) => {
-    const bound = bindings[userId]?.includes(service.id);
-    if (!bound && !isMultiUserBackend(service.backendType)) {
-      setError("该后端当前不支持独立用户身份，不能授予共享凭据。");
-      return;
-    }
+  const setGroup = async (user: User, groupId: string) => {
     try {
-      await api.request(
-        `/api/admin/v1/users/${userId}/services/${service.id}`,
-        { method: bound ? "DELETE" : "PUT" },
-      );
+      await api.request(`/api/admin/v1/users/${user.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          username: user.username,
+          password: null,
+          role: user.role,
+          enabled: user.enabled,
+          trafficLimitBytes: user.trafficLimitBytes,
+          expiresAtUtc: user.expiresAtUtc,
+          groupId,
+        }),
+      });
       await load();
+      setError(`已将 ${user.username} 移到“${groups.find((group) => group.id === groupId)?.name}”。`);
     } catch (reason) {
-      setError(messageFor(reason, "无法更新授权"));
+      setError(messageFor(reason, "无法修改用户组"));
+    }
+  };
+  const saveGroup = async (event: Event) => {
+    event.preventDefault();
+    if (!groupEditor) return;
+    try {
+      await api.saveGroup(groupEditor.group?.id ?? null, {
+        name: groupEditor.name,
+        autoIncludeNewServices: groupEditor.autoInclude,
+        serviceIds: groupEditor.serviceIds,
+      });
+      setGroupEditor(null);
+      await load();
+      setError("用户组已保存，成员的服务权限已同步。");
+    } catch (reason) {
+      setError(reason instanceof ApiError && reason.status === 409 ? "已有同名用户组。" : messageFor(reason, "无法保存用户组"));
+    }
+  };
+  const removeGroup = async (group: UserGroup) => {
+    if (!confirm(`删除用户组“${group.name}”？其 ${group.memberCount} 名成员会移到默认组。`)) return;
+    try {
+      await api.deleteGroup(group.id);
+      await load();
+      setError("用户组已删除。");
+    } catch (reason) {
+      setError(messageFor(reason, "无法删除用户组"));
     }
   };
   const rotateCredential = async (user: User, service: ServiceRef) => {
@@ -2484,7 +2521,7 @@ function UsersPage({ api, setError }: PageProps) {
     return (
       <Page
         title="用户与访问"
-        description="管理账户、跨节点服务授权、流量限制和订阅令牌。"
+        description="按用户组分配可用服务，管理账户、流量限制和订阅链接。"
       >
         <ErrorState message={loadError} retry={() => void load()} />
       </Page>
@@ -2492,17 +2529,73 @@ function UsersPage({ api, setError }: PageProps) {
   return (
     <Page
       title="用户与访问"
-      description="管理账户、跨节点服务授权、流量限制和订阅令牌。"
+      description="按用户组分配可用服务，管理账户、流量限制和订阅链接。"
       actions={
-        <button
-          className="button button-primary"
-          type="button"
-          onClick={() => setEditor({ user: null, form: emptyUser })}
-        >
-          添加用户
-        </button>
+        <>
+          <button
+            className="button button-secondary"
+            type="button"
+            onClick={() => setGroupEditor({ group: null, name: "", autoInclude: false, serviceIds: [] })}
+          >
+            新建用户组
+          </button>
+          <button
+            className="button button-primary"
+            type="button"
+            onClick={() => setEditor({ user: null, form: { ...emptyUser, groupId: groups.find((group) => group.isDefault)?.id ?? "" } })}
+          >
+            添加用户
+          </button>
+        </>
       }
     >
+      {!loading && (
+        <section className="group-section">
+          <div className="section-toolbar">
+            <div>
+              <h2>用户组</h2>
+              <span>组内成员可以使用组里勾选的服务；调整组或更换成员的组后会自动同步。</span>
+            </div>
+          </div>
+          <div className="group-grid">
+            {groups.map((group) => (
+              <article className="card group-card" key={group.id}>
+                <div>
+                  <strong>
+                    {group.name}
+                    {group.isDefault && <span className="badge">默认</span>}
+                  </strong>
+                  <small>
+                    {group.serviceIds.length} 个服务 · {group.memberCount} 名成员
+                    {group.autoIncludeNewServices ? " · 新服务自动加入" : ""}
+                  </small>
+                  <div className="service-tags">
+                    {group.serviceIds.slice(0, 6).map((id) => {
+                      const service = services.find((item) => item.id === id);
+                      return service ? <span key={id}>{service.nodeName} · {service.name}</span> : null;
+                    })}
+                    {group.serviceIds.length > 6 && <span>+{group.serviceIds.length - 6}</span>}
+                  </div>
+                </div>
+                <div className="row-actions">
+                  <button
+                    className="button button-secondary button-small"
+                    type="button"
+                    onClick={() => setGroupEditor({ group, name: group.name, autoInclude: group.autoIncludeNewServices, serviceIds: group.serviceIds })}
+                  >
+                    编辑
+                  </button>
+                  {!group.isDefault && (
+                    <button className="link-button" type="button" onClick={() => void removeGroup(group)}>
+                      删除
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
       {loading ? (
         <Loading />
       ) : users.length ? (
@@ -2542,6 +2635,7 @@ function UsersPage({ api, setError }: PageProps) {
                             trafficLimitBytes:
                               user.trafficLimitBytes?.toString() ?? "",
                             expiresAtUtc: toLocalDate(user.expiresAtUtc),
+                            groupId: user.groupId ?? "",
                           },
                         })
                       }
@@ -2573,57 +2667,36 @@ function UsersPage({ api, setError }: PageProps) {
                     {user.expiresAtUtc ? formatDate(user.expiresAtUtc) : "永久"}
                   </span>
                 </div>
+                <div className="user-group-row">
+                  <span>用户组</span>
+                  <Select
+                    ariaLabel={`${user.username} 的用户组`}
+                    value={user.groupId ?? ""}
+                    onChange={(value) => void setGroup(user, value)}
+                    options={groups.map((group) => ({ value: group.id, label: group.name, hint: `${group.serviceIds.length} 个服务` }))}
+                  />
+                </div>
                 <details>
                   <summary>
-                    服务权限 <small>{bindings[user.id]?.length ?? 0} 项</small>
+                    可用服务 <small>{bindings[user.id]?.length ?? 0} 项</small>
                   </summary>
                   <div className="grant-list">
-                    {services.length ? (
-                      services.map((service) => {
-                        const row = access[user.id]?.find(
-                          (item) => item.serviceId === service.id,
-                        );
+                    {(bindings[user.id] ?? []).length ? (
+                      (bindings[user.id] ?? []).map((serviceId) => {
+                        const service = services.find((item) => item.id === serviceId);
+                        if (!service) return null;
+                        const row = access[user.id]?.find((item) => item.serviceId === service.id);
                         const bytes = usage
-                          .filter(
-                            (item) =>
-                              item.userId === user.id &&
-                              item.serviceId === service.id,
-                          )
-                          .reduce(
-                            (sum, item) =>
-                              sum + item.uploadBytes + item.downloadBytes,
-                            0,
-                          );
+                          .filter((item) => item.userId === user.id && item.serviceId === service.id)
+                          .reduce((sum, item) => sum + item.uploadBytes + item.downloadBytes, 0);
                         return (
                           <div className="grant-option" key={service.id}>
-                            <input
-                              type="checkbox"
-                              aria-label={`${service.name} 服务权限`}
-                              checked={
-                                bindings[user.id]?.includes(service.id) ?? false
-                              }
-                              disabled={
-                                !isMultiUserBackend(service.backendType) &&
-                                !bindings[user.id]?.includes(service.id)
-                              }
-                              onChange={() => void toggle(user.id, service)}
-                            />
                             <span>
                               <strong>{service.name}</strong>
                               <small>
-                                {service.nodeName} ·{" "}
-                                {backendFor(service.backendType).core} ·{" "}
-                                {row?.credentialStatus === "Active"
-                                  ? "凭据有效"
-                                  : row?.credentialStatus === "Revoked"
-                                    ? "凭据已吊销"
-                                    : isMultiUserBackend(service.backendType)
-                                      ? "未授权"
-                                      : "不支持独立身份"}{" "}
-                                ·{" "}
-                                {row?.perUserTraffic
-                                  ? formatBytes(bytes)
-                                  : "不支持用户流量统计"}
+                                {service.nodeName} · {backendFor(service.backendType).core} ·{" "}
+                                {row?.credentialStatus === "Active" ? "凭据有效" : row?.credentialStatus === "Revoked" ? "凭据已吊销" : "准备中"} ·{" "}
+                                {formatBytes(bytes)}
                               </small>
                             </span>
                             {row?.credentialStatus === "Active" && (
@@ -2631,20 +2704,16 @@ function UsersPage({ api, setError }: PageProps) {
                                 className="link-button"
                                 type="button"
                                 disabled={credentialAction !== ""}
-                                onClick={() =>
-                                  void rotateCredential(user, service)
-                                }
+                                onClick={() => void rotateCredential(user, service)}
                               >
-                                {credentialAction === `${user.id}:${service.id}`
-                                  ? "轮换中…"
-                                  : "轮换凭据"}
+                                {credentialAction === `${user.id}:${service.id}` ? "轮换中…" : "轮换凭据"}
                               </button>
                             )}
                           </div>
                         );
                       })
                     ) : (
-                      <p className="muted">尚无可授权服务。</p>
+                      <p className="muted">所在用户组还没有服务。</p>
                     )}
                   </div>
                 </details>
@@ -2686,8 +2755,76 @@ function UsersPage({ api, setError }: PageProps) {
           />
         </section>
       )}
+      {groupEditor && (
+        <Modal
+          title={groupEditor.group ? `编辑 ${groupEditor.group.name}` : "新建用户组"}
+          description="成员可以使用这里勾选的服务，保存后立即同步到所有成员。"
+          close={() => setGroupEditor(null)}
+        >
+          <form className="modal-form" onSubmit={(event) => void saveGroup(event)}>
+            <label>
+              组名
+              <input
+                required
+                maxLength={64}
+                placeholder="例如 VIP、试用"
+                value={groupEditor.name}
+                onInput={(event) => setGroupEditor({ ...groupEditor, name: event.currentTarget.value })}
+              />
+            </label>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={groupEditor.autoInclude}
+                onChange={(event) => setGroupEditor({ ...groupEditor, autoInclude: event.currentTarget.checked })}
+              />
+              <span />
+              以后新建的服务自动加入本组
+            </label>
+            <div className="group-services">
+              {[...new Set(services.map((service) => service.nodeName))].map((nodeName) => (
+                <fieldset key={nodeName}>
+                  <legend>{nodeName}</legend>
+                  {services.filter((service) => service.nodeName === nodeName).map((service) => {
+                    const supported = isMultiUserBackend(service.backendType);
+                    return (
+                      <label className={`grant-option${supported ? "" : " disabled"}`} key={service.id}>
+                        <input
+                          type="checkbox"
+                          disabled={!supported}
+                          checked={groupEditor.serviceIds.includes(service.id)}
+                          onChange={(event) =>
+                            setGroupEditor({
+                              ...groupEditor,
+                              serviceIds: event.currentTarget.checked
+                                ? [...groupEditor.serviceIds, service.id]
+                                : groupEditor.serviceIds.filter((id) => id !== service.id),
+                            })
+                          }
+                        />
+                        <span>
+                          <strong>{service.name}</strong>
+                          <small>{backendFor(service.backendType).core}{supported ? "" : " · 不支持独立用户"}</small>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </fieldset>
+              ))}
+              {!services.length && <p className="muted">还没有服务。</p>}
+            </div>
+            <footer>
+              <button className="button button-secondary" type="button" onClick={() => setGroupEditor(null)}>
+                取消
+              </button>
+              <button className="button button-primary">保存用户组</button>
+            </footer>
+          </form>
+        </Modal>
+      )}
       {editor && (
         <UserEditor
+          groups={groups}
           value={editor}
           setValue={setEditor}
           save={save}
@@ -2713,11 +2850,13 @@ function UsersPage({ api, setError }: PageProps) {
 }
 
 function UserEditor({
+  groups,
   value,
   setValue,
   save,
   close,
 }: {
+  groups: UserGroup[];
   value: { user: User | null; form: UserForm };
   setValue: (value: { user: User | null; form: UserForm }) => void;
   save: (event: Event) => Promise<void>;
@@ -2729,7 +2868,7 @@ function UserEditor({
   return (
     <Modal
       title={value.user ? `编辑 ${value.user.username}` : "添加用户"}
-      description="密码至少 12 个字符。订阅令牌只会显示一次。"
+      description="密码至少 12 个字符。用户能用哪些服务由所在用户组决定。"
       close={close}
     >
       <form className="modal-form" onSubmit={(event) => void save(event)}>
@@ -2768,6 +2907,15 @@ function UserEditor({
                 { value: "User", label: "普通用户" },
                 { value: "Admin", label: "管理员" },
               ]}
+            />
+          </label>
+          <label>
+            用户组
+            <Select
+              ariaLabel="用户组"
+              value={form.groupId}
+              onChange={(value) => update({ groupId: value })}
+              options={groups.map((group) => ({ value: group.id, label: group.name, hint: `${group.serviceIds.length} 个服务` }))}
             />
           </label>
           <label>

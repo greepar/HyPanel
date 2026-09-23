@@ -269,27 +269,6 @@ internal sealed partial class SqliteServerRepository
         return true;
     }
 
-    /// <summary>Grants a newly created multi-user service to every enabled user (admins included).</summary>
-    public async Task<int> GrantServiceToAllUsersAsync(Guid serviceId, CancellationToken ct)
-    {
-        var userIds = await ReadGuidsAsync("SELECT id FROM users WHERE enabled=1 ORDER BY id;", ct);
-        var granted = 0;
-        foreach (var userId in userIds)
-            if (await BindServiceAsync(userId, serviceId, ct)) granted++;
-        return granted;
-    }
-
-    /// <summary>Grants every existing multi-user service to a newly created user.</summary>
-    public async Task<int> GrantAllServicesToUserAsync(Guid userId, CancellationToken ct)
-    {
-        var serviceIds = await ReadGuidsAsync(
-            $"SELECT id FROM service_instances WHERE backend_type IN {HyPanel.Server.Backends.BackendCapabilities.MultiUserSqlList} ORDER BY id;", ct);
-        var granted = 0;
-        foreach (var serviceId in serviceIds)
-            if (await BindServiceAsync(userId, serviceId, ct)) granted++;
-        return granted;
-    }
-
     private async Task<List<Guid>> ReadGuidsAsync(string sql, CancellationToken ct)
     {
         await using var c = await connectionFactory.OpenAsync(ct);
