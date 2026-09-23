@@ -49,7 +49,9 @@ internal static class BackendDefinitionCatalog
                 Field("masqueradeUrl", "伪装地址", "text", required: true, defaultValue: "https://example.com/"),
                 Field("obfsPassword", "Salamander 混淆密码", "password", secret: true, generate: true),
                 Field("upMbps", "上行 Mbps", "number", required: true, defaultValue: "100", min: 1),
-                Field("downMbps", "下行 Mbps", "number", required: true, defaultValue: "100", min: 1)
+                Field("downMbps", "下行 Mbps", "number", required: true, defaultValue: "100", min: 1),
+                Field("portHopping", "端口跳跃（可选）", "text",
+                    placeholder: "如 20000-30000 或 20000,20005,21000-21100")
             ]),
         new("xray", "Xray REALITY", "Xray-core", "VLESS + TCP + REALITY", "VLESS Vision 与 REALITY 握手。", "XR",
             "26.3.27",
@@ -131,9 +133,9 @@ internal static class BackendDefinitionCatalog
 
     private static BackendFieldDefinition Field(string key, string label, string kind, bool required = false,
         bool secret = false, bool generate = false, string? defaultValue = null, string[]? options = null,
-        double? min = null, double? max = null, string section = "protocol") =>
-        new(key, key, label, kind, required, secret, generate, defaultValue, null, options ?? [], null, null, min, max,
-            section);
+        double? min = null, double? max = null, string section = "protocol", string? placeholder = null) =>
+        new(key, key, label, kind, required, secret, generate, defaultValue, placeholder, options ?? [], null, null, min,
+            max, section);
 
     private static BackendFieldDefinition FixedField(string key, string label, string value, string kind) =>
         new(key, key, label, "fixed", true, false, false, null, null, [], value, kind, null, null, "protocol");

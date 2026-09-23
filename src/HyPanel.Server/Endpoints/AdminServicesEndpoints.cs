@@ -50,7 +50,8 @@ internal static class AdminServicesEndpoints
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
         if (!TryValidateCreate(request, out var name, out var backendType, out var version, out var configJson))
             return Results.BadRequest();
-        if (!await HasValidCertificateAsync(backendType, configJson, repository, cancellationToken))
+        if (!await HasValidCertificateAsync(backendType, configJson, repository, cancellationToken) ||
+            !HasValidPortHopping(backendType, configJson))
             return Results.BadRequest();
         var now = timeProvider.GetUtcNow();
         var result = await repository.CreateServiceAsync(
@@ -77,7 +78,8 @@ internal static class AdminServicesEndpoints
         if (existing is null) return Results.NotFound();
         if (!TryValidateUpdate(request, out var name, out var version, out var configJson)) return Results.BadRequest();
         if (!TryMergeRedactedSecrets(existing.ConfigJson, configJson, out configJson)) return Results.BadRequest();
-        if (!await HasValidCertificateAsync(existing.BackendType, configJson, repository, cancellationToken))
+        if (!await HasValidCertificateAsync(existing.BackendType, configJson, repository, cancellationToken) ||
+            !HasValidPortHopping(existing.BackendType, configJson))
             return Results.BadRequest();
         var now = timeProvider.GetUtcNow();
         var result = await repository.UpdateServiceAsync(
@@ -224,6 +226,22 @@ internal static class AdminServicesEndpoints
     {
         backendType = value?.Trim().ToLowerInvariant() ?? string.Empty;
         return backendType is "hysteria2" or "xray" or "xray-ss";
+    }
+
+    /// <summary>Hysteria2 port hopping is optional; when present it must be a valid port list or range set.</summary>
+    internal static bool HasValidPortHopping(string backendType, string configJson)
+    {
+        if (backendType != "hysteria2") return true;
+        try
+        {
+            using var document = JsonDocument.Parse(configJson);
+            if (!document.RootElement.TryGetProperty("portHopping", out var value) ||
+                value.ValueKind == JsonValueKind.Null ||
+                value.ValueKind == JsonValueKind.String && string.IsNullOrWhiteSpace(value.GetString())) return true;
+            return value.ValueKind == JsonValueKind.String &&
+                   HyPanel.Shared.Networking.PortSpec.TryParse(value.GetString(), out _);
+        }
+        catch (JsonException) { return false; }
     }
 
     internal static async Task<bool> HasValidCertificateAsync(string backendType, string configJson,

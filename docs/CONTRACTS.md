@@ -431,6 +431,15 @@ Subscription token must be random, revocable, and unrelated to the user's passwo
 The response carries `subscription-userinfo` (upload/download/total/expire) and `profile-update-interval`.
 Resetting a user's subscription issues a new token and rotates all of the user's proxy credentials.
 
+### Hysteria2 port hopping
+
+An optional `portHopping` config value (`20000-30000`, `443,8443,20000-20100`, …; parsed by the shared `PortSpec`)
+redirects those UDP ports to the service's listen port. The Agent owns the nftables table `inet hypanel_hop` and
+replaces it atomically after every apply (disabled or removed services leave no rules). This needs Linux, `nft` and
+`CAP_NET_ADMIN` (granted by the installer's systemd unit and OpenRC script); failures are reported on the service as
+`port_hopping_failed` while the service keeps serving its listen port. Mihomo subscriptions include
+`ports: "<spec>"` and `hop-interval: 30`. Cloud firewalls must allow the whole UDP range.
+
 ### TLS certificate sources
 
 `TlsCertificateAsset.Kind` selects how a Hysteria2 service obtains its certificate:

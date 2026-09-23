@@ -971,7 +971,7 @@ public sealed class SqliteServerRepositoryTests
         var hysteria = CreateService(nodeId, Guid.NewGuid(), "hy two") with
         {
             ConfigSchemaVersion = 1,
-            ConfigJson = "{\"authPassword\":\"hy-secret\"}"
+            ConfigJson = "{\"authPassword\":\"hy-secret\",\"portHopping\":\"30000, 20000-20010\"}"
         };
         const string privateKey = "private-secret-must-not-leak";
         const string publicKey = "public-key-value";
@@ -1015,6 +1015,7 @@ public sealed class SqliteServerRepositoryTests
         StringAssert.Contains(mihomo, $"uuid: \"{clientId}\"");
         StringAssert.Contains(mihomo, "server: \"2001:db8::10\"\n    port: 24445");
         StringAssert.Contains(mihomo, "sni: \"hy.example\"");
+        StringAssert.Contains(mihomo, "    ports: \"20000-20010,30000\"\n    hop-interval: 30\n");
 
         foreach (var output in new[] { mihomo })
         {

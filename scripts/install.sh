@@ -65,6 +65,8 @@ uninstall_agent() {
             ;;
         *) fail "unsupported operating system: $OS" ;;
     esac
+    # Port-hopping redirects are kept in a HyPanel-owned nftables table.
+    command -v nft >/dev/null 2>&1 && nft delete table inet hypanel_hop >/dev/null 2>&1 || true
     # Backend processes (xray, hysteria, ...) run from the data directory; make sure none survive.
     if command -v pkill >/dev/null 2>&1; then
         pkill -f "^$install_root/HyPanel.Agent" >/dev/null 2>&1 || true
@@ -541,8 +543,9 @@ RestartSec=10
 KillSignal=SIGTERM
 KillMode=control-group
 TimeoutStopSec=30
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-AmbientCapabilities=CAP_NET_BIND_SERVICE
+# NET_ADMIN lets the Agent manage its own nftables table for Hysteria2 port hopping.
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
 NoNewPrivileges=true
 PrivateTmp=true
 UMask=0077
@@ -562,6 +565,7 @@ respawn_max=0
 directory="$DATA_DIR"
 pidfile=/run/hypanel-agent.pid
 command_user="$AGENT_USER:$AGENT_USER"
+capabilities="^cap_net_bind_service,^cap_net_admin"
 depend() { need net; after firewall; }
 set -a
 . "$BOOTSTRAP_ENV"

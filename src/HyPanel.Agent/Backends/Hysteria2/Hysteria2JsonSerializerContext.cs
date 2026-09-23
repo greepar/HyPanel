@@ -45,4 +45,7 @@ internal sealed class Hysteria2Config
     public int UpMbps { get; init; }
 
     public int DownMbps { get; init; }
+
+    /// <summary>Optional port-hopping ports redirected to <see cref="ListenPort"/>, e.g. <c>20000-30000</c>.</summary>
+    public string? PortHopping { get; init; }
 }

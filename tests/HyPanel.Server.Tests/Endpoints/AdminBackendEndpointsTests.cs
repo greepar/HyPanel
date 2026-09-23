@@ -51,4 +51,13 @@ public sealed class AdminBackendEndpointsTests
             Assert.IsTrue(port is >= 10_000 and < 60_000 && port != 30_000 && port is not (>= 20_000 and <= 20_255));
         }
     }
+
+    [DataTestMethod]
+    [DataRow("hysteria2", "{\"portHopping\":\"20000-30000\"}", true)]
+    [DataRow("hysteria2", "{\"portHopping\":\"\"}", true)]
+    [DataRow("hysteria2", "{}", true)]
+    [DataRow("hysteria2", "{\"portHopping\":\"70000\"}", false)]
+    [DataRow("xray", "{\"portHopping\":\"nonsense\"}", true)]
+    public void HasValidPortHopping_ValidatesHysteriaOnly(string backend, string json, bool expected) =>
+        Assert.AreEqual(expected, AdminServicesEndpoints.HasValidPortHopping(backend, json));
 }

@@ -59,9 +59,13 @@ internal static class SubscriptionEndpoints
             // Each granted user authenticates with their own userpass identity (see Hysteria2Provider).
             var password = $"{Hysteria2UserName(service.UserId)}:{service.Credential}";
             TryString(document.RootElement, "obfsPassword", out var obfsPassword);
+            var hopping = TryString(document.RootElement, "portHopping", out var hopText) &&
+                          HyPanel.Shared.Networking.PortSpec.TryParse(hopText, out var ports)
+                ? ports.ToString()
+                : null;
             var endpoint = service.PublicEndpoint;
             return new Hysteria2Proxy(service.Name, endpoint.Host, endpoint.Port, endpoint.TlsServerName, password,
-                obfsPassword, service.PinnedCertificateSha256);
+                obfsPassword, service.PinnedCertificateSha256, hopping);
         }
         catch (JsonException)
         {
@@ -144,6 +148,8 @@ internal static class SubscriptionEndpoints
                         : "\n    skip-cert-verify: true\n    fingerprint: " + Yaml(hysteria.PinnedSha256) + "\n");
                 if (!string.IsNullOrEmpty(hysteria.TlsServerName))
                     yaml.Append("    sni: ").Append(Yaml(hysteria.TlsServerName)).Append('\n');
+                if (hysteria.PortHopping is { } hopping)
+                    yaml.Append("    ports: ").Append(Yaml(hopping)).Append("\n    hop-interval: 30\n");
                 if (!string.IsNullOrEmpty(hysteria.ObfsPassword))
                     yaml.Append("    obfs: salamander\n    obfs-password: ").Append(Yaml(hysteria.ObfsPassword))
                         .Append('\n');
@@ -189,7 +195,8 @@ internal static class SubscriptionEndpoints
         string? TlsServerName,
         string Password,
         string? ObfsPassword,
-        string? PinnedSha256) : SubscriptionProxy(Name, Host, Port);
+        string? PinnedSha256,
+        string? PortHopping) : SubscriptionProxy(Name, Host, Port);
 
     private sealed record XrayProxy(
         string Name,

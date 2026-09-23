@@ -235,7 +235,15 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
         IsAbsoluteHttpsUri(config.MasqueradeUrl) &&
         (config.ObfsPassword is null || HasValidSecretLength(config.ObfsPassword)) &&
         config.UpMbps is >= 1 and <= MaximumBandwidthMbps &&
-        config.DownMbps is >= 1 and <= MaximumBandwidthMbps;
+        config.DownMbps is >= 1 and <= MaximumBandwidthMbps &&
+        (string.IsNullOrWhiteSpace(config.PortHopping) || HyPanel.Shared.Networking.PortSpec.TryParse(config.PortHopping, out _));
+
+    /// <summary>Port-hopping ports of a Hysteria2 service config, or null when none are configured.</summary>
+    internal static (int ListenPort, HyPanel.Shared.Networking.PortSpec Ports)? PortHopping(string configJson) =>
+        TryParseConfig(configJson, out var config) && !string.IsNullOrWhiteSpace(config.PortHopping) &&
+        HyPanel.Shared.Networking.PortSpec.TryParse(config.PortHopping, out var ports)
+            ? (config.ListenPort, ports)
+            : null;
 
     private static bool IsValidListenHost(string? host)
     {

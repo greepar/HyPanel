@@ -101,7 +101,7 @@ public sealed class X25519Tests
 
         var hysteria = BackendDefinitionCatalog.All.Single(item => item.BackendType == "hysteria2");
         CollectionAssert.AreEquivalent(
-            new[] { "listenHost", "listenPort", "certificateId", "authPassword", "masqueradeUrl", "obfsPassword", "upMbps", "downMbps" },
+            new[] { "listenHost", "listenPort", "certificateId", "authPassword", "masqueradeUrl", "obfsPassword", "upMbps", "downMbps", "portHopping" },
             hysteria.Fields.Select(item => item.Key).ToArray());
         var xray = BackendDefinitionCatalog.All.Single(item => item.BackendType == "xray");
         Assert.AreEqual("xtls-rprx-vision", xray.Fields.Single(item => item.Key == "flow").Fixed);

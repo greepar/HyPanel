@@ -23,6 +23,7 @@ public sealed class SyncWorker(
     ServiceLogCollector logCollector,
     ServiceReconciler reconciler,
     BackendProcessSupervisor processSupervisor,
+    PortHoppingManager portHopping,
     AgentEnrollmentOptions enrollmentOptions,
     HttpClient httpClient,
     TimeProvider timeProvider,
@@ -54,6 +55,7 @@ public sealed class SyncWorker(
             state = await stateStore.LoadAsync(stoppingToken);
             await reconciler.RestoreAsync(credentials, stoppingToken);
             state = await stateStore.LoadAsync(stoppingToken);
+            await portHopping.ApplyAsync(state.DesiredState, stoppingToken);
             commandState = await commandStateStore.LoadAsync(stoppingToken);
             commandState = await FinalizeInterruptedCommandsAsync(commandState, stoppingToken);
             await usageStateStore.LoadAsync(stoppingToken);
@@ -80,14 +82,18 @@ public sealed class SyncWorker(
                 await reconciler.RefreshRuntimeStatesAsync(stoppingToken);
                 var pendingUsageBatches = usageStateStore.GetPendingBatchesSnapshot();
                 var updateReport = await updateStateStore.GetReportAsync(stoppingToken);
-                var response = await SyncAsync(credentials, state.AppliedRevision, reconciler.GetRuntimeStates(),
+                var response = await SyncAsync(credentials, state.AppliedRevision, WithPortHoppingErrors(reconciler.GetRuntimeStates()),
                     pendingUsageBatches, pendingResults, updateReport, stoppingToken);
                 await updater.MarkSyncSucceededAsync(stoppingToken);
                 await usageStateStore.AcknowledgeAsync(pendingUsageBatches, response.AcceptedUsageBatchIds, stoppingToken);
                 if (response.DesiredState is not null)
                 {
                     var result = await reconciler.ApplyAsync(response.DesiredState, credentials, stoppingToken);
-                    if (result.Succeeded) state = await stateStore.LoadAsync(stoppingToken);
+                    if (result.Succeeded)
+                    {
+                        state = await stateStore.LoadAsync(stoppingToken);
+                        await portHopping.ApplyAsync(state.DesiredState, stoppingToken);
+                    }
                 }
 
                 if (pendingResults.Length > 0)
@@ -324,6 +330,14 @@ public sealed class SyncWorker(
     private static bool IsTransient(Exception exception) => exception is HttpRequestException or TaskCanceledException;
     private sealed class AgentCredentialException : Exception;
     private sealed class AgentRevokedException : Exception;
+
+    /// <summary>Surfaces a port-hopping failure on the affected services without changing their run status.</summary>
+    private IReadOnlyList<ServiceRuntimeState> WithPortHoppingErrors(IReadOnlyList<ServiceRuntimeState> states) =>
+        portHopping.LastError is not { } error
+            ? states
+            : states.Select(state => portHopping.HoppingServices.Contains(state.ServiceId) && state.ErrorCode is null
+                ? state with { ErrorCode = "port_hopping_failed", ErrorMessage = error }
+                : state).ToArray();
 
     /// <summary>
     /// The Node was deleted in the Panel: stop every managed backend, forget the identity and local

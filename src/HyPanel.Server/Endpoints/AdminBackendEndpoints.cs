@@ -89,6 +89,10 @@ internal static class AdminBackendEndpoints
                 using var document = JsonDocument.Parse(item.Service.ConfigJson);
                 if (document.RootElement.TryGetProperty("listenPort", out var port) && port.TryGetInt32(out var value))
                     used.Add(value);
+                if (document.RootElement.TryGetProperty("portHopping", out var hop) && hop.ValueKind == JsonValueKind.String &&
+                    HyPanel.Shared.Networking.PortSpec.TryParse(hop.GetString(), out var hopping))
+                    foreach (var range in hopping.Ranges)
+                        for (var hopPort = range.From; hopPort <= range.To; hopPort++) used.Add(hopPort);
             }
             catch (JsonException)
             {
