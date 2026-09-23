@@ -1888,7 +1888,8 @@ function ServiceEditor({
   const generate = async (definition: BackendDefinition) => {
     setGenerating(true);
     try {
-      const result = await api.generateBackendDefaults(definition.backendType);
+      // New services get a random port that is free on this node; existing services keep theirs.
+      const result = await api.generateBackendDefaults(definition.backendType, service ? undefined : nodeId);
       setForm((current) =>
         current && current.backendType === definition.backendType
           ? { ...current, values: { ...current.values, ...result.values } }

@@ -35,4 +35,20 @@ public sealed class AdminBackendEndpointsTests
         StringAssert.Contains(json, "\"realityPrivateKey\"");
         StringAssert.Contains(json, "\"realityPublicKey\"");
     }
+
+    [TestMethod]
+    public void PickFreePort_AvoidsUsedAndReservedControlPorts()
+    {
+        var used = Enumerable.Range(AdminBackendEndpoints.MinimumSuggestedPort,
+            AdminBackendEndpoints.MaximumSuggestedPort - AdminBackendEndpoints.MinimumSuggestedPort).ToHashSet();
+        used.Remove(45_678);
+        used.Remove(20_100);
+
+        Assert.AreEqual(45_678, AdminBackendEndpoints.PickFreePort(used));
+        for (var attempt = 0; attempt < 200; attempt++)
+        {
+            var port = AdminBackendEndpoints.PickFreePort(new HashSet<int> { 30_000 });
+            Assert.IsTrue(port is >= 10_000 and < 60_000 && port != 30_000 && port is not (>= 20_000 and <= 20_255));
+        }
+    }
 }

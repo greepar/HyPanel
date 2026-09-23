@@ -62,7 +62,9 @@ public sealed record NodeMetrics(
     long DiskTotalBytes,
     long DiskAvailableBytes,
     long NetworkUploadBytes,
-    long NetworkDownloadBytes);
+    long NetworkDownloadBytes,
+    IReadOnlyList<int>? ListeningTcpPorts = null,
+    IReadOnlyList<int>? ListeningUdpPorts = null);
 
 public sealed record ServiceDesiredState(
     Guid ServiceId,

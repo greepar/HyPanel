@@ -73,7 +73,7 @@ export class ApiClient {
       fields: item.fields,
     }))
   }
-  generateBackendDefaults = (backendType: string) => this.request<{ backendType: string; values: Record<string, string> }>(`/api/admin/v1/backends/${encodeURIComponent(backendType)}/defaults`, { method: 'POST' })
+  generateBackendDefaults = (backendType: string, nodeId?: string) => this.request<{ backendType: string; values: Record<string, string> }>(`/api/admin/v1/backends/${encodeURIComponent(backendType)}/defaults${nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`, { method: 'POST' })
   updateSettings = (value: Pick<GlobalSettings, 'agentUpdateDefaultPolicy' | 'backendUpdateDefaultPolicy' | 'githubMirrorBaseUrl'>) => this.request('/api/admin/v1/settings', { method: 'PUT', body: JSON.stringify(value) })
   certificates = () => this.request<Certificate[]>('/api/admin/v1/certificates')
   createCertificate = (value: { name: string; certificatePem: string; privateKeyPem: string }) => this.request<Certificate>('/api/admin/v1/certificates', { method: 'POST', body: JSON.stringify(value) })

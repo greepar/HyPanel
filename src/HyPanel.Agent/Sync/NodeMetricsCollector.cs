@@ -23,6 +23,7 @@ public sealed class NodeMetricsCollector(AgentEnrollmentOptions options, TimePro
         var memoryAvailable = memoryTotal == 0 ? 0 : Math.Clamp(memoryTotal - memory.MemoryLoadBytes, 0, memoryTotal);
         var (diskTotal, diskAvailable) = GetDiskMetrics();
         var (networkUpload, networkDownload) = GetNetworkMetrics();
+        var (tcpPorts, udpPorts) = GetListeningPorts();
         return new NodeMetrics(
             observedAt,
             Math.Max(0, Environment.TickCount64 / 1000),
@@ -32,7 +33,30 @@ public sealed class NodeMetricsCollector(AgentEnrollmentOptions options, TimePro
             diskTotal,
             diskAvailable,
             networkUpload,
-            networkDownload);
+            networkDownload,
+            tcpPorts,
+            udpPorts);
+    }
+
+    internal const int MaximumReportedPorts = 4096;
+
+    /// <summary>Ports already bound on this host, so the Panel can suggest a free listen port for new services.</summary>
+    private static (int[]? Tcp, int[]? Udp) GetListeningPorts()
+    {
+        try
+        {
+            var properties = System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties();
+            return (Ports(properties.GetActiveTcpListeners()), Ports(properties.GetActiveUdpListeners()));
+        }
+        catch (Exception exception) when (exception is System.Net.NetworkInformation.NetworkInformationException
+                                              or PlatformNotSupportedException or IOException
+                                              or UnauthorizedAccessException)
+        {
+            return (null, null);
+        }
+
+        static int[] Ports(System.Net.IPEndPoint[] endpoints) => endpoints.Select(endpoint => endpoint.Port)
+            .Where(port => port is >= 1 and <= 65_535).Distinct().Order().Take(MaximumReportedPorts).ToArray();
     }
 
     private double CollectPortableCpuPercent(DateTimeOffset observedAt)

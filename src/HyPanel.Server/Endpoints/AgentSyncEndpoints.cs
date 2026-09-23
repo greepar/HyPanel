@@ -264,7 +264,12 @@ internal static class AgentSyncEndpoints
                 && metrics.NetworkUploadBytes >= 0
                 && metrics.NetworkDownloadBytes >= 0
                 && double.IsFinite(metrics.CpuUsagePercent)
-                && metrics.CpuUsagePercent is >= 0 and <= 100;
+                && metrics.CpuUsagePercent is >= 0 and <= 100
+                && IsValidPortList(metrics.ListeningTcpPorts)
+                && IsValidPortList(metrics.ListeningUdpPorts);
+
+    private static bool IsValidPortList(IReadOnlyList<int>? ports) =>
+        ports is null || ports.Count <= 4096 && ports.All(static port => port is >= 1 and <= 65_535);
 
     private static bool IsValidCommandResult(AgentCommandResult result, DateTimeOffset nowUtc)
     {
