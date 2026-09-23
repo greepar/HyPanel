@@ -436,8 +436,12 @@ Resetting a user's subscription issues a new token and rotates all of the user's
 `TlsCertificateAsset.Kind` selects how a Hysteria2 service obtains its certificate:
 
 - `Upload`: PEM pair stored encrypted on the Server and written to `tls/<fingerprint>/` in the instance directory.
-- `Path`: absolute certificate/key paths on the node, read directly by the backend (the `hypanel-agent` user
-  needs read access). The Server stores the domain as `DNS:<domain>` for subscription SNI.
+- `Path`: absolute certificate/key paths on the **Panel host** (for example the fixed output of Lucky, certbot or
+  acme.sh). The Server reads and validates the pair on save and re-reads it every minute; when the files contain a
+  different valid certificate it replaces the stored copy and bumps every referencing node, so Agents receive it as
+  ordinary PEM material. Unreadable or invalid files keep the previous certificate and surface `SourceError`. The Server
+  runs as `hypanel` with `ProtectHome=true`, so the files must be readable by that user and outside `/root`/`/home`
+  (Docker deployments mount the directory).
 - `Acme`: domain, email and challenge (`http` = TCP 80, `tls` = TCP 443, `cloudflare` = DNS-01 with an encrypted API
   token). Hysteria issues and renews the certificate itself with state under `acme/` in the instance directory; HTTP
   and TLS challenges claim their TCP port for conflict detection.

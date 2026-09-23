@@ -8,7 +8,8 @@ internal sealed partial class SqliteServerRepository
     private const string CertificateColumns = """
         c.id,c.name,c.kind,c.certificate_pem,c.created_at_utc,c.not_before_utc,c.expires_at_utc,c.fingerprint,c.subject,c.san,
           (SELECT COUNT(*) FROM service_instances s WHERE s.backend_type='hysteria2' AND json_extract(s.config_json,'$.certificateId')=c.id),
-          c.certificate_path,c.private_key_path,c.acme_email,c.acme_challenge,c.acme_token_nonce IS NOT NULL
+          c.certificate_path,c.private_key_path,c.acme_email,c.acme_challenge,c.acme_token_nonce IS NOT NULL,
+          c.source_checked_at_utc,c.source_error
         """;
 
     public async Task<IReadOnlyList<CertificateRecord>> GetCertificatesAsync(CancellationToken ct)
@@ -36,17 +37,17 @@ internal sealed partial class SqliteServerRepository
         await using var r = await cmd.ExecuteReaderAsync(ct);
         if (!await r.ReadAsync(ct)) return null;
         var value = ReadCertificate(r);
-        if (!r.IsDBNull(16))
+        if (!r.IsDBNull(18))
             value = value with
             {
                 PrivateKeyPem = credentialProtector.UnprotectCertificateKey(id,
-                    new ProtectedCredential((byte[])r[16], (byte[])r[17], (byte[])r[18]))
+                    new ProtectedCredential((byte[])r[18], (byte[])r[19], (byte[])r[20]))
             };
-        if (!r.IsDBNull(19))
+        if (!r.IsDBNull(21))
             value = value with
             {
                 AcmeDnsToken = credentialProtector.UnprotectAcmeDnsToken(id,
-                    new ProtectedCredential((byte[])r[19], (byte[])r[20], (byte[])r[21]))
+                    new ProtectedCredential((byte[])r[21], (byte[])r[22], (byte[])r[23]))
             };
         return value;
     }
@@ -72,6 +73,19 @@ internal sealed partial class SqliteServerRepository
         delete.CommandText = "DELETE FROM certificates WHERE id=@id;";
         delete.Parameters.AddWithValue("@id", id.ToString("D"));
         return await delete.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    /// <summary>Records the outcome of the latest read of a Path certificate's files.</summary>
+    public async Task SetCertificateSourceStatusAsync(Guid id, DateTimeOffset checkedAt, string? error,
+        CancellationToken ct)
+    {
+        await using var c = await connectionFactory.OpenAsync(ct);
+        await using var cmd = c.CreateCommand();
+        cmd.CommandText = "UPDATE certificates SET source_checked_at_utc=@at,source_error=@error WHERE id=@id;";
+        cmd.Parameters.AddWithValue("@id", id.ToString("D"));
+        cmd.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(checkedAt));
+        cmd.Parameters.AddWithValue("@error", error is null ? DBNull.Value : error);
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 
     public async Task InitializeCertificatesAsync(CancellationToken ct)
@@ -137,7 +151,9 @@ internal sealed partial class SqliteServerRepository
         r.IsDBNull(7) ? null : r.GetString(7), r.IsDBNull(8) ? null : r.GetString(8), r.GetString(9), r.GetInt32(10),
         CertificatePath: r.IsDBNull(11) ? null : r.GetString(11), PrivateKeyPath: r.IsDBNull(12) ? null : r.GetString(12),
         AcmeEmail: r.IsDBNull(13) ? null : r.GetString(13), AcmeChallenge: r.IsDBNull(14) ? null : r.GetString(14),
-        HasAcmeDnsToken: r.GetInt64(15) != 0);
+        HasAcmeDnsToken: r.GetInt64(15) != 0,
+        SourceCheckedAtUtc: r.IsDBNull(16) ? null : SqliteValue.ToDateTimeOffset(r.GetString(16)),
+        SourceError: r.IsDBNull(17) ? null : r.GetString(17));
 
     private static void AddCertificateParameters(SqliteCommand cmd, CertificateRecord value, ProtectedCredential? key,
         ProtectedCredential? token)

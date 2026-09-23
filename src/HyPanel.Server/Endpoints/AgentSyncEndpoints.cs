@@ -108,8 +108,6 @@ internal static class AgentSyncEndpoints
                     if (certificate is not null)
                         tls = certificate.Kind switch
                         {
-                            TlsCertificateKinds.Path => new TlsCertificateAsset(certificate.Id, string.Empty, null, null,
-                                TlsCertificateKinds.Path, certificate.CertificatePath, certificate.PrivateKeyPath),
                             TlsCertificateKinds.Acme => new TlsCertificateAsset(certificate.Id, string.Empty, null, null,
                                 TlsCertificateKinds.Acme, AcmeDomains: [SqliteServerRepository.FirstDnsName(certificate.San)!],
                                 AcmeEmail: certificate.AcmeEmail, AcmeChallenge: certificate.AcmeChallenge,

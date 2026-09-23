@@ -52,6 +52,7 @@ public static class Program
         builder.Services.AddHttpClient("release-sync", client => client.Timeout = TimeSpan.FromMinutes(10))
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = true });
         builder.Services.AddHostedService<ReleaseSyncWorker>();
+        builder.Services.AddHostedService<HyPanel.Server.Security.CertificateSourceWatcher>();
         builder.Services.AddSingleton<BackendArtifactCatalog>();
         builder.Services.AddHttpClient("backend-release-sync", client => client.Timeout = TimeSpan.FromMinutes(10));
         builder.Services.AddSingleton<BackendReleaseSyncWorker>();

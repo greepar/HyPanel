@@ -35,7 +35,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -464,6 +464,57 @@ public sealed class SqliteServerRepositoryTests
 
         Assert.AreEqual("second-token", await fixture.Repository.GetSubscriptionTokenAsync(user.User.Id, CancellationToken.None));
         Assert.IsNull(await fixture.Repository.GetSubscriptionTokenAsync(Guid.NewGuid(), CancellationToken.None));
+    }
+
+    [TestMethod]
+    public async Task CertificateSourceWatcher_DistributesRenewedFilesAndKeepsOldOnInvalidFiles()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var directory = Directory.CreateTempSubdirectory("hypanel-cert-");
+        try
+        {
+            var certPath = Path.Combine(directory.FullName, "fullchain.pem");
+            var keyPath = Path.Combine(directory.FullName, "privkey.pem");
+            var now = DateTimeOffset.UtcNow;
+            var (firstPem, firstKey) = HyPanel.Server.Tests.Endpoints.AdminCertificatesEndpointsTests.SelfSigned("hy.example.com", now);
+            await File.WriteAllTextAsync(certPath, firstPem);
+            await File.WriteAllTextAsync(keyPath, firstKey);
+            Assert.IsTrue(AdminCertificatesEndpoints.TryCreate(Guid.NewGuid(), new CertificateUploadRequest("lucky",
+                firstPem, firstKey, "Path", certPath, keyPath), now, out var created));
+            Assert.IsTrue(await fixture.Repository.CreateCertificateAsync(created, CancellationToken.None));
+            var nodeId = Guid.NewGuid();
+            await fixture.Repository.CreateNodeAsync(nodeId, "cert-node", CancellationToken.None);
+            await fixture.Repository.CreateServiceAsync(CreateService(nodeId, Guid.NewGuid(), "hy") with
+            {
+                ConfigJson = $$"""{"certificateId":"{{created.Id:D}}"}"""
+            }, CancellationToken.None);
+            var revision = (await fixture.Repository.GetNodeAsync(nodeId, CancellationToken.None))!.DesiredRevision;
+            var watcher = new HyPanel.Server.Security.CertificateSourceWatcher(fixture.Repository, TimeProvider.System,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<HyPanel.Server.Security.CertificateSourceWatcher>.Instance);
+
+            var (renewedPem, renewedKey) = HyPanel.Server.Tests.Endpoints.AdminCertificatesEndpointsTests.SelfSigned("hy.example.com", now, 90);
+            await File.WriteAllTextAsync(certPath, renewedPem);
+            await File.WriteAllTextAsync(keyPath, renewedKey);
+            await watcher.CheckAllAsync(CancellationToken.None);
+
+            var renewed = await fixture.Repository.GetCertificateWithKeyAsync(created.Id, CancellationToken.None);
+            Assert.AreNotEqual(created.Fingerprint, renewed!.Fingerprint);
+            Assert.AreEqual(renewedKey.Trim() + "\n", renewed.PrivateKeyPem);
+            Assert.IsNull(renewed.SourceError);
+            Assert.AreEqual(revision + 1,
+                (await fixture.Repository.GetNodeAsync(nodeId, CancellationToken.None))!.DesiredRevision,
+                "nodes using the certificate receive the renewed copy");
+
+            await File.WriteAllTextAsync(certPath, "garbage");
+            await watcher.CheckAllAsync(CancellationToken.None);
+            var kept = await fixture.Repository.GetCertificateWithKeyAsync(created.Id, CancellationToken.None);
+            Assert.AreEqual(renewed.Fingerprint, kept!.Fingerprint);
+            Assert.IsNotNull(kept.SourceError);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
     }
 
     [DataTestMethod]

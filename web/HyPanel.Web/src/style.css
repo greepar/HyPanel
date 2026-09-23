@@ -451,6 +451,7 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 .certificate-form .field-help { margin: 0 }
 .section-toolbar > .segmented { display: inline-flex }
 .certificate-row > .row-actions { display: flex; flex-wrap: nowrap; gap: 12px }
+.certificate-row small.certificate-error { color: var(--danger); white-space: normal }
 .certificate-row strong .badge { margin-left: 6px; vertical-align: middle }
 .restore-controls { display: grid; gap: 12px; max-width: 520px }
 

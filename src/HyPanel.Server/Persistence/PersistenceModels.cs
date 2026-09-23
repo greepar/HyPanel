@@ -94,7 +94,8 @@ internal sealed record CertificateRecord(Guid Id, string Name, string Kind, stri
     DateTimeOffset CreatedAtUtc, DateTimeOffset? NotBeforeUtc, DateTimeOffset? ExpiresAtUtc, string? Fingerprint,
     string? Subject, string San, int UsedBy, string? PrivateKeyPem = null, string? CertificatePath = null,
     string? PrivateKeyPath = null, string? AcmeEmail = null, string? AcmeChallenge = null,
-    string? AcmeDnsToken = null, bool HasAcmeDnsToken = false);
+    string? AcmeDnsToken = null, bool HasAcmeDnsToken = false, DateTimeOffset? SourceCheckedAtUtc = null,
+    string? SourceError = null);
 
 internal sealed record ServiceRuntimeStateRecord(
     Guid ServiceId,

@@ -83,13 +83,15 @@ public sealed class AdminCertificatesEndpointsTests
     [TestMethod]
     public void TryCreate_PathAndAcmeSources_ValidateRequiredFields()
     {
-        var now = DateTimeOffset.Parse("2026-09-23T00:00:00Z");
-        Assert.IsTrue(AdminCertificatesEndpoints.TryCreate(Guid.NewGuid(), new CertificateUploadRequest("le", null, null,
-            "Path", "/etc/letsencrypt/live/a.example.com/fullchain.pem", "/etc/letsencrypt/live/a.example.com/privkey.pem",
-            "A.Example.com"), now, out var path));
-        Assert.AreEqual("DNS:a.example.com", path.San);
-        Assert.IsFalse(AdminCertificatesEndpoints.TryCreate(Guid.NewGuid(), new CertificateUploadRequest("bad", null, null,
-            "Path", "relative/cert.pem", "/key.pem", "a.example.com"), now, out _));
+        var now = DateTimeOffset.UtcNow;
+        var (pem, keyPem) = SelfSigned("a.example.com", now);
+        Assert.IsTrue(AdminCertificatesEndpoints.TryCreate(Guid.NewGuid(), new CertificateUploadRequest("le", pem, keyPem,
+            "Path", "/etc/ssl/hy/fullchain.pem", "/etc/ssl/hy/privkey.pem"), now, out var path));
+        Assert.AreEqual("Path", path.Kind);
+        StringAssert.Contains(path.San, "a.example.com");
+        Assert.IsNotNull(path.PrivateKeyPem);
+        Assert.IsFalse(AdminCertificatesEndpoints.TryCreate(Guid.NewGuid(), new CertificateUploadRequest("bad", pem, keyPem,
+            "Path", "relative/cert.pem", "/key.pem"), now, out _));
 
         Assert.IsTrue(AdminCertificatesEndpoints.TryCreate(Guid.NewGuid(), new CertificateUploadRequest("acme", null, null,
             "Acme", Domain: "hy.example.com", AcmeEmail: "ops@example.com", AcmeChallenge: "http"), now, out var http));
@@ -99,5 +101,16 @@ public sealed class AdminCertificatesEndpointsTests
             "Cloudflare DNS needs an API token");
         Assert.IsFalse(AdminCertificatesEndpoints.TryCreate(Guid.NewGuid(), new CertificateUploadRequest("wild", null, null,
             "Acme", Domain: "*.example.com", AcmeEmail: "ops@example.com", AcmeChallenge: "http"), now, out _));
+    }
+
+    internal static (string Certificate, string Key) SelfSigned(string host, DateTimeOffset now, int days = 30)
+    {
+        using var key = RSA.Create(2048);
+        var request = new CertificateRequest($"CN={host}", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        var san = new SubjectAlternativeNameBuilder();
+        san.AddDnsName(host);
+        request.CertificateExtensions.Add(san.Build());
+        using var cert = request.CreateSelfSigned(now.AddMinutes(-1), now.AddDays(days));
+        return (cert.ExportCertificatePem(), key.ExportPkcs8PrivateKeyPem());
     }
 }

@@ -37,6 +37,7 @@ using HyPanel.Shared.Contracts;
 [JsonSerializable(typeof(SubscriptionTemplateRequest))]
 [JsonSerializable(typeof(SubscriptionTemplateResponse))]
 [JsonSerializable(typeof(SubscriptionTemplateError))]
+[JsonSerializable(typeof(CertificateErrorResponse))]
 [JsonSerializable(typeof(UserGroupResponse))]
 [JsonSerializable(typeof(UserGroupResponse[]))]
 [JsonSerializable(typeof(UserResponse[]))]

@@ -245,7 +245,7 @@ type CertificateDraft = {
   acmeChallenge: AcmeChallenge;
   acmeDnsToken: string;
 };
-const certificateKindLabels: Record<CertificateKind, string> = { Upload: "手动上传", Path: "路径映射", Acme: "ACME 自动续签" };
+const certificateKindLabels: Record<CertificateKind, string> = { Upload: "手动上传", Path: "路径映射（自动同步）", Acme: "ACME 自动续签" };
 const acmeChallengeLabels: Record<AcmeChallenge, string> = {
   http: "HTTP 验证（需开放 TCP 80）",
   tls: "TLS-ALPN 验证（需开放 TCP 443）",
@@ -256,7 +256,7 @@ const certificateSummary = (certificate: Certificate) =>
   certificate.kind === "Upload"
     ? `到期 ${certificate.expiresAtUtc ? formatDate(certificate.expiresAtUtc) : "未知"}`
     : certificate.kind === "Path"
-      ? "节点本地文件"
+      ? `自动同步 · 到期 ${certificate.expiresAtUtc ? formatDate(certificate.expiresAtUtc) : "未知"}`
       : "ACME 自动续签";
 
 function CertificatePanel({ api, certificates, setCertificates, setError }: { api: ApiClient; certificates: Certificate[]; setCertificates: (value: Certificate[]) => void; setError: (value: string) => void }) {
@@ -275,7 +275,7 @@ function CertificatePanel({ api, certificates, setCertificates, setError }: { ap
       const body: CertificateRequest = draft.kind === "Upload"
         ? { name: draft.name, kind: "Upload", certificatePem: certificatePem.current?.value ?? "", privateKeyPem: privateKeyPem.current?.value ?? "" }
         : draft.kind === "Path"
-          ? { name: draft.name, kind: "Path", certificatePath: draft.certificatePath, privateKeyPath: draft.privateKeyPath, domain: draft.domain }
+          ? { name: draft.name, kind: "Path", certificatePath: draft.certificatePath, privateKeyPath: draft.privateKeyPath }
           : { name: draft.name, kind: "Acme", domain: draft.domain, acmeEmail: draft.acmeEmail, acmeChallenge: draft.acmeChallenge, acmeDnsToken: draft.acmeDnsToken || undefined };
       const certificate = editing ? await api.replaceCertificate(editing.id, body) : await api.createCertificate(body);
       setCertificates(editing ? certificates.map(item => item.id === certificate.id ? certificate : item) : [...certificates, certificate]);
@@ -311,7 +311,7 @@ function CertificatePanel({ api, certificates, setCertificates, setError }: { ap
   const detail = (certificate: Certificate) => certificate.kind === "Upload"
     ? `${certificate.san.join(", ") || certificate.subject || "无 SAN"} · 有效期至 ${certificate.expiresAtUtc ? formatDate(certificate.expiresAtUtc) : "未知"}`
     : certificate.kind === "Path"
-      ? `${certificate.san.join(", ")} · ${certificate.certificatePath}`
+      ? `${certificate.san.join(", ") || certificate.subject || "无 SAN"} · 有效期至 ${certificate.expiresAtUtc ? formatDate(certificate.expiresAtUtc) : "未知"} · ${certificate.certificatePath}`
       : `${certificate.san.join(", ")} · ${certificate.acmeChallenge ? acmeChallengeLabels[certificate.acmeChallenge] : ""}`;
   return <section className="card panel certificate-panel">
     <SectionTitle title="TLS 证书" description="Hysteria 2 服务使用的证书。支持手动上传、节点本地文件路径，或由节点自动申请并续签。" />
@@ -319,7 +319,11 @@ function CertificatePanel({ api, certificates, setCertificates, setError }: { ap
       <div>
         <strong>{certificate.name} <span className="badge">{certificateKindLabels[certificate.kind]}</span></strong>
         <small>{detail(certificate)}</small>
-        <small>使用中 {certificate.usedBy} 个服务</small>
+        <small>
+          使用中 {certificate.usedBy} 个服务
+          {certificate.kind === "Path" && certificate.sourceCheckedAtUtc && ` · 上次检测 ${formatRelative(certificate.sourceCheckedAtUtc)}`}
+        </small>
+        {certificate.kind === "Path" && certificate.sourceError && <small className="certificate-error">{certificate.sourceError}</small>}
       </div>
       <div className="row-actions">
         <button className="button button-secondary button-small" type="button" onClick={() => edit(certificate)}>编辑</button>
@@ -342,11 +346,10 @@ function CertificatePanel({ api, certificates, setCertificates, setError }: { ap
         </div>
       </>}
       {draft.kind === "Path" && <>
-        <p className="field-help">使用节点上已有的证书文件（例如 certbot / acme.sh 维护的证书），文件更新后重启服务即可生效。Agent 以 <code>hypanel-agent</code> 用户运行，需要能读取这两个文件，例如：<code>setfacl -m u:hypanel-agent:r 证书 私钥</code>（目录也需可进入）。</p>
+        <p className="field-help">填写<strong>面板服务器</strong>上的证书与私钥文件路径（例如 Lucky、certbot、acme.sh 续签后固定输出的位置）。面板每分钟检测一次，文件里的证书一变就自动下发到所有使用它的节点；新文件无效时继续使用旧证书并在这里提示。面板以 <code>hypanel</code> 用户运行，需要能读取这两个文件，且不能放在 /root 或 /home 下。</p>
         <div className="form-grid">
-          <label>证书文件路径<input required placeholder="/etc/letsencrypt/live/example.com/fullchain.pem" value={draft.certificatePath} onInput={event => change("certificatePath", event.currentTarget.value)} /></label>
-          <label>私钥文件路径<input required placeholder="/etc/letsencrypt/live/example.com/privkey.pem" value={draft.privateKeyPath} onInput={event => change("privateKeyPath", event.currentTarget.value)} /></label>
-          <label>证书域名<input required placeholder="example.com（用作订阅 SNI）" value={draft.domain} onInput={event => change("domain", event.currentTarget.value)} /></label>
+          <label>证书文件路径<input required placeholder="/etc/ssl/hypanel/fullchain.pem" value={draft.certificatePath} onInput={event => change("certificatePath", event.currentTarget.value)} /></label>
+          <label>私钥文件路径<input required placeholder="/etc/ssl/hypanel/privkey.pem" value={draft.privateKeyPath} onInput={event => change("privateKeyPath", event.currentTarget.value)} /></label>
         </div>
       </>}
       {draft.kind === "Acme" && <>
