@@ -2,6 +2,7 @@ import type { ComponentChildren } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { Check, ChevronDown, ChevronsUpDown, LayoutDashboard, LogOut, Monitor, Moon, Server, Settings, Sun, Users } from 'lucide-preact'
 import type { AppRoute, Role, Theme } from './domain'
+import { BrandLockup, BrandMark } from './brand'
 
 export const themes: Theme[] = ['light', 'dark', 'system']
 const themeLabels: Record<Theme, string> = { light: '浅色', dark: '深色', system: '系统' }
@@ -32,7 +33,7 @@ export function AppShell({ children, theme, setTheme, route, navigate, identity,
   }, [])
   return <div className="app-shell">
     <header className="topbar">
-      <a className="brand" href={role === 'User' ? '#/subscription' : '#/overview'}><span className="brand-mark" aria-hidden="true">H</span>HyPanel</a>
+      <a className="brand" href={role === 'User' ? '#/subscription' : '#/overview'} aria-label="HyPanel 首页"><BrandLockup size={28} /></a>
       <div className="topbar-actions">
         <details className="user-menu"><summary><span className="avatar-sm" aria-hidden="true">{(identity ?? 'H').slice(0, 1).toUpperCase()}</span><span className="user-menu-name">{identity ?? '账户'}</span><ChevronDown size={14} /></summary><div className="user-menu-popover"><p>主题</p>{themes.map(value => { const Icon = value === 'light' ? Sun : value === 'dark' ? Moon : Monitor; return <button key={value} type="button" onClick={() => setTheme(value)}><Icon size={16} />{themeLabels[value]}{theme === value && <Check size={15} />}</button> })}{logout && <button type="button" onClick={logout}><LogOut size={16} />退出</button>}</div></details>
       </div>
@@ -52,6 +53,8 @@ export function Page({ title, description, actions, children, eyebrow }: { title
 }
 
 export function Loading({ label = '正在加载…' }: { label?: string }) { return <div className="state" role="status"><span className="spinner" />{label}</div> }
+/** Full-screen splash while the session is being validated. */
+export function Splash({ label }: { label: string }) { return <div className="splash" role="status"><BrandMark size={56} detail="full" /><span><i className="spinner" />{label}</span></div> }
 export function Empty({ title, description, action }: { title: string; description: string; action?: ComponentChildren }) { return <div className="empty-state"><span className="empty-icon">＋</span><h2>{title}</h2><p>{description}</p>{action}</div> }
 export function ErrorState({ message, retry }: { message: string; retry: () => void }) { return <div className="empty-state error-state" role="alert"><span className="empty-icon">!</span><h2>加载失败</h2><p>{message}</p><button className="button button-primary" type="button" onClick={retry}>重试</button></div> }
 export function Notice({ kind = 'info', children, dismiss }: { kind?: 'info' | 'success' | 'error'; children: ComponentChildren; dismiss?: () => void }) { return <div className={`notice notice-${kind}`} role={kind === 'error' ? 'alert' : 'status'}><span>{children}</span>{dismiss && <button type="button" aria-label="关闭消息" onClick={dismiss}>×</button>}</div> }
