@@ -6,6 +6,7 @@
 !src/HyPanel.Server/**/*.cs
 !src/HyPanel.Server/*.csproj
 !src/HyPanel.Server/appsettings*.json
+!src/HyPanel.Server/**/*.yaml
 !web/HyPanel.Web/package.json
 !web/HyPanel.Web/package-lock.json
 !web/HyPanel.Web/src/**

@@ -417,13 +417,12 @@ self-signed certificate is pinned by SHA-256 (`pinSHA256` / mihomo `fingerprint`
 Subscription endpoint concept:
 
 ```text
-GET /s/<token>?format=mihomo
-GET /s/<token>?format=singbox
-GET /s/<token>?format=raw
-GET /s/<token>?format=base64
+GET /s/<token>          -> Mihomo/Clash YAML (the only format; a legacy ?format= is ignored)
 ```
 
 Subscription token must be random, revocable, and unrelated to the user's password/session token.
+The response carries `subscription-userinfo` (upload/download/total/expire) and `profile-update-interval`.
+Resetting a user's subscription issues a new token and rotates all of the user's proxy credentials.
 
 ### TLS certificate sources
 

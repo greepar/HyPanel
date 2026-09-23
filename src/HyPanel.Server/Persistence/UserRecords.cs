@@ -6,3 +6,5 @@ internal sealed record SessionIssue(UserRecord User, string Token, DateTimeOffse
 internal sealed record UsageTotalRecord(Guid UserId, Guid ServiceId, long UploadBytes, long DownloadBytes, DateTimeOffset UpdatedAtUtc);
 internal sealed record UserServiceCredentialRecord(Guid UserId, Guid ServiceId, string BackendType, string Credential,
     string Status, DateTimeOffset CreatedAtUtc, DateTimeOffset UpdatedAtUtc);
+
+internal sealed record SubscriptionUserInfo(long UploadBytes, long DownloadBytes, long? TrafficLimitBytes, DateTimeOffset? ExpiresAtUtc);

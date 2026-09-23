@@ -106,6 +106,19 @@ internal sealed partial class SqliteServerRepository
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    /// <summary>
+    /// Issues a new subscription token and rotates every proxy credential of the user, so a leaked link or
+    /// already-imported profile stops working after the next Agent sync.
+    /// </summary>
+    public async Task<string?> ResetSubscriptionAsync(Guid id, string token, CancellationToken ct)
+    {
+        var rotated = await RotateSubscriptionTokenAsync(id, token, ct);
+        if (rotated is null) return null;
+        foreach (var serviceId in await GetBoundServicesAsync(id, ct))
+            await RotateServiceCredentialAsync(id, serviceId, ct);
+        return rotated;
+    }
+
     public async Task<string?> RotateSubscriptionTokenAsync(Guid id, string token, CancellationToken ct)
     {
         await using var c = await connectionFactory.OpenAsync(ct);
@@ -528,6 +541,23 @@ internal sealed partial class SqliteServerRepository
         }
 
         return services;
+    }
+
+    /// <summary>Usage, limit and expiry for the Clash <c>subscription-userinfo</c> header.</summary>
+    public async Task<SubscriptionUserInfo?> GetSubscriptionUserInfoAsync(string token, CancellationToken ct)
+    {
+        await using var c = await connectionFactory.OpenAsync(ct);
+        await using var cmd = c.CreateCommand();
+        cmd.CommandText = """
+            SELECT COALESCE(SUM(t.upload_bytes),0),COALESCE(SUM(t.download_bytes),0),u.traffic_limit_bytes,u.expires_at_utc
+            FROM users u LEFT JOIN usage_totals t ON t.user_id=u.id
+            WHERE u.subscription_token_hash=@hash GROUP BY u.id;
+            """;
+        cmd.Parameters.Add("@hash", SqliteType.Blob).Value = TokenHash(token);
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        if (!await r.ReadAsync(ct)) return null;
+        return new SubscriptionUserInfo(r.GetInt64(0), r.GetInt64(1), r.IsDBNull(2) ? null : r.GetInt64(2),
+            r.IsDBNull(3) ? null : SqliteValue.ToDateTimeOffset(r.GetString(3)));
     }
 
     internal static string? FirstDnsName(string? san)

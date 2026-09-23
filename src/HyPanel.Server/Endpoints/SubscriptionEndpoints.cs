@@ -9,17 +9,14 @@ internal static class SubscriptionEndpoints
     public static void Map(IEndpointRouteBuilder endpoints) =>
         endpoints.MapGet("/s/{token}", GetAsync);
 
-    internal static async Task GetAsync(string token, string? format, HttpResponse response,
-        SqliteServerRepository repository, CancellationToken ct)
+    /// <summary>
+    /// Serves the user's subscription as a Mihomo/Clash YAML profile. The legacy <c>format</c> query parameter is
+    /// accepted and ignored so previously distributed links keep working.
+    /// </summary>
+    internal static async Task GetAsync(string token, HttpResponse response, SqliteServerRepository repository,
+        CancellationToken ct)
     {
         SetPrivateHeaders(response);
-        format ??= "raw";
-        if (format is not ("raw" or "base64" or "mihomo" or "singbox"))
-        {
-            response.StatusCode = StatusCodes.Status400BadRequest;
-            return;
-        }
-
         var services = await repository.GetSubscriptionServicesAsync(token, ct);
         if (services is null)
         {
@@ -28,18 +25,18 @@ internal static class SubscriptionEndpoints
         }
 
         var proxies = services.Select(TryProject).Where(static p => p is not null).Cast<SubscriptionProxy>().ToArray();
-        var raw = string.Join('\n', proxies.Select(static p => p.Uri));
-        var output = format switch
+        var output = RenderMihomo(proxies, await repository.GetMihomoTemplateAsync(ct) ?? MihomoTemplate.Default);
+        if (await repository.GetSubscriptionUserInfoAsync(token, ct) is { } info)
         {
-            "raw" => raw,
-            "base64" => Convert.ToBase64String(Encoding.UTF8.GetBytes(raw)),
-            "mihomo" => RenderMihomo(proxies, await repository.GetMihomoTemplateAsync(ct) ?? MihomoTemplate.Default),
-            "singbox" => RenderSingBox(proxies),
-            _ => string.Empty
-        };
+            // Read by Clash Verge / Mihomo Party / Stash to show usage and expiry.
+            var userInfo = $"upload={info.UploadBytes}; download={info.DownloadBytes}; total={info.TrafficLimitBytes ?? 0}";
+            if (info.ExpiresAtUtc is { } expires) userInfo += $"; expire={expires.ToUnixTimeSeconds()}";
+            response.Headers["subscription-userinfo"] = userInfo;
+        }
+        response.Headers["profile-update-interval"] = "12";
+        response.Headers.ContentDisposition = "attachment; filename*=UTF-8''HyPanel.yaml";
         response.StatusCode = StatusCodes.Status200OK;
-        response.ContentType = format is "mihomo" ? "application/yaml; charset=utf-8" :
-            format is "singbox" ? "application/json; charset=utf-8" : "text/plain; charset=utf-8";
+        response.ContentType = "application/yaml; charset=utf-8";
         await response.WriteAsync(output, Encoding.UTF8, ct);
     }
 
@@ -63,27 +60,8 @@ internal static class SubscriptionEndpoints
             var password = $"{Hysteria2UserName(service.UserId)}:{service.Credential}";
             TryString(document.RootElement, "obfsPassword", out var obfsPassword);
             var endpoint = service.PublicEndpoint;
-            var host = endpoint.Host.Contains(':') ? $"[{endpoint.Host}]" : endpoint.Host;
-            var pin = service.PinnedCertificateSha256;
-            var query = new List<string>();
-            if (!string.IsNullOrEmpty(endpoint.TlsServerName))
-                query.Add($"sni={Uri.EscapeDataString(endpoint.TlsServerName)}");
-            if (pin is null) query.Add("insecure=0");
-            else
-            {
-                query.Add("insecure=1");
-                query.Add($"pinSHA256={pin}");
-            }
-            if (!string.IsNullOrEmpty(obfsPassword))
-            {
-                query.Add("obfs=salamander");
-                query.Add($"obfs-password={Uri.EscapeDataString(obfsPassword)}");
-            }
-
-            var uri =
-                $"hysteria2://{Uri.EscapeDataString(Hysteria2UserName(service.UserId))}:{Uri.EscapeDataString(service.Credential)}@{host}:{endpoint.Port}/?{string.Join('&', query)}#{Uri.EscapeDataString(service.Name)}";
             return new Hysteria2Proxy(service.Name, endpoint.Host, endpoint.Port, endpoint.TlsServerName, password,
-                obfsPassword, pin, uri);
+                obfsPassword, service.PinnedCertificateSha256);
         }
         catch (JsonException)
         {
@@ -105,17 +83,8 @@ internal static class SubscriptionEndpoints
                 !TryString(root, "fingerprint", out var fingerprint)) return null;
 
             var endpoint = service.PublicEndpoint;
-            var host = BracketIpv6(endpoint.Host);
-            var query = string.Join('&', new[]
-            {
-                Query("encryption", "none"), Query("flow", flow), Query("security", "reality"),
-                Query("sni", serverName), Query("fp", fingerprint), Query("pbk", publicKey),
-                Query("sid", shortId), Query("type", "tcp")
-            });
-            var uri =
-                $"vless://{Uri.EscapeDataString(service.Credential)}@{host}:{endpoint.Port}?{query}#{Uri.EscapeDataString(service.Name)}";
             return new XrayProxy(service.Name, endpoint.Host, endpoint.Port, service.Credential, flow, serverName, fingerprint,
-                publicKey, shortId, uri);
+                publicKey, shortId);
         }
         catch (JsonException)
         {
@@ -132,11 +101,7 @@ internal static class SubscriptionEndpoints
             if (root.ValueKind != JsonValueKind.Object || !TryString(root, "method", out var method) ||
                 !TryString(root, "password", out var password)) return null;
             var endpoint = service.PublicEndpoint;
-            var credential = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{method}:{password}"))
-                .TrimEnd('=').Replace('+', '-').Replace('/', '_');
-            var uri =
-                $"ss://{credential}@{BracketIpv6(endpoint.Host)}:{endpoint.Port}#{Uri.EscapeDataString(service.Name)}";
-            return new ShadowsocksProxy(service.Name, endpoint.Host, endpoint.Port, method, password, uri);
+            return new ShadowsocksProxy(service.Name, endpoint.Host, endpoint.Port, method, password);
         }
         catch (JsonException)
         {
@@ -204,87 +169,8 @@ internal static class SubscriptionEndpoints
         return MihomoTemplate.Render(template, rendered, Yaml);
     }
 
-    private static string RenderSingBox(IEnumerable<SubscriptionProxy> proxies)
-    {
-        using var stream = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(stream))
-        {
-            writer.WriteStartObject();
-            writer.WriteStartArray("outbounds");
-            foreach (var proxy in proxies)
-            {
-                writer.WriteStartObject();
-                if (proxy is Hysteria2Proxy hysteria)
-                {
-                    writer.WriteString("type", "hysteria2");
-                    writer.WriteString("tag", hysteria.Name);
-                    writer.WriteString("server", hysteria.Host);
-                    writer.WriteNumber("server_port", hysteria.Port);
-                    writer.WriteString("password", hysteria.Password);
-                    writer.WriteStartObject("tls");
-                    writer.WriteBoolean("enabled", true);
-                    writer.WriteBoolean("insecure", hysteria.PinnedSha256 is not null);
-                    if (!string.IsNullOrEmpty(hysteria.TlsServerName))
-                        writer.WriteString("server_name", hysteria.TlsServerName);
-                    writer.WriteEndObject();
-                    if (!string.IsNullOrEmpty(hysteria.ObfsPassword))
-                    {
-                        writer.WriteStartObject("obfs");
-                        writer.WriteString("type", "salamander");
-                        writer.WriteString("password", hysteria.ObfsPassword);
-                        writer.WriteEndObject();
-                    }
-                }
-                else if (proxy is XrayProxy xray)
-                {
-                    writer.WriteString("type", "vless");
-                    writer.WriteString("tag", xray.Name);
-                    writer.WriteString("server", xray.Host);
-                    writer.WriteNumber("server_port", xray.Port);
-                    writer.WriteString("uuid", xray.ClientId);
-                    writer.WriteString("flow", xray.Flow);
-                    writer.WriteString("network", "tcp");
-                    writer.WriteStartObject("tls");
-                    writer.WriteBoolean("enabled", true);
-                    writer.WriteString("server_name", xray.ServerName);
-                    writer.WriteStartObject("utls");
-                    writer.WriteBoolean("enabled", true);
-                    writer.WriteString("fingerprint", xray.Fingerprint);
-                    writer.WriteEndObject();
-                    writer.WriteStartObject("reality");
-                    writer.WriteBoolean("enabled", true);
-                    writer.WriteString("public_key", xray.PublicKey);
-                    writer.WriteString("short_id", xray.ShortId);
-                    writer.WriteEndObject();
-                    writer.WriteEndObject();
-                }
-                else if (proxy is ShadowsocksProxy shadowsocks)
-                {
-                    writer.WriteString("type", "shadowsocks");
-                    writer.WriteString("tag", shadowsocks.Name);
-                    writer.WriteString("server", shadowsocks.Host);
-                    writer.WriteNumber("server_port", shadowsocks.Port);
-                    writer.WriteString("method", shadowsocks.Method);
-                    writer.WriteString("password", shadowsocks.Password);
-                }
-
-                writer.WriteEndObject();
-            }
-
-            writer.WriteEndArray();
-            writer.WriteEndObject();
-        }
-
-        return Encoding.UTF8.GetString(stream.ToArray());
-    }
-
     private static string Yaml(string value) => '"' + value.Replace("\\", "\\\\", StringComparison.Ordinal)
         .Replace("\"", "\\\"", StringComparison.Ordinal) + '"';
-
-    private static string BracketIpv6(string host) => host.Contains(':') ? $"[{host}]" : host;
-
-    private static string Query(string key, string value) =>
-        $"{Uri.EscapeDataString(key)}={Uri.EscapeDataString(value)}";
 
     private static void SetPrivateHeaders(HttpResponse response)
     {
@@ -292,7 +178,7 @@ internal static class SubscriptionEndpoints
         response.Headers["Referrer-Policy"] = "no-referrer";
     }
 
-    private abstract record SubscriptionProxy(string Name, string Host, int Port, string Uri);
+    private abstract record SubscriptionProxy(string Name, string Host, int Port);
 
     private sealed record Hysteria2Proxy(
         string Name,
@@ -301,8 +187,7 @@ internal static class SubscriptionEndpoints
         string? TlsServerName,
         string Password,
         string? ObfsPassword,
-        string? PinnedSha256,
-        string Uri) : SubscriptionProxy(Name, Host, Port, Uri);
+        string? PinnedSha256) : SubscriptionProxy(Name, Host, Port);
 
     private sealed record XrayProxy(
         string Name,
@@ -313,14 +198,12 @@ internal static class SubscriptionEndpoints
         string ServerName,
         string Fingerprint,
         string PublicKey,
-        string ShortId,
-        string Uri) : SubscriptionProxy(Name, Host, Port, Uri);
+        string ShortId) : SubscriptionProxy(Name, Host, Port);
 
     private sealed record ShadowsocksProxy(
         string Name,
         string Host,
         int Port,
         string Method,
-        string Password,
-        string Uri) : SubscriptionProxy(Name, Host, Port, Uri);
+        string Password) : SubscriptionProxy(Name, Host, Port);
 }

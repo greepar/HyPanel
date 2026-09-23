@@ -116,6 +116,12 @@ select { height: 36px; padding-right: 32px; -webkit-appearance: none; appearance
 input:not([type="checkbox"]):not([type="radio"]) { height: 36px }
 input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0 }
 input[type="number"] { -moz-appearance: textfield; appearance: textfield }
+/* Single Clash subscription link */
+.subscription-link { display: grid; align-content: start; gap: 10px; padding: 18px 20px; min-width: 0 }
+.subscription-link > span { font-weight: 600 }
+.subscription-link code { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); font-size: 12px; overflow-wrap: anywhere }
+.subscription-link small { font-size: 12px }
+
 /* Subscription template editor */
 .template-panel { grid-column: 1 / -1 }
 .template-editor { min-height: 420px; font: 12px/1.6 var(--mono); tab-size: 2; white-space: pre }

@@ -38,7 +38,7 @@ export function SubscriptionPage({ api, setError }: { api: ApiClient; setError: 
   useEffect(() => { void load() }, [])
 
   const rotate = async () => {
-    if (rotationInFlight.current || !confirm('重置后旧订阅链接会立即失效，所有客户端都需要重新导入。继续吗？')) return
+    if (rotationInFlight.current || !confirm('重置后旧链接和已导入客户端的配置都会失效，需要用新链接重新导入。继续吗？')) return
     rotationInFlight.current = true
     setRotating(true)
     try {
@@ -85,35 +85,32 @@ export function SubscriptionPage({ api, setError }: { api: ApiClient; setError: 
   </Page>
 }
 
-/** Subscription links in every client format with a QR code for the selected one. */
+/** The user's Clash/Mihomo subscription link with a QR code. */
 export function SubscriptionLinks({ token, setError }: { token: string; setError: (value: string) => void }) {
-  const formats = [['Mihomo / Clash', 'mihomo'], ['通用 URI', 'raw'], ['Base64', 'base64'], ['sing-box', 'singbox']] as const
-  const [selected, setSelected] = useState<string>('mihomo')
   const [qr, setQr] = useState('')
-  const linkFor = (format: string) => `${location.origin}/s/${encodeURIComponent(token)}?format=${format}`
-  const selectedLink = linkFor(selected)
+  const link = `${location.origin}/s/${encodeURIComponent(token)}`
   useEffect(() => {
-    void QRCode.toDataURL(selectedLink, { width: 260, margin: 2, errorCorrectionLevel: 'M', color: { dark: '#171717', light: '#ffffff' } })
+    void QRCode.toDataURL(link, { width: 260, margin: 2, errorCorrectionLevel: 'M', color: { dark: '#171717', light: '#ffffff' } })
       .then(setQr)
       .catch(reason => setError(messageFor(reason, '无法生成二维码')))
-  }, [selectedLink])
-  const copy = async (value: string) => {
-    try { await copyText(value); setError('订阅链接已复制。') }
+  }, [link])
+  const copy = async () => {
+    try { await copyText(link); setError('订阅链接已复制。') }
     catch (reason) { setError(messageFor(reason, '无法复制')) }
   }
   return <div className="subscription-delivery">
-    <fieldset className="token-list">
-      <legend className="sr-only">订阅格式</legend>
-      {formats.map(([label, format]) => <label className={selected === format ? 'selected' : ''} key={format}>
-        <input className="sr-only" type="radio" name={`subscription-format-${token.slice(0, 6)}`} value={format} checked={selected === format} onChange={() => setSelected(format)} />
-        <span>{label}</span><code>{linkFor(format)}</code>
-        <button className="button button-secondary button-small" type="button" onClick={event => { event.preventDefault(); event.stopPropagation(); void copy(linkFor(format)) }}>复制</button>
-      </label>)}
-    </fieldset>
+    <div className="subscription-link">
+      <span>Clash / Mihomo 订阅（YAML）</span>
+      <code>{link}</code>
+      <div className="row-actions">
+        <button className="button button-primary" type="button" onClick={() => void copy()}>复制链接</button>
+        <a className="button button-secondary" href={`clash://install-config?url=${encodeURIComponent(link)}&name=HyPanel`}>一键导入 Clash</a>
+      </div>
+      <small className="muted">适用于 Clash Verge、Mihomo Party、ClashX Meta、Stash 等客户端；已包含分流规则，客户端会显示剩余流量和到期时间。</small>
+    </div>
     <aside className="qr-panel">
-      <span>{formats.find(([, format]) => format === selected)?.[0]}</span>
+      <span>扫码导入</span>
       {qr ? <img src={qr} alt="订阅二维码" /> : <Loading label="生成二维码…" />}
-      <small>客户端扫码导入，或复制左侧链接。</small>
     </aside>
   </div>
 }

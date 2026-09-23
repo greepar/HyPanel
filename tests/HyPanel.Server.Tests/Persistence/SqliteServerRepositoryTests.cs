@@ -811,18 +811,18 @@ public sealed class SqliteServerRepositoryTests
             await fixture.Repository.GetServicePublicEndpointAsync(nodeId, service.Id, CancellationToken.None));
         await AssertSubscriptionStatusAsync(fixture, "unknown-token", StatusCodes.Status404NotFound);
 
-        foreach (var format in new[] { "raw", "base64", "mihomo", "singbox" })
         {
             var context = new DefaultHttpContext();
             context.Response.Body = new MemoryStream();
-            await SubscriptionEndpoints.GetAsync("old-token", format, context.Response, fixture.Repository,
+            await SubscriptionEndpoints.GetAsync("old-token", context.Response, fixture.Repository,
                 CancellationToken.None);
             Assert.AreEqual(StatusCodes.Status200OK, context.Response.StatusCode);
             Assert.AreEqual("no-store", context.Response.Headers.CacheControl.ToString());
             Assert.AreEqual("no-referrer", context.Response.Headers["Referrer-Policy"].ToString());
+            StringAssert.StartsWith(context.Response.ContentType, "application/yaml");
+            StringAssert.StartsWith(context.Response.Headers["subscription-userinfo"].ToString(), "upload=0; download=0; total=");
             context.Response.Body.Position = 0;
             var content = await new StreamReader(context.Response.Body).ReadToEndAsync();
-            if (format == "base64") content = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(content));
             StringAssert.Contains(content, credential);
             Assert.IsFalse(content.Contains("private-key", StringComparison.Ordinal));
             Assert.IsFalse(content.Contains("private.example", StringComparison.Ordinal));
@@ -860,10 +860,11 @@ public sealed class SqliteServerRepositoryTests
             "User", true, null, null, "empty-token", CancellationToken.None);
         var emptyContext = new DefaultHttpContext();
         emptyContext.Response.Body = new MemoryStream();
-        await SubscriptionEndpoints.GetAsync("empty-token", "raw", emptyContext.Response, fixture.Repository,
+        await SubscriptionEndpoints.GetAsync("empty-token", emptyContext.Response, fixture.Repository,
             CancellationToken.None);
         Assert.AreEqual(StatusCodes.Status200OK, emptyContext.Response.StatusCode);
-        Assert.AreEqual(0, emptyContext.Response.Body.Length);
+        emptyContext.Response.Body.Position = 0;
+        StringAssert.Contains(await new StreamReader(emptyContext.Response.Body).ReadToEndAsync(), "proxies: []");
         Assert.IsNotNull(empty.User);
     }
 
@@ -885,7 +886,7 @@ public sealed class SqliteServerRepositoryTests
         Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "1.0.0", "linux-x64", 0, null,
             [], [], CancellationToken.None, publicIpv4: "203.0.113.42"));
 
-        var mihomo = await RenderSubscriptionAsync(fixture, "auto-token", "mihomo");
+        var mihomo = await RenderSubscriptionAsync(fixture, "auto-token");
 
         StringAssert.Contains(mihomo, "server: \"203.0.113.42\"");
         StringAssert.Contains(mihomo, "port: 8443");
@@ -895,7 +896,7 @@ public sealed class SqliteServerRepositoryTests
         Assert.IsTrue(await fixture.Repository.SetServicePublicEndpointAsync(nodeId,
             new ServicePublicEndpointRecord(service.Id, "manual.example", 443, null, fixture.Time.GetUtcNow()),
             CancellationToken.None));
-        mihomo = await RenderSubscriptionAsync(fixture, "auto-token", "mihomo");
+        mihomo = await RenderSubscriptionAsync(fixture, "auto-token");
         StringAssert.Contains(mihomo, "server: \"manual.example\"");
         StringAssert.Contains(mihomo, "port: 443");
     }
@@ -939,15 +940,7 @@ public sealed class SqliteServerRepositoryTests
             new ServicePublicEndpointRecord(xray.Id, "2001:db8::10", 24445, null, fixture.Time.GetUtcNow()),
             CancellationToken.None));
 
-        var raw = await RenderSubscriptionAsync(fixture, "mixed-token", "raw");
-        var expectedVless =
-            $"vless://{clientId}@[2001:db8::10]:24445?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.example.com&fp=chrome&pbk=public-key-value&sid=a1b2&type=tcp#mixed%20%C2%B7%20xray%20%23%20one";
-        StringAssert.Contains(raw, $"hysteria2://{hyUser}:{hyCredential}@hy.example:24444/?sni=hy.example&insecure=0#mixed%20%C2%B7%20hy%20two");
-        StringAssert.Contains(raw, expectedVless);
-        Assert.AreEqual(raw, Encoding.UTF8.GetString(Convert.FromBase64String(
-            await RenderSubscriptionAsync(fixture, "mixed-token", "base64"))));
-
-        var mihomo = await RenderSubscriptionAsync(fixture, "mixed-token", "mihomo");
+        var mihomo = await RenderSubscriptionAsync(fixture, "mixed-token");
         StringAssert.Contains(mihomo, "type: hysteria2");
         // Default template: proxies expand into the placeholder groups and the routing rules are present.
         StringAssert.Contains(mihomo, "  - name: 🚀 手动切换\n    type: select\n    proxies:\n      - \"mixed · hy two\"\n      - \"mixed · xray # one\"");
@@ -958,13 +951,11 @@ public sealed class SqliteServerRepositoryTests
         StringAssert.Contains(mihomo, "type: vless");
         StringAssert.Contains(mihomo, "public-key: \"public-key-value\"");
         StringAssert.Contains(mihomo, "short-id: \"a1b2\"");
-        var singbox = await RenderSubscriptionAsync(fixture, "mixed-token", "singbox");
-        using var document = JsonDocument.Parse(singbox);
-        Assert.AreEqual(2, document.RootElement.GetProperty("outbounds").GetArrayLength());
-        Assert.AreEqual("public-key-value", document.RootElement.GetProperty("outbounds")[1]
-            .GetProperty("tls").GetProperty("reality").GetProperty("public_key").GetString());
+        StringAssert.Contains(mihomo, $"uuid: \"{clientId}\"");
+        StringAssert.Contains(mihomo, "server: \"2001:db8::10\"\n    port: 24445");
+        StringAssert.Contains(mihomo, "sni: \"hy.example\"");
 
-        foreach (var output in new[] { raw, mihomo, singbox })
+        foreach (var output in new[] { mihomo })
         {
             Assert.IsFalse(output.Contains(privateKey, StringComparison.Ordinal));
             Assert.IsFalse(output.Contains("hy-secret", StringComparison.Ordinal));
@@ -1013,22 +1004,10 @@ public sealed class SqliteServerRepositoryTests
                     service == mihomo ? 443 : 8443, null, fixture.Time.GetUtcNow()), CancellationToken.None));
         }
 
-        var raw = await RenderSubscriptionAsync(fixture, "ss-token", "raw");
-        var expectedMihomo =
-            $"ss://{Base64Url($"chacha20-ietf-poly1305:{mihomoPassword}")}@mihomo.example:443#mihomo%20ss";
-        var expectedSingBox =
-            $"ss://{Base64Url($"2022-blake3-aes-256-gcm:{singBoxPassword}")}@singbox.example:8443#sing-box%20ss";
-        Assert.AreEqual(string.Empty, raw);
-
-        Assert.AreEqual(raw, Encoding.UTF8.GetString(Convert.FromBase64String(
-            await RenderSubscriptionAsync(fixture, "ss-token", "base64"))));
-
-        var mihomoOutput = await RenderSubscriptionAsync(fixture, "ss-token", "mihomo");
+        var mihomoOutput = await RenderSubscriptionAsync(fixture, "ss-token");
         Assert.IsFalse(mihomoOutput.Contains("type: ss", StringComparison.Ordinal));
-
-        using var singBoxDocument = JsonDocument.Parse(await RenderSubscriptionAsync(fixture, "ss-token", "singbox"));
-        var outbounds = singBoxDocument.RootElement.GetProperty("outbounds");
-        Assert.AreEqual(0, outbounds.GetArrayLength());
+        Assert.IsFalse(mihomoOutput.Contains(mihomoPassword, StringComparison.Ordinal));
+        Assert.IsFalse(mihomoOutput.Contains(singBoxPassword, StringComparison.Ordinal));
 
         var redactedMihomo = AdminServicesEndpoints.RedactPasswords(mihomo.ConfigJson);
         var redactedSingBox = AdminServicesEndpoints.RedactPasswords(singBox.ConfigJson);
@@ -1038,24 +1017,11 @@ public sealed class SqliteServerRepositoryTests
         StringAssert.Contains(redactedSingBox, "[REDACTED]");
     }
 
-    private static void AssertShadowboxOutbound(JsonElement outbound, string method, string password, string host,
-        int port)
-    {
-        Assert.AreEqual("shadowsocks", outbound.GetProperty("type").GetString());
-        Assert.AreEqual(method, outbound.GetProperty("method").GetString());
-        Assert.AreEqual(password, outbound.GetProperty("password").GetString());
-        Assert.AreEqual(host, outbound.GetProperty("server").GetString());
-        Assert.AreEqual(port, outbound.GetProperty("server_port").GetInt32());
-    }
-
-    private static string Base64Url(string value) => Convert.ToBase64String(Encoding.UTF8.GetBytes(value))
-        .TrimEnd('=').Replace('+', '-').Replace('/', '_');
-
-    private static async Task<string> RenderSubscriptionAsync(TestDatabase fixture, string token, string format)
+    private static async Task<string> RenderSubscriptionAsync(TestDatabase fixture, string token)
     {
         var context = new DefaultHttpContext();
         context.Response.Body = new MemoryStream();
-        await SubscriptionEndpoints.GetAsync(token, format, context.Response, fixture.Repository,
+        await SubscriptionEndpoints.GetAsync(token, context.Response, fixture.Repository,
             CancellationToken.None);
         Assert.AreEqual(StatusCodes.Status200OK, context.Response.StatusCode);
         context.Response.Body.Position = 0;
@@ -1066,7 +1032,7 @@ public sealed class SqliteServerRepositoryTests
     {
         var context = new DefaultHttpContext();
         context.Response.Body = new MemoryStream();
-        await SubscriptionEndpoints.GetAsync(token, "raw", context.Response, fixture.Repository,
+        await SubscriptionEndpoints.GetAsync(token, context.Response, fixture.Repository,
             CancellationToken.None);
         Assert.AreEqual(statusCode, context.Response.StatusCode);
     }

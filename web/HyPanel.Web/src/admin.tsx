@@ -35,7 +35,6 @@ import type {
   User,
   UserForm,
   UserGroup,
-  UserServiceAccess,
 } from "./domain";
 import {
   copyText,
@@ -2350,12 +2349,9 @@ function UsersPage({ api, setError }: PageProps) {
   const [groupEditor, setGroupEditor] = useState<{ group: UserGroup | null; name: string; autoInclude: boolean; serviceIds: string[] } | null>(null);
   const [services, setServices] = useState<ServiceRef[]>([]);
   const [usage, setUsage] = useState<Usage[]>([]);
-  const [bindings, setBindings] = useState<Record<string, string[]>>({});
-  const [access, setAccess] = useState<Record<string, UserServiceAccess[]>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [rotatingUserId, setRotatingUserId] = useState<string | null>(null);
-  const [credentialAction, setCredentialAction] = useState("");
   const [editor, setEditor] = useState<{
     user: User | null;
     form: UserForm;
@@ -2386,33 +2382,9 @@ function UsersPage({ api, setError }: PageProps) {
           })),
         ),
       );
-      const pairs = await Promise.all(
-        nextUsers.map(
-          async (user) =>
-            [
-              user.id,
-              await api.request<string[]>(
-                `/api/admin/v1/users/${user.id}/services`,
-              ),
-            ] as const,
-        ),
-      );
-      const accessRows = await Promise.all(
-        nextUsers.map(
-          async (user) =>
-            [
-              user.id,
-              await api.request<UserServiceAccess[]>(
-                `/api/admin/v1/users/${user.id}/service-access`,
-              ),
-            ] as const,
-        ),
-      );
       setUsers(nextUsers);
       setServices(nested.flat());
       setUsage(nextUsage);
-      setBindings(Object.fromEntries(pairs));
-      setAccess(Object.fromEntries(accessRows));
     } catch (reason) {
       setLoadError(messageFor(reason, "无法加载用户"));
     } finally {
@@ -2472,7 +2444,7 @@ function UsersPage({ api, setError }: PageProps) {
   const rotate = async (user: User, confirmed = false) => {
     if (
       rotationInFlight.current ||
-      (!confirmed && !confirm(`重置“${user.username}”的订阅链接？旧链接会立即失效，客户端需要重新导入。`))
+      (!confirmed && !confirm(`重置“${user.username}”的订阅？旧链接和已导入客户端的配置都会失效，需要用新链接重新导入。`))
     )
       return;
     rotationInFlight.current = true;
@@ -2549,28 +2521,6 @@ function UsersPage({ api, setError }: PageProps) {
       setError("用户组已删除。");
     } catch (reason) {
       setError(messageFor(reason, "无法删除用户组"));
-    }
-  };
-  const rotateCredential = async (user: User, service: ServiceRef) => {
-    const key = `${user.id}:${service.id}`;
-    if (
-      !confirm(
-        `轮换“${user.username}”在“${service.name}”的代理凭据？旧 UUID 会在下一次 Agent 同步后失效。`,
-      )
-    )
-      return;
-    setCredentialAction(key);
-    try {
-      await api.request(
-        `/api/admin/v1/users/${user.id}/services/${service.id}/credential/rotate`,
-        { method: "POST" },
-      );
-      await load();
-      setError("代理凭据已轮换。");
-    } catch (reason) {
-      setError(messageFor(reason, "无法轮换代理凭据"));
-    } finally {
-      setCredentialAction("");
     }
   };
   if (!loading && loadError)
@@ -2732,47 +2682,6 @@ function UsersPage({ api, setError }: PageProps) {
                     options={groups.map((group) => ({ value: group.id, label: group.name, hint: `${group.serviceIds.length} 个服务` }))}
                   />
                 </div>
-                <details>
-                  <summary>
-                    可用服务 <small>{bindings[user.id]?.length ?? 0} 项</small>
-                  </summary>
-                  <div className="grant-list">
-                    {(bindings[user.id] ?? []).length ? (
-                      (bindings[user.id] ?? []).map((serviceId) => {
-                        const service = services.find((item) => item.id === serviceId);
-                        if (!service) return null;
-                        const row = access[user.id]?.find((item) => item.serviceId === service.id);
-                        const bytes = usage
-                          .filter((item) => item.userId === user.id && item.serviceId === service.id)
-                          .reduce((sum, item) => sum + item.uploadBytes + item.downloadBytes, 0);
-                        return (
-                          <div className="grant-option" key={service.id}>
-                            <span>
-                              <strong>{service.name}</strong>
-                              <small>
-                                {service.nodeName} · {backendFor(service.backendType).core} ·{" "}
-                                {row?.credentialStatus === "Active" ? "凭据有效" : row?.credentialStatus === "Revoked" ? "凭据已吊销" : "准备中"} ·{" "}
-                                {formatBytes(bytes)}
-                              </small>
-                            </span>
-                            {row?.credentialStatus === "Active" && (
-                              <button
-                                className="link-button"
-                                type="button"
-                                disabled={credentialAction !== ""}
-                                onClick={() => void rotateCredential(user, service)}
-                              >
-                                {credentialAction === `${user.id}:${service.id}` ? "轮换中…" : "轮换凭据"}
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <p className="muted">所在用户组还没有服务。</p>
-                    )}
-                  </div>
-                </details>
                 <footer>
                   <button
                     className="button button-secondary button-small"

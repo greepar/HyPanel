@@ -134,7 +134,7 @@ internal static class UserEndpoints
     {
         var access = await authorization.AuthorizeAsync(request, ct);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
-        var token = await r.RotateSubscriptionTokenAsync(id, NewToken(), ct);
+        var token = await r.ResetSubscriptionAsync(id, NewToken(), ct);
         return token is null
             ? Results.NotFound()
             : Results.Json(new RotateSubscriptionTokenResponse(token),
@@ -251,7 +251,7 @@ internal static class UserEndpoints
     {
         var user = await auth.AuthenticateAsync(request, ct);
         if (user is null) return Results.Unauthorized();
-        var token = await repository.RotateSubscriptionTokenAsync(user.Id, NewToken(), ct);
+        var token = await repository.ResetSubscriptionAsync(user.Id, NewToken(), ct);
         return token is null
             ? Results.Unauthorized()
             : Results.Json(new RotateSubscriptionTokenResponse(token),
