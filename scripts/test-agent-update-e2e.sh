@@ -32,10 +32,11 @@ publish_agent() {
 }
 publish_agent "$OLD_VERSION" "$ROOT/old"
 publish_agent "$NEW_VERSION" "$ROOT/new"
-cp "$ROOT/old/HyPanel.Agent" "$ROOT/install/HyPanel.Agent"
-chmod 755 "$ROOT/install/HyPanel.Agent"
+cp "$ROOT/old/HyPanel.Agent" "$ROOT/install/hypanel-agent"
+chmod 755 "$ROOT/install/hypanel-agent"
 ASSET="hypanel-agent-$NEW_VERSION-$RID.$EXT"
-tar -C "$ROOT/new" -czf "$ROOT/$ASSET" HyPanel.Agent
+mv "$ROOT/new/HyPanel.Agent" "$ROOT/new/hypanel-agent"
+tar -C "$ROOT/new" -czf "$ROOT/$ASSET" hypanel-agent
 SIZE=$(wc -c < "$ROOT/$ASSET" | tr -d ' ')
 if command -v sha256sum >/dev/null 2>&1; then SHA=$(sha256sum "$ROOT/$ASSET" | cut -d ' ' -f 1)
 else SHA=$(shasum -a 256 "$ROOT/$ASSET" | cut -d ' ' -f 1); fi
@@ -72,7 +73,7 @@ cat > "$ROOT/data/credentials.json" <<EOF
 {"panelBaseUrl":"http://127.0.0.1:$PORT","agentId":"22222222-2222-2222-2222-222222222222","agentSecret":"e2e-secret","nodeId":"33333333-3333-3333-3333-333333333333","syncIntervalSeconds":1}
 EOF
 cp "$ROOT/data/credentials.json" "$ROOT/credentials.before"
-HYPANEL_DATA_DIR="$ROOT/data" "$ROOT/install/HyPanel.Agent" >"$ROOT/agent.log" 2>&1 &
+HYPANEL_DATA_DIR="$ROOT/data" "$ROOT/install/hypanel-agent" >"$ROOT/agent.log" 2>&1 &
 AGENT_PID=$!
 
 elapsed=0
@@ -84,8 +85,8 @@ done
 elapsed=0
 while [ "$elapsed" -lt 10 ] && ! grep -q '"status":"Succeeded"' "$ROOT/data/agent-update-state.json"; do sleep 1; elapsed=$((elapsed + 1)); done
 cmp "$ROOT/credentials.before" "$ROOT/data/credentials.json"
-[ ! -e "$ROOT/install/HyPanel.Agent.previous" ]
-SELF_TEST=$($ROOT/install/HyPanel.Agent --self-test)
+[ ! -e "$ROOT/install/hypanel-agent.previous" ]
+SELF_TEST=$($ROOT/install/hypanel-agent --self-test)
 [ "$SELF_TEST" = "$(printf '%s\t%s' "$NEW_VERSION" "$RID")" ]
 grep -q '"status":"Succeeded"' "$ROOT/data/agent-update-state.json"
 printf '%s\n' "Agent update E2E passed: $OLD_VERSION -> $NEW_VERSION ($RID), credentials preserved, sync verified"

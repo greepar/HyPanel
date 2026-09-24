@@ -55,11 +55,10 @@ publish_and_package() {
     project_name=$(basename "$project" .csproj)
     binary_name=$project_name
     case "$rid" in win-*) binary_name="$binary_name.exe" ;; esac
-    if [ "$kind" = agent ]; then
-        archive_name="hypanel-agent-$VERSION-$rid"
-    else
-        archive_name="hypanel-server-$VERSION-$rid"
-    fi
+    # Installed (and archived) as hypanel-agent / hypanel-server; publish output keeps the .NET project name.
+    packaged_name="hypanel-$kind"
+    case "$rid" in win-*) packaged_name="$packaged_name.exe" ;; esac
+    archive_name="hypanel-$kind-$VERSION-$rid"
 
     rm -rf "$publish_dir" "$package_dir"
     mkdir -p "$package_dir"
@@ -73,7 +72,7 @@ publish_and_package() {
         printf '%s\n' "missing published binary: $publish_dir/$binary_name" >&2
         exit 1
     }
-    cp -p "$publish_dir/$binary_name" "$package_dir/"
+    cp -p "$publish_dir/$binary_name" "$package_dir/$packaged_name"
     # Single file: settings come from environment variables and SQLite is linked into the Server binary.
     if [ "$rid" = win-x64 ] || [ "$rid" = win-arm64 ]; then
         command -v zip >/dev/null 2>&1 || { printf '%s\n' 'zip is required for Windows artifacts' >&2; exit 1; }
