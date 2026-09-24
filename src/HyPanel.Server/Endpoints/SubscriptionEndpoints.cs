@@ -26,7 +26,15 @@ internal static class SubscriptionEndpoints
 
         var proxies = services.Select(TryProject).Where(static p => p is not null).Cast<SubscriptionProxy>().ToArray();
         var output = RenderMihomo(proxies, await repository.GetMihomoTemplateAsync(ct) ?? MihomoTemplate.Default);
-        if (await repository.GetSubscriptionUserInfoAsync(token, ct) is { } info)
+        var info = await repository.GetSubscriptionUserInfoAsync(token, ct);
+        // Clients name the profile after profile-title (Clash Verge, Mihomo Party) or the attachment file name;
+        // without them they fall back to the last URL segment, i.e. the token.
+        var title = info is null ? "HyPanel" : $"HyPanel · {info.Username}";
+        response.Headers["profile-title"] = "base64:" + Convert.ToBase64String(Encoding.UTF8.GetBytes(title));
+        response.Headers.ContentDisposition =
+            $"attachment; filename=\"HyPanel.yaml\"; filename*=UTF-8''{Uri.EscapeDataString(title)}.yaml";
+        response.Headers["profile-web-page-url"] = $"{response.HttpContext.Request.Scheme}://{response.HttpContext.Request.Host}/";
+        if (info is not null)
         {
             // Read by Clash Verge / Mihomo Party / Stash to show usage and expiry.
             var userInfo = $"upload={info.UploadBytes}; download={info.DownloadBytes}; total={info.TrafficLimitBytes ?? 0}";
@@ -34,7 +42,6 @@ internal static class SubscriptionEndpoints
             response.Headers["subscription-userinfo"] = userInfo;
         }
         response.Headers["profile-update-interval"] = "12";
-        response.Headers.ContentDisposition = "attachment; filename*=UTF-8''HyPanel.yaml";
         response.StatusCode = StatusCodes.Status200OK;
         response.ContentType = "application/yaml; charset=utf-8";
         await response.WriteAsync(output, Encoding.UTF8, ct);

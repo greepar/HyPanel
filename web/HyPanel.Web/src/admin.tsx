@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ApiError, type ApiClient } from "./api";
-import { SubscriptionLinks } from "./subscription";
+import { OwnSubscription } from "./subscription";
 import { PasskeyPanel } from "./passkey";
 import {
   backendFor,
@@ -108,7 +108,7 @@ export function AdminApp({
   if (route === "nodes") return <NodesPage api={api} setError={setError} />;
   if (route === "users") return <UsersPage api={api} setError={setError} />;
   if (route === "settings") return <SettingsPage api={api} setError={setError} account={account} />;
-  return <OverviewPage api={api} setError={setError} />;
+  return <OverviewPage api={api} setError={setError} account={account} />;
 }
 
 /**
@@ -430,7 +430,7 @@ function CertificatePanel({ api, certificates, setCertificates, setError }: { ap
   </section>;
 }
 
-function OverviewPage({ api, setError }: PageProps) {
+function OverviewPage({ api, setError, account }: PageProps & { account: boolean }) {
   const [health, setHealth] = useState<HealthSummary | null>(null);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [loading, setLoading] = useState(true);
@@ -508,6 +508,7 @@ function OverviewPage({ api, setError }: PageProps) {
               tone={health.counts.servicesFailed ? "bad" : undefined}
             />
           </div>
+          {account && <OwnSubscription api={api} setError={setError} />}
           <div className="overview-grid">
             <section className="card panel">
               <SectionTitle
@@ -2461,17 +2462,10 @@ function UsersPage({ api, setError }: PageProps) {
   const [usage, setUsage] = useState<Usage[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [rotatingUserId, setRotatingUserId] = useState<string | null>(null);
   const [editor, setEditor] = useState<{
     user: User | null;
     form: UserForm;
   } | null>(null);
-  const [token, setToken] = useState<{
-    user: User;
-    value: string;
-    fresh: boolean;
-  } | null>(null);
-  const rotationInFlight = useRef(false);
   const load = async (silent = false) => {
     if (!silent) {
       setLoading(true);
@@ -2517,11 +2511,7 @@ function UsersPage({ api, setError }: PageProps) {
         });
       } else {
         const result = await api.createUser(userPayload(editor.form));
-        setToken({
-          user: result.user,
-          value: result.subscriptionToken,
-          fresh: true,
-        });
+        setError(`已创建 ${result.user.username}，对方登录后在“我的订阅”里查看自己的订阅链接。`);
       }
       setEditor(null);
       await load(true);
@@ -2539,27 +2529,6 @@ function UsersPage({ api, setError }: PageProps) {
       setError(messageFor(reason, "无法删除用户"));
     }
   };
-  const rotate = async (user: User, confirmed = false) => {
-    if (
-      rotationInFlight.current ||
-      (!confirmed && !confirm(`重置“${user.username}”的订阅？旧链接和已导入客户端的配置都会失效，需要用新链接重新导入。`))
-    )
-      return;
-    rotationInFlight.current = true;
-    setRotatingUserId(user.id);
-    try {
-      const result = await api.request<{ subscriptionToken: string }>(
-        `/api/admin/v1/users/${user.id}/subscription-token/rotate`,
-        { method: "POST" },
-      );
-      setToken({ user, value: result.subscriptionToken, fresh: true });
-    } catch (reason) {
-      setError(messageFor(reason, "无法轮换令牌"));
-    } finally {
-      rotationInFlight.current = false;
-      setRotatingUserId(null);
-    }
-  };
   const resetTraffic = async (user: User) => {
     if (!confirm(`立即清零“${user.username}”的已用流量？因超额停用的服务会恢复。`)) return;
     try {
@@ -2568,21 +2537,6 @@ function UsersPage({ api, setError }: PageProps) {
       setError(`已重置 ${user.username} 的流量。`);
     } catch (reason) {
       setError(messageFor(reason, "无法重置流量"));
-    }
-  };
-  const showLink = async (user: User) => {
-    try {
-      const result = await api.request<{ subscriptionToken: string }>(
-        `/api/admin/v1/users/${user.id}/subscription-token`,
-      );
-      setToken({ user, value: result.subscriptionToken, fresh: false });
-    } catch (reason) {
-      if (reason instanceof ApiError && reason.status === 404) {
-        if (confirm(`“${user.username}”的订阅链接由旧版本签发，无法再次显示。要签发新链接吗？旧链接会失效。`))
-          await rotate(user, true);
-        return;
-      }
-      setError(messageFor(reason, "无法读取订阅链接"));
     }
   };
   const setGroup = async (user: User, groupId: string) => {
@@ -2795,14 +2749,7 @@ function UsersPage({ api, setError }: PageProps) {
                 </div>
                 <footer>
                   <button
-                    className="button button-secondary button-small"
-                    type="button"
-                    onClick={() => void showLink(user)}
-                  >
-                    订阅链接
-                  </button>
-                  <button
-                    className="link-button"
+                    className="link-button card-footer-end"
                     type="button"
                     disabled={total === 0}
                     onClick={() => void resetTraffic(user)}
@@ -2906,23 +2853,6 @@ function UsersPage({ api, setError }: PageProps) {
           save={save}
           close={() => setEditor(null)}
         />
-      )}
-      {token && (
-        <Modal
-          title={`${token.user.username} 的订阅链接`}
-          description={token.fresh ? "新链接已生效（如有旧链接则已失效），之后可随时在这里再次查看。" : "随时可以在这里再次查看，不会影响已导入的客户端。"}
-          close={() => setToken(null)}
-        >
-          <SubscriptionLinks token={token.value} setError={setError} />
-          <footer className="modal-actions">
-            <button className="button button-secondary modal-action-start" type="button" disabled={rotatingUserId !== null} onClick={() => void rotate(token.user)}>
-              {rotatingUserId === token.user.id ? "正在重置…" : "重置链接"}
-            </button>
-            <button className="button button-primary" type="button" onClick={() => setToken(null)}>
-              完成
-            </button>
-          </footer>
-        </Modal>
       )}
     </Page>
   );

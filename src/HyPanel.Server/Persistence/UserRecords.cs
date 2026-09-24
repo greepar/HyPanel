@@ -7,4 +7,4 @@ internal sealed record UsageTotalRecord(Guid UserId, Guid ServiceId, long Upload
 internal sealed record UserServiceCredentialRecord(Guid UserId, Guid ServiceId, string BackendType, string Credential,
     string Status, DateTimeOffset CreatedAtUtc, DateTimeOffset UpdatedAtUtc);
 
-internal sealed record SubscriptionUserInfo(long UploadBytes, long DownloadBytes, long? TrafficLimitBytes, DateTimeOffset? ExpiresAtUtc);
+internal sealed record SubscriptionUserInfo(long UploadBytes, long DownloadBytes, long? TrafficLimitBytes, DateTimeOffset? ExpiresAtUtc, string Username = "");

@@ -550,7 +550,7 @@ internal sealed partial class SqliteServerRepository
         await using var c = await connectionFactory.OpenAsync(ct);
         await using var cmd = c.CreateCommand();
         cmd.CommandText = """
-            SELECT COALESCE(SUM(t.upload_bytes),0),COALESCE(SUM(t.download_bytes),0),u.traffic_limit_bytes,u.expires_at_utc
+            SELECT COALESCE(SUM(t.upload_bytes),0),COALESCE(SUM(t.download_bytes),0),u.traffic_limit_bytes,u.expires_at_utc,u.username
             FROM users u LEFT JOIN usage_totals t ON t.user_id=u.id
             WHERE u.subscription_token_hash=@hash GROUP BY u.id;
             """;
@@ -558,7 +558,7 @@ internal sealed partial class SqliteServerRepository
         await using var r = await cmd.ExecuteReaderAsync(ct);
         if (!await r.ReadAsync(ct)) return null;
         return new SubscriptionUserInfo(r.GetInt64(0), r.GetInt64(1), r.IsDBNull(2) ? null : r.GetInt64(2),
-            r.IsDBNull(3) ? null : SqliteValue.ToDateTimeOffset(r.GetString(3)));
+            r.IsDBNull(3) ? null : SqliteValue.ToDateTimeOffset(r.GetString(3)), r.GetString(4));
     }
 
     /// <summary>
