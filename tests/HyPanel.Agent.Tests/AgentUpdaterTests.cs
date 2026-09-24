@@ -183,13 +183,11 @@ public sealed class AgentUpdaterTests
         Assert.AreEqual(expected, exception.Message);
     }
 
-    [DataTestMethod]
-    [DataRow("hypanel-agent")]
-    [DataRow("HyPanel.Agent")]
-    public async Task ExtractAgentAsync_WithValidTar_StagesOnlyAgentBinary(string binaryName)
+    [TestMethod]
+    public async Task ExtractAgentAsync_WithValidTar_StagesOnlyAgentBinary()
     {
         var archive = Path.Combine(directory, "agent.tar.gz");
-        await CreateTarAsync(archive, (binaryName, "new binary"), ("appsettings.json", "ignored"));
+        await CreateTarAsync(archive, ("hypanel-agent", "new binary"), ("appsettings.json", "ignored"));
         var staged = Path.Combine(directory, "staged");
 
         await AgentUpdater.ExtractAgentAsync(archive, staged, CancellationToken.None);
@@ -199,8 +197,9 @@ public sealed class AgentUpdaterTests
     }
 
     [DataTestMethod]
-    [DataRow("../HyPanel.Agent", "archive_path_invalid")]
+    [DataRow("../hypanel-agent", "archive_path_invalid")]
     [DataRow("unexpected", "archive_entry_unsupported")]
+    [DataRow("HyPanel.Agent", "archive_entry_unsupported")]
     public async Task ExtractAgentAsync_RejectsTraversalAndUnsupportedEntries(string name, string expected)
     {
         var archive = Path.Combine(directory, "bad.tar.gz");
@@ -216,7 +215,7 @@ public sealed class AgentUpdaterTests
     public async Task ExtractAgentAsync_RejectsDuplicateBinaryEntry()
     {
         var archive = Path.Combine(directory, "duplicate.tar.gz");
-        await CreateTarAsync(archive, ("HyPanel.Agent", "one"), ("HyPanel.Agent", "two"));
+        await CreateTarAsync(archive, ("hypanel-agent", "one"), ("hypanel-agent", "two"));
 
         var exception = await Assert.ThrowsExceptionAsync<InvalidDataException>(() => AgentUpdater.ExtractAgentAsync(
             archive, Path.Combine(directory, "staged"), CancellationToken.None));
@@ -231,7 +230,7 @@ public sealed class AgentUpdaterTests
         await using (var output = File.Create(archive))
         await using (var gzip = new GZipStream(output, CompressionLevel.NoCompression))
         using (var writer = new TarWriter(gzip, leaveOpen: true))
-            writer.WriteEntry(new PaxTarEntry(TarEntryType.SymbolicLink, "HyPanel.Agent") { LinkName = "/bin/sh" });
+            writer.WriteEntry(new PaxTarEntry(TarEntryType.SymbolicLink, "hypanel-agent") { LinkName = "/bin/sh" });
 
         var exception = await Assert.ThrowsExceptionAsync<InvalidDataException>(() => AgentUpdater.ExtractAgentAsync(
             archive, Path.Combine(directory, "staged"), CancellationToken.None));
@@ -239,14 +238,12 @@ public sealed class AgentUpdaterTests
         Assert.AreEqual("archive_entry_type_invalid", exception.Message);
     }
 
-    [DataTestMethod]
-    [DataRow("hypanel-agent.exe")]
-    [DataRow("HyPanel.Agent.exe")]
-    public async Task ExtractZipAsync_AcceptsCurrentAndLegacyBinaryNames(string binaryName)
+    [TestMethod]
+    public async Task ExtractZipAsync_StagesAgentBinary()
     {
         var archivePath = Path.Combine(directory, "agent.zip");
         using (var archive = ZipFile.Open(archivePath, ZipArchiveMode.Create))
-        await using (var writer = new StreamWriter(archive.CreateEntry(binaryName).Open())) await writer.WriteAsync("exe");
+        await using (var writer = new StreamWriter(archive.CreateEntry("hypanel-agent.exe").Open())) await writer.WriteAsync("exe");
         await using var output = new MemoryStream();
 
         await AgentUpdater.ExtractZipAsync(archivePath, output, CancellationToken.None);
@@ -255,7 +252,8 @@ public sealed class AgentUpdaterTests
     }
 
     [DataTestMethod]
-    [DataRow("../HyPanel.Agent.exe", "archive_path_invalid")]
+    [DataRow("../hypanel-agent.exe", "archive_path_invalid")]
+    [DataRow("HyPanel.Agent.exe", "archive_entry_unsupported")]
     [DataRow("unexpected.exe", "archive_entry_unsupported")]
     public async Task ExtractZipAsync_RejectsTraversalAndUnsupportedEntries(string name, string expected)
     {
@@ -276,9 +274,9 @@ public sealed class AgentUpdaterTests
         var archivePath = Path.Combine(directory, "duplicate.zip");
         using (var archive = ZipFile.Open(archivePath, ZipArchiveMode.Create))
         {
-            await using (var first = new StreamWriter(archive.CreateEntry("HyPanel.Agent.exe").Open()))
+            await using (var first = new StreamWriter(archive.CreateEntry("hypanel-agent.exe").Open()))
                 await first.WriteAsync("one");
-            await using (var second = new StreamWriter(archive.CreateEntry("HyPanel.Agent.exe").Open()))
+            await using (var second = new StreamWriter(archive.CreateEntry("hypanel-agent.exe").Open()))
                 await second.WriteAsync("two");
         }
         await using var output = new MemoryStream();
@@ -292,7 +290,7 @@ public sealed class AgentUpdaterTests
     [TestMethod]
     public void ReplacePreservingOld_WhenSourceMoveFails_RestoresOldBinary()
     {
-        var target = Path.Combine(directory, "HyPanel.Agent");
+        var target = Path.Combine(directory, "hypanel-agent");
         var source = Path.Combine(directory, "missing");
         var previous = AgentUpdater.PreviousPath(target);
         File.WriteAllText(target, "old");
@@ -306,7 +304,7 @@ public sealed class AgentUpdaterTests
     [TestMethod]
     public void WindowsHelperPaths_AcceptsOnlyFixedSiblingHelperAndStagingPaths()
     {
-        var target = Path.Combine(directory, "HyPanel.Agent.exe");
+        var target = Path.Combine(directory, "hypanel-agent.exe");
 
         Assert.IsTrue(AgentUpdateEntrypoint.IsValidWindowsHelperPaths(target + ".update-helper.exe", target,
             target + ".staged"));
@@ -324,7 +322,7 @@ public sealed class AgentUpdaterTests
         new BackendProcessSupervisor(NullLogger<BackendProcessSupervisor>.Instance), null, new Lifetime());
     private AgentUpdateLocalState State(AgentUpdateStatus status) => new(Guid.NewGuid(), status, BuildInfo.Version,
         BuildInfo.RuntimeIdentifier, "agent.tar.gz", new string('a', 64), 1, DateTimeOffset.UtcNow, "0.9.0",
-        Path.Combine(directory, "HyPanel.Agent"));
+        Path.Combine(directory, "hypanel-agent"));
     private static AgentCredentials Credentials() => new("https://panel.example", Guid.NewGuid(), "secret",
         Guid.NewGuid(), 8);
 

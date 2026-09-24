@@ -87,6 +87,5 @@ internal static class AgentUpdateEntrypoint
     }
 
     private static bool IsWindowsAgentExecutable(string path) =>
-        Path.GetFileName(path).Equals("hypanel-agent.exe", StringComparison.OrdinalIgnoreCase) ||
-        Path.GetFileName(path).Equals("HyPanel.Agent.exe", StringComparison.OrdinalIgnoreCase);
+        Path.GetFileName(path).Equals("hypanel-agent.exe", StringComparison.OrdinalIgnoreCase);
 }

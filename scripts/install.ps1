@@ -63,8 +63,7 @@ function Safe-Zip([string] $ZipPath, [string] $StagingPath) {
             if ($parts | Where-Object { $_ -eq '..' -or $_ -eq '' }) {
                 if ($normalized -notmatch '/$' -or ($parts | Where-Object { $_ -eq '' }).Count -gt 1) { Fail 'Archive contains an unsafe path.' }
             }
-            # Releases up to 0.4.39 name the binary HyPanel.Agent.exe; it is installed as hypanel-agent.exe.
-            $isExe = $normalized -eq 'hypanel-agent.exe' -or $normalized -eq 'HyPanel.Agent.exe'
+            $isExe = $normalized -eq 'hypanel-agent.exe'
             if ($isExe) { if ($rootExe) { Fail 'Archive contains more than one Agent binary.' }; $rootExe = $true }
             if ($normalized -match '(^|/)([^/]+)$' -and -not $isExe -and $normalized -ne 'appsettings.json' -and $normalized -notmatch '/') {
                 Fail 'Archive contains an unexpected root-level file.'
@@ -76,8 +75,6 @@ function Safe-Zip([string] $ZipPath, [string] $StagingPath) {
         if (-not $rootExe) { Fail 'Archive must contain root-level hypanel-agent.exe.' }
     } finally { $archive.Dispose() }
     Expand-Archive -LiteralPath $ZipPath -DestinationPath $StagingPath -Force
-    $legacy = Join-Path $StagingPath 'HyPanel.Agent.exe'
-    if (Test-Path $legacy -PathType Leaf) { Move-Item $legacy (Join-Path $StagingPath 'hypanel-agent.exe') }
     Remove-Item (Join-Path $StagingPath 'appsettings.json') -Force -ErrorAction SilentlyContinue
     if (-not (Test-Path (Join-Path $StagingPath 'hypanel-agent.exe') -PathType Leaf)) { Fail 'Archive extraction did not produce hypanel-agent.exe.' }
 }
@@ -89,7 +86,7 @@ function Wait-ServiceStopped {
         if ($null -eq $service -or $service.Status -eq 'Stopped') { return }
         Start-Sleep -Milliseconds 500
     }
-    Get-Process -Name hypanel-agent, HyPanel.Agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Get-Process -Name hypanel-agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 }
 function Uninstall-Agent {
     $root = Join-Path $env:ProgramFiles 'HyPanel'
@@ -157,8 +154,8 @@ try {
     $root = if ($dryRoot) { [IO.Path]::GetFullPath($overrideRoot) } else { Join-Path $env:ProgramFiles 'HyPanel' }
     $agentDir = Join-Path $root 'Agent'
     $dataDir = if ($dryRoot) { Join-Path $root 'data' } else { Join-Path $env:ProgramData 'HyPanel\Agent' }
-    $download = Join-Path ([IO.Path]::GetTempPath()) ("HyPanel.Agent.{0}.zip" -f [Guid]::NewGuid())
-    $staging = Join-Path ([IO.Path]::GetTempPath()) ("HyPanel.Agent.{0}.staging" -f [Guid]::NewGuid())
+    $download = Join-Path ([IO.Path]::GetTempPath()) ("hypanel-agent.{0}.zip" -f [Guid]::NewGuid())
+    $staging = Join-Path ([IO.Path]::GetTempPath()) ("hypanel-agent.{0}.staging" -f [Guid]::NewGuid())
     $stateBackup = Join-Path $dataDir (".re-enrollment-backup.{0}" -f [Guid]::NewGuid().ToString('N'))
     $serviceExists = $false
     New-Item -ItemType Directory -Force -Path $root, $dataDir | Out-Null

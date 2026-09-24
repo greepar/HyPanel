@@ -69,7 +69,7 @@ uninstall_agent() {
     command -v nft >/dev/null 2>&1 && nft delete table inet hypanel_hop >/dev/null 2>&1 || true
     # Backend processes (xray, hysteria, ...) run from the data directory; make sure none survive.
     if command -v pkill >/dev/null 2>&1; then
-        pkill -f "^$install_root/(hypanel-agent|HyPanel.Agent)" >/dev/null 2>&1 || true
+        pkill -f "^$install_root/hypanel-agent" >/dev/null 2>&1 || true
         pkill -f "$data_dir/backends/" >/dev/null 2>&1 || true
         [ "$OS" = Linux ] && id "$agent_user" >/dev/null 2>&1 && pkill -u "$agent_user" >/dev/null 2>&1 || true
     fi
@@ -358,19 +358,17 @@ fi
 
 command -v tar >/dev/null 2>&1 || fail "tar is required to extract the verified agent archive"
 # The release asset is a tar.gz archive.  Refuse every member other than the
-# documented root-level regular files before extraction.  Releases up to 0.4.39
-# name the binary HyPanel.Agent; it is installed as hypanel-agent either way.
+# documented root-level regular files before extraction.
 tar -tzf "$TMP_ASSET" > "$EXTRACT_DIR/members" || fail "asset is not a valid tar.gz archive"
 tar -tvzf "$TMP_ASSET" > "$EXTRACT_DIR/member-details" || fail "could not inspect agent archive"
 case "$(cut -c 1 "$EXTRACT_DIR/member-details" | tr -d '\n')" in *[lh]*) fail "archive must not contain symlinks or hardlinks" ;; esac
 agent_members=0
-ARCHIVE_AGENT=
 settings_members=0
 while IFS= read -r member; do
     member=${member#./}
     case "$member" in
         '') ;;
-        hypanel-agent|HyPanel.Agent) agent_members=$((agent_members + 1)); ARCHIVE_AGENT=$member ;;
+        hypanel-agent) agent_members=$((agent_members + 1)) ;;
         appsettings.json) settings_members=$((settings_members + 1)) ;;
         *) fail "archive contains an unsafe or unsupported member: $member" ;;
     esac
@@ -378,16 +376,16 @@ done < "$EXTRACT_DIR/members"
 [ "$agent_members" -eq 1 ] || fail "archive must contain exactly one root hypanel-agent"
 [ "$settings_members" -le 1 ] || fail "archive contains duplicate appsettings.json"
 tar -xzf "$TMP_ASSET" -C "$EXTRACT_DIR" || fail "could not extract verified agent archive"
-[ -f "$EXTRACT_DIR/$ARCHIVE_AGENT" ] && [ ! -L "$EXTRACT_DIR/$ARCHIVE_AGENT" ] || fail "archive must contain a regular root hypanel-agent"
+[ -f "$EXTRACT_DIR/hypanel-agent" ] && [ ! -L "$EXTRACT_DIR/hypanel-agent" ] || fail "archive must contain a regular root hypanel-agent"
 [ ! -L "$EXTRACT_DIR/appsettings.json" ] || fail "archive contains a symlink"
 for extracted in "$EXTRACT_DIR"/*; do
     case "${extracted##*/}" in
-        hypanel-agent|HyPanel.Agent|appsettings.json|members|member-details) ;;
+        hypanel-agent|appsettings.json|members|member-details) ;;
         *) fail "archive extraction produced an unexpected file" ;;
     esac
 done
 # The Agent needs no settings file: configuration comes from bootstrap.env.
-cp "$EXTRACT_DIR/$ARCHIVE_AGENT" "$STAGED_INSTALL/hypanel-agent"
+cp "$EXTRACT_DIR/hypanel-agent" "$STAGED_INSTALL/hypanel-agent"
 chmod 755 "$STAGED_INSTALL/hypanel-agent"
 
 if [ "$STAGING_INSTALL" = 1 ]; then
