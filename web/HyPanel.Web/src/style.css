@@ -13,20 +13,21 @@
   color: var(--text); background: var(--bg);
 }
 :root[data-theme="dark"] {
-  --bg: #09090b; --surface: #131316; --surface-2: #1a1a1e; --surface-3: #25252a;
-  --border: #25252a; --border-strong: #3a3a41; --text: #ededf0; --muted: #9b9ba5; --faint: #6b6b74;
-  --accent: #ededf0; --accent-text: #111113; --accent-hover: #ffffff;
-  --success: #3fc47d; --danger: #ff6b7f; --warning: #f0b048; --info: #8aa0ff;
-  --shadow-sm: none; --shadow: 0 16px 40px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.3);
+  /* Google-style dark greys (#202124 canvas, #e8eaed text): softer contrast than near-black. */
+  --bg: #202124; --surface: #292a2d; --surface-2: #303134; --surface-3: #3c4043;
+  --border: #3c4043; --border-strong: #5f6368; --text: #e8eaed; --muted: #9aa0a6; --faint: #80868b;
+  --accent: #e8eaed; --accent-text: #202124; --accent-hover: #f1f3f4;
+  --success: #81c995; --danger: #f28b82; --warning: #fdd663; --info: #8ab4f8;
+  --shadow-sm: none; --shadow: 0 8px 24px rgba(0,0,0,.35), 0 1px 3px rgba(0,0,0,.25);
   color-scheme: dark;
 }
 @media (prefers-color-scheme: dark) {
   :root[data-theme="system"] {
-    --bg: #09090b; --surface: #131316; --surface-2: #1a1a1e; --surface-3: #25252a;
-    --border: #25252a; --border-strong: #3a3a41; --text: #ededf0; --muted: #9b9ba5; --faint: #6b6b74;
-    --accent: #ededf0; --accent-text: #111113; --accent-hover: #ffffff;
-    --success: #3fc47d; --danger: #ff6b7f; --warning: #f0b048; --info: #8aa0ff;
-    --shadow-sm: none; --shadow: 0 16px 40px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.3);
+    --bg: #202124; --surface: #292a2d; --surface-2: #303134; --surface-3: #3c4043;
+    --border: #3c4043; --border-strong: #5f6368; --text: #e8eaed; --muted: #9aa0a6; --faint: #80868b;
+    --accent: #e8eaed; --accent-text: #202124; --accent-hover: #f1f3f4;
+    --success: #81c995; --danger: #f28b82; --warning: #fdd663; --info: #8ab4f8;
+    --shadow-sm: none; --shadow: 0 8px 24px rgba(0,0,0,.35), 0 1px 3px rgba(0,0,0,.25);
     color-scheme: dark;
   }
 }
@@ -454,7 +455,7 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 .diagnostic-list article { overflow: hidden; border: 1px solid var(--border); border-radius: 10px }
 .diagnostic-list header { display: flex; justify-content: space-between; gap: 16px; padding: 9px 12px; background: var(--surface-2); font-size: 12px }
 .diagnostic-list time { color: var(--muted) }
-.diagnostic-list pre { max-height: 320px; margin: 0; overflow: auto; padding: 12px; color: #e4e4e7; background: #0c0c0e; font: 11px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere }
+.diagnostic-list pre { max-height: 320px; margin: 0; overflow: auto; padding: 12px; color: #e8eaed; background: #1b1c1f; font: 11px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere }
 .diagnostic-list .notice { margin: 10px }
 .certificate-panel, .backup-panel { grid-column: 1 / -1 }
 .certificate-list, .backup-list { display: grid; gap: 8px; margin-bottom: 20px }

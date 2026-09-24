@@ -42,7 +42,7 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
-    document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#131316' : '#ffffff')
+    document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#292a2d' : '#ffffff')
     localStorage.setItem('hypanel-theme', theme)
   }, [theme])
   const endSession = () => { for (const key of ['hypanel-token', 'hypanel-user', 'hypanel-bootstrap', 'hypanel-session-token', 'hypanel-session-user', 'hypanel-admin-token']) sessionStorage.removeItem(key); setToken(''); setUser(null); setBootstrap(false) }
