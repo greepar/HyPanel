@@ -1,11 +1,11 @@
 **
 !global.json
 !Directory.Build.props
+!Directory.Packages.props
 !src/HyPanel.Shared/**/*.cs
 !src/HyPanel.Shared/*.csproj
 !src/HyPanel.Server/**/*.cs
 !src/HyPanel.Server/*.csproj
-!src/HyPanel.Server/appsettings*.json
 !src/HyPanel.Server/**/*.yaml
 !web/HyPanel.Web/package.json
 !web/HyPanel.Web/package-lock.json
