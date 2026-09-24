@@ -32,7 +32,7 @@ public sealed class PublicIpv4ResolverTests
         }
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("2001:db8::1")]
     [DataRow("203.0.113.042")]
     [DataRow("not-an-address")]

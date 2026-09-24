@@ -6,7 +6,7 @@ ARG VERSION=0.0.0-local
 RUN apk add --no-cache nodejs npm
 
 WORKDIR /src
-COPY global.json Directory.Build.props ./
+COPY global.json Directory.Build.props Directory.Packages.props ./
 COPY src/HyPanel.Shared/ src/HyPanel.Shared/
 COPY src/HyPanel.Server/ src/HyPanel.Server/
 RUN sed -i '/StuDev.AotAnywhere/d' src/HyPanel.Server/HyPanel.Server.csproj

@@ -70,14 +70,14 @@ public sealed class Hysteria2ProviderTests
     [TestMethod]
     public async Task RenderConfigAsync_InvalidConfig_DoesNotExposeSecretInException()
     {
-        var exception = await Assert.ThrowsExceptionAsync<InvalidOperationException>(async () =>
+        var exception = await Assert.ThrowsExactlyAsync<InvalidOperationException>(async () =>
             await provider.RenderConfigAsync(CreateDesiredState(listenPort: 0), CancellationToken.None));
 
         Assert.IsFalse(exception.Message.Contains(AuthPassword, StringComparison.Ordinal));
         Assert.IsFalse(exception.Message.Contains(ObfsPassword, StringComparison.Ordinal));
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("unknown property", "{\"listenHost\":\"203.0.113.10\",\"listenPort\":443,\"certificateId\":\"11111111-1111-1111-1111-111111111111\",\"authPassword\":\"auth-secret-123\",\"masqueradeUrl\":\"https://example.com/\",\"upMbps\":100,\"downMbps\":200,\"unexpected\":true}")]
     [DataRow("duplicate property", "{\"listenHost\":\"203.0.113.10\",\"listenHost\":\"203.0.113.11\",\"listenPort\":443,\"certificateId\":\"11111111-1111-1111-1111-111111111111\",\"authPassword\":\"auth-secret-123\",\"masqueradeUrl\":\"https://example.com/\",\"upMbps\":100,\"downMbps\":200}")]
     [DataRow("malformed JSON", "not-json")]
@@ -88,7 +88,7 @@ public sealed class Hysteria2ProviderTests
         Assert.IsFalse(result.IsValid);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("schema", 2, "")]
     [DataRow("hostname", 1, "\"listenHost\":\"example.com\"")]
     [DataRow("port below range", 1, "\"listenPort\":0")]
@@ -109,7 +109,7 @@ public sealed class Hysteria2ProviderTests
         Assert.IsFalse(result.IsValid);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow(1)]
     [DataRow(65535)]
     public async Task ValidateAsync_UpperAndLowerValidBoundaries_AreAccepted(int value)

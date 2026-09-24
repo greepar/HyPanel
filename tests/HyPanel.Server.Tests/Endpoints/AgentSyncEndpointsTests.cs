@@ -20,7 +20,7 @@ public sealed class AgentSyncEndpointsTests
         Assert.AreEqual(artifact, result[0]);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("203.0.113.42", "203.0.113.42")]
     [DataRow("::ffff:203.0.113.42", "203.0.113.42")]
     [DataRow("10.0.0.1", null)]

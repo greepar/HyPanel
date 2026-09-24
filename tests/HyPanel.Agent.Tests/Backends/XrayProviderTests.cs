@@ -80,14 +80,14 @@ public sealed class XrayProviderTests
         Assert.IsTrue((await provider.ValidateAsync(CreateDesiredState(configJson: minimumJson), CancellationToken.None)).IsValid);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("unknown", "{\"listenHost\":\"203.0.113.10\",\"listenPort\":443,\"clientId\":\"01234567-89ab-cdef-0123-456789abcdef\",\"clientEmail\":\"client@example\",\"flow\":\"xtls-rprx-vision\",\"realityPrivateKey\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\",\"realityPublicKey\":\"ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8\",\"shortId\":\"a1b2\",\"serverName\":\"www.example.com\",\"destination\":\"www.example.com:443\",\"fingerprint\":\"chrome\",\"extra\":true}")]
     [DataRow("duplicate", "{\"listenHost\":\"203.0.113.10\",\"listenHost\":\"203.0.113.11\"}")]
     [DataRow("malformed", "not-json")]
     public async Task ValidateAsync_StrictJson_IsRejected(string _, string configJson) =>
         Assert.IsFalse((await provider.ValidateAsync(CreateDesiredState(configJson: configJson), CancellationToken.None)).IsValid);
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("\"listenHost\":\"example.com\"")]
     [DataRow("\"listenHost\":\"203.0.113.010\"")]
     [DataRow("\"listenPort\":0")]

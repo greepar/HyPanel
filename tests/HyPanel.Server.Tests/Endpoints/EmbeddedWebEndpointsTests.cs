@@ -14,8 +14,8 @@ public sealed class EmbeddedWebEndpointsTests
 
         EmbeddedWebEndpoints.ApplySecurityHeaders(context.Response);
 
-        Assert.AreEqual("nosniff", context.Response.Headers["X-Content-Type-Options"]);
-        Assert.AreEqual("no-referrer", context.Response.Headers["Referrer-Policy"]);
+        Assert.AreEqual("nosniff", context.Response.Headers["X-Content-Type-Options"].ToString());
+        Assert.AreEqual("no-referrer", context.Response.Headers["Referrer-Policy"].ToString());
         var policy = context.Response.Headers["Content-Security-Policy"].ToString();
         StringAssert.Contains(policy, "default-src 'self'");
         StringAssert.Contains(policy, "img-src 'self' data:");
@@ -29,8 +29,8 @@ public sealed class EmbeddedWebEndpointsTests
 
         EmbeddedWebEndpoints.ApplyIndexCacheHeaders(context.Response);
 
-        Assert.AreEqual("no-store", context.Response.Headers.CacheControl);
-        Assert.AreEqual("no-cache", context.Response.Headers.Pragma);
+        Assert.AreEqual("no-store", context.Response.Headers.CacheControl.ToString());
+        Assert.AreEqual("no-cache", context.Response.Headers.Pragma.ToString());
     }
     [TestMethod]
     public void EmbeddedWebResources_ContainIndexAndReferencedAssets()
@@ -45,7 +45,7 @@ public sealed class EmbeddedWebEndpointsTests
                                                    name.EndsWith(".css", StringComparison.Ordinal)));
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("index-abc.js", true)]
     [DataRow("index_abc.css", true)]
     [DataRow("", false)]
@@ -58,7 +58,7 @@ public sealed class EmbeddedWebEndpointsTests
         Assert.AreEqual(expected, EmbeddedWebEndpoints.IsSafeAssetFileName(file));
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("app.js", "text/javascript; charset=utf-8")]
     [DataRow("app.css", "text/css; charset=utf-8")]
     [DataRow("icon.svg", "image/svg+xml")]

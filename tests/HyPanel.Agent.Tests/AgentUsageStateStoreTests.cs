@@ -59,7 +59,7 @@ public sealed class AgentUsageStateStoreTests
         var batch = CreateBatch(Guid.NewGuid());
         await store.EnqueueAsync(batch, CancellationToken.None);
 
-        await Assert.ThrowsExceptionAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
             store.EnqueueAsync(batch, CancellationToken.None));
 
         for (var index = 1; index < AgentUsageStateStore.MaxPendingBatches; index++)
@@ -67,7 +67,7 @@ public sealed class AgentUsageStateStoreTests
             await store.EnqueueAsync(CreateBatch(Guid.NewGuid()), CancellationToken.None);
         }
 
-        await Assert.ThrowsExceptionAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
             store.EnqueueAsync(CreateBatch(Guid.NewGuid()), CancellationToken.None));
     }
 
@@ -81,7 +81,7 @@ public sealed class AgentUsageStateStoreTests
         await File.WriteAllTextAsync(Path.Combine(dataDirectory, "usage-state.json"),
             JsonSerializer.Serialize(new AgentUsageStoreState([batch])));
 
-        await Assert.ThrowsExceptionAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
             CreateStore().LoadAsync(CancellationToken.None));
     }
 
@@ -92,19 +92,19 @@ public sealed class AgentUsageStateStoreTests
         await store.LoadAsync(CancellationToken.None);
         var valid = CreateBatch(Guid.NewGuid());
 
-        await Assert.ThrowsExceptionAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
             store.EnqueueAsync(valid with { BatchId = Guid.Empty }, CancellationToken.None));
-        await Assert.ThrowsExceptionAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
             store.EnqueueAsync(valid with
             {
                 ObservedAt = new DateTimeOffset(2026, 9, 10, 12, 0, 0, TimeSpan.FromHours(1))
             }, CancellationToken.None));
-        await Assert.ThrowsExceptionAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
             store.EnqueueAsync(valid with
             {
                 Records = [valid.Records[0] with { UserId = Guid.Empty }]
             }, CancellationToken.None));
-        await Assert.ThrowsExceptionAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
             store.EnqueueAsync(valid with
             {
                 Records = [valid.Records[0] with { DownloadBytes = -1 }]
@@ -136,7 +136,7 @@ public sealed class AgentUsageStateStoreTests
         await store.LoadAsync(CancellationToken.None);
         await store.EnqueueAsync(CreateBatch(Guid.NewGuid()), CancellationToken.None);
 
-        await Assert.ThrowsExceptionAsync<JsonException>(() =>
+        await Assert.ThrowsExactlyAsync<JsonException>(() =>
             store.AcknowledgeAsync(store.GetPendingBatchesSnapshot(), [Guid.NewGuid()], CancellationToken.None));
     }
 

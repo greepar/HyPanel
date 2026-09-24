@@ -6,7 +6,7 @@ namespace HyPanel.Shared.Tests;
 [TestClass]
 public sealed class PortSpecTests
 {
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("20000-30000", "20000-30000", 10001)]
     [DataRow(" 443 , 8443,20000-20010 ", "443,8443,20000-20010", 13)]
     [DataRow("20005,20000-20010,20011", "20000-20011", 12)]
@@ -18,7 +18,7 @@ public sealed class PortSpecTests
         Assert.AreEqual(count, spec.Count);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("")]
     [DataRow("0")]
     [DataRow("65536")]

@@ -125,7 +125,7 @@ public sealed class AgentUpdaterTests
         Assert.IsFalse(File.Exists(AgentUpdater.StagedExecutablePath(state.InstallPath)));
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("1.0.0", "1.0.0")]
     [DataRow("2.0.0", "1.9.9")]
     [DataRow("1.3.0", "1.3.0-beta.1")]
@@ -151,7 +151,7 @@ public sealed class AgentUpdaterTests
         Assert.AreEqual(state, await store.LoadAsync(CancellationToken.None));
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("../agent.tar.gz", "filename_invalid")]
     [DataRow("agent.tar.gz", "rid_mismatch")]
     public void TryValidateOffer_RejectsUnsafeNameAndWrongRid(string fileName, string expected)
@@ -165,7 +165,7 @@ public sealed class AgentUpdaterTests
         Assert.AreEqual(expected, error);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow(true, false, "size_mismatch")]
     [DataRow(false, true, "sha256_mismatch")]
     public async Task DownloadAsync_RejectsSizeAndShaMismatch(bool wrongSize, bool wrongSha, string expected)
@@ -177,7 +177,7 @@ public sealed class AgentUpdaterTests
             wrongSha ? new string('a', 64) : hash, wrongSize ? bytes.Length + 1 : bytes.Length);
         var updater = CreateUpdater(CreateStore(), new StaticHandler(bytes));
 
-        var exception = await Assert.ThrowsExceptionAsync<InvalidDataException>(() => updater.DownloadAsync(offer,
+        var exception = await Assert.ThrowsExactlyAsync<InvalidDataException>(() => updater.DownloadAsync(offer,
             Credentials(), Path.Combine(directory, "download"), CancellationToken.None));
 
         Assert.AreEqual(expected, exception.Message);
@@ -196,7 +196,7 @@ public sealed class AgentUpdaterTests
         Assert.IsFalse(File.Exists(Path.Combine(directory, "appsettings.json")));
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("../hypanel-agent", "archive_path_invalid")]
     [DataRow("unexpected", "archive_entry_unsupported")]
     [DataRow("HyPanel.Agent", "archive_entry_unsupported")]
@@ -205,7 +205,7 @@ public sealed class AgentUpdaterTests
         var archive = Path.Combine(directory, "bad.tar.gz");
         await CreateTarAsync(archive, (name, "bad"));
 
-        var exception = await Assert.ThrowsExceptionAsync<InvalidDataException>(() => AgentUpdater.ExtractAgentAsync(
+        var exception = await Assert.ThrowsExactlyAsync<InvalidDataException>(() => AgentUpdater.ExtractAgentAsync(
             archive, Path.Combine(directory, "staged"), CancellationToken.None));
 
         Assert.AreEqual(expected, exception.Message);
@@ -217,7 +217,7 @@ public sealed class AgentUpdaterTests
         var archive = Path.Combine(directory, "duplicate.tar.gz");
         await CreateTarAsync(archive, ("hypanel-agent", "one"), ("hypanel-agent", "two"));
 
-        var exception = await Assert.ThrowsExceptionAsync<InvalidDataException>(() => AgentUpdater.ExtractAgentAsync(
+        var exception = await Assert.ThrowsExactlyAsync<InvalidDataException>(() => AgentUpdater.ExtractAgentAsync(
             archive, Path.Combine(directory, "staged"), CancellationToken.None));
 
         Assert.AreEqual("archive_duplicate_entry", exception.Message);
@@ -232,7 +232,7 @@ public sealed class AgentUpdaterTests
         using (var writer = new TarWriter(gzip, leaveOpen: true))
             writer.WriteEntry(new PaxTarEntry(TarEntryType.SymbolicLink, "hypanel-agent") { LinkName = "/bin/sh" });
 
-        var exception = await Assert.ThrowsExceptionAsync<InvalidDataException>(() => AgentUpdater.ExtractAgentAsync(
+        var exception = await Assert.ThrowsExactlyAsync<InvalidDataException>(() => AgentUpdater.ExtractAgentAsync(
             archive, Path.Combine(directory, "staged"), CancellationToken.None));
 
         Assert.AreEqual("archive_entry_type_invalid", exception.Message);
@@ -251,7 +251,7 @@ public sealed class AgentUpdaterTests
         Assert.AreEqual("exe", System.Text.Encoding.UTF8.GetString(output.ToArray()));
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("../hypanel-agent.exe", "archive_path_invalid")]
     [DataRow("HyPanel.Agent.exe", "archive_entry_unsupported")]
     [DataRow("unexpected.exe", "archive_entry_unsupported")]
@@ -262,7 +262,7 @@ public sealed class AgentUpdaterTests
         await using (var writer = new StreamWriter(archive.CreateEntry(name).Open())) await writer.WriteAsync("bad");
         await using var output = new MemoryStream();
 
-        var exception = await Assert.ThrowsExceptionAsync<InvalidDataException>(() => AgentUpdater.ExtractZipAsync(
+        var exception = await Assert.ThrowsExactlyAsync<InvalidDataException>(() => AgentUpdater.ExtractZipAsync(
             archivePath, output, CancellationToken.None));
 
         Assert.AreEqual(expected, exception.Message);
@@ -281,7 +281,7 @@ public sealed class AgentUpdaterTests
         }
         await using var output = new MemoryStream();
 
-        var exception = await Assert.ThrowsExceptionAsync<InvalidDataException>(() => AgentUpdater.ExtractZipAsync(
+        var exception = await Assert.ThrowsExactlyAsync<InvalidDataException>(() => AgentUpdater.ExtractZipAsync(
             archivePath, output, CancellationToken.None));
 
         Assert.AreEqual("archive_duplicate_entry", exception.Message);
@@ -295,7 +295,7 @@ public sealed class AgentUpdaterTests
         var previous = AgentUpdater.PreviousPath(target);
         File.WriteAllText(target, "old");
 
-        Assert.ThrowsException<FileNotFoundException>(() => AgentUpdater.ReplaceRunningUnixExecutable(source, target, previous));
+        Assert.ThrowsExactly<FileNotFoundException>(() => AgentUpdater.ReplaceRunningUnixExecutable(source, target, previous));
 
         Assert.AreEqual("old", File.ReadAllText(target));
         Assert.AreEqual("old", File.ReadAllText(previous));

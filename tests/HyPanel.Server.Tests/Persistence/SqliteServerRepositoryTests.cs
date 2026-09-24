@@ -114,7 +114,7 @@ public sealed class SqliteServerRepositoryTests
         var repository = new SqliteServerRepository(new SqliteConnectionFactory(configuration), fixture.Time,
             new ProxyCredentialProtector(configuration));
 
-        var exception = await Assert.ThrowsExceptionAsync<InvalidOperationException>(() =>
+        var exception = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
             repository.InitializeCertificatesAsync(CancellationToken.None));
 
         StringAssert.Contains(exception.Message, "MasterKey");
@@ -591,7 +591,7 @@ public sealed class SqliteServerRepositoryTests
         Assert.IsFalse(await fixture.Repository.ResetTrafficAsync(Guid.NewGuid(), CancellationToken.None));
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("2026-09-09T12:00:00Z", 10, "2026-08-10T00:00:00Z")]
     [DataRow("2026-09-10T00:00:00Z", 10, "2026-09-10T00:00:00Z")]
     [DataRow("2026-01-05T00:00:00Z", 28, "2025-12-28T00:00:00Z")]
@@ -618,7 +618,7 @@ public sealed class SqliteServerRepositoryTests
         Assert.IsFalse(AgentSyncEndpoints.IsCountryCode("GBR"));
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("DNS:*.greepar.uk", "uk", "uk.greepar.uk")]
     [DataRow("DNS:*.greepar.uk, DNS:greepar.uk", "uk", "greepar.uk")]
     [DataRow("DNS:*.example.com", "伦敦 Edge#1", "edge-1.example.com")]
@@ -628,7 +628,7 @@ public sealed class SqliteServerRepositoryTests
     public void ServerNameFor_WildcardCertificateGetsConcreteNodeName(string san, string node, string? expected) =>
         Assert.AreEqual(expected, SqliteServerRepository.ServerNameFor(san, node));
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("DNS:hy.example.com, DNS:www.example.com", "hy.example.com")]
     [DataRow("DNS:*.example.com, DNS=edge.example.com", "edge.example.com")]
     [DataRow("IP Address:203.0.113.1", null)]

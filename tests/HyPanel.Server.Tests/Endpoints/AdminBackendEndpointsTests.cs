@@ -52,7 +52,7 @@ public sealed class AdminBackendEndpointsTests
         }
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("hysteria2", "{\"portHopping\":\"20000-30000\"}", true)]
     [DataRow("hysteria2", "{\"portHopping\":\"\"}", true)]
     [DataRow("hysteria2", "{}", true)]

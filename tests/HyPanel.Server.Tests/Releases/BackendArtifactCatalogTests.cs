@@ -58,7 +58,7 @@ public sealed class BackendArtifactCatalogTests
         Assert.AreEqual(string.Empty, traversalPath);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("unsupported RID")]
     [DataRow("duplicate backend-version-rid")]
     [DataRow("duplicate filename")]
@@ -92,7 +92,7 @@ public sealed class BackendArtifactCatalogTests
 
         fixture.WriteManifest(fixture.Manifest with { Assets = assets });
 
-        Assert.ThrowsException<InvalidOperationException>(() => fixture.CreateCatalog());
+        Assert.ThrowsExactly<InvalidOperationException>(() => fixture.CreateCatalog());
     }
 
     [TestMethod]
@@ -101,7 +101,7 @@ public sealed class BackendArtifactCatalogTests
         using var fixture = CatalogFixture.Create();
         fixture.WriteManifest(fixture.Manifest with { SchemaVersion = 2 });
 
-        Assert.ThrowsException<InvalidOperationException>(() => fixture.CreateCatalog());
+        Assert.ThrowsExactly<InvalidOperationException>(() => fixture.CreateCatalog());
     }
 
     [TestMethod]

@@ -66,7 +66,7 @@ public sealed class BackupRestoreServiceTests
     {
         await using var fixture = await TestDatabase.CreateAsync();
 
-        var exception = Assert.ThrowsException<BackupException>(() =>
+        var exception = Assert.ThrowsExactly<BackupException>(() =>
             fixture.Service.OpenDownload("../hypanel-backup-escape.tar.gz"));
 
         Assert.AreEqual("invalid_backup_id", exception.Code);

@@ -35,7 +35,7 @@ public sealed class ReconciliationInfrastructureTests
     [TestMethod]
     public void BackendProviderRegistry_DuplicateBackendType_Throws()
     {
-        var exception = Assert.ThrowsException<InvalidOperationException>(() =>
+        var exception = Assert.ThrowsExactly<InvalidOperationException>(() =>
             _ = new BackendProviderRegistry([new FakeProvider(), new FakeProvider()]));
 
         StringAssert.Contains(exception.Message, "registered more than once");
@@ -51,11 +51,11 @@ public sealed class ReconciliationInfrastructureTests
         var payload = Encoding.UTF8.GetBytes("backend");
         var valid = Artifact(payload);
 
-        await Assert.ThrowsExceptionAsync<InvalidDataException>(() =>
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() =>
             manager.EnsureAsync(valid with { Size = 0 }, CancellationToken.None));
-        await Assert.ThrowsExceptionAsync<InvalidDataException>(() =>
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() =>
             manager.EnsureAsync(valid with { Rid = "wrong-rid" }, CancellationToken.None));
-        await Assert.ThrowsExceptionAsync<InvalidDataException>(() =>
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() =>
             manager.EnsureAsync(valid with { FileName = "../backend" }, CancellationToken.None));
 
         Assert.AreEqual(0, handler.RequestCount);
@@ -97,7 +97,7 @@ public sealed class ReconciliationInfrastructureTests
         var root = Path.GetPathRoot(Path.GetFullPath(dataDirectory))!;
         var available = new DriveInfo(root).AvailableFreeSpace;
 
-        var exception = Assert.ThrowsException<IOException>(() =>
+        var exception = Assert.ThrowsExactly<IOException>(() =>
             DiskSpace.Require(dataDirectory, checked(available + 1)));
 
         Assert.AreEqual("insufficient_space", exception.Message);

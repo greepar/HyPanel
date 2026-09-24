@@ -100,7 +100,7 @@ public sealed class ReleaseSyncWorkerTests
         var worker = new ReleaseSyncWorker(NullLogger<ReleaseSyncWorker>.Instance, configuration,
             new ClientFactory(new FailingHandler()), catalog);
 
-        await Assert.ThrowsExceptionAsync<HttpRequestException>(() => worker.RefreshAsync(CancellationToken.None));
+        await Assert.ThrowsExactlyAsync<HttpRequestException>(() => worker.RefreshAsync(CancellationToken.None));
 
         Assert.AreEqual("1.2.0", catalog.Manifest!.Version);
     }

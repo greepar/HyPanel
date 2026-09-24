@@ -6,7 +6,7 @@ namespace HyPanel.Shared.Tests;
 [TestClass]
 public sealed class SemanticVersionTests
 {
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("1.2.3", "1.2.4", -1)]
     [DataRow("1.2.3-beta.1", "1.2.3-beta.2", -1)]
     [DataRow("1.2.3-beta.2", "1.2.3", -1)]
@@ -18,7 +18,7 @@ public sealed class SemanticVersionTests
         Assert.AreEqual(expectedSign, Math.Sign(result));
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("")]
     [DataRow("1.2")]
     [DataRow("01.2.3")]

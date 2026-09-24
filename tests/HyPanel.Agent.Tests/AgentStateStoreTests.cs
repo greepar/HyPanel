@@ -42,7 +42,7 @@ public sealed class AgentStateStoreTests
         await File.WriteAllTextAsync(Path.Combine(dataDirectory, "state.json"), "{not-json");
         var store = new AgentStateStore(new AgentEnrollmentOptions(null, null, dataDirectory));
 
-        var exception = await Assert.ThrowsExceptionAsync<InvalidDataException>(() =>
+        var exception = await Assert.ThrowsExactlyAsync<InvalidDataException>(() =>
             store.LoadAsync(CancellationToken.None));
 
         StringAssert.Contains(exception.Message, "corrupt");

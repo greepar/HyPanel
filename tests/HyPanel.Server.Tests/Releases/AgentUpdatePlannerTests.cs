@@ -6,7 +6,7 @@ namespace HyPanel.Server.Tests.Releases;
 [TestClass]
 public sealed class AgentUpdatePlannerTests
 {
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("Auto", "1.1.0", "1.3.0", null, true)]
     [DataRow("Manual", "1.1.0", "1.3.0", null, false)]
     [DataRow("Auto", "1.3.0", "1.3.0", null, false)]
@@ -20,7 +20,7 @@ public sealed class AgentUpdatePlannerTests
         Assert.AreEqual(expected, AgentUpdatePlanner.ShouldRequestAutoUpdate(policy, current, latest, desired));
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("1.1.0", "1.3.0", true)]
     [DataRow("1.3.0", "1.3.0", false)]
     [DataRow("1.4.0", "1.3.0", false)]

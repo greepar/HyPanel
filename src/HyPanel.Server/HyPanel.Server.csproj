@@ -4,11 +4,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\HyPanel.Shared\HyPanel.Shared.csproj" />
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
     <!-- Linux AOT publishes link SQLite statically (see CompileStaticSqlite), so the prebuilt libe_sqlite3.so is
          only used by JIT builds and tests. -->
-    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" Condition="'$(StaticSqlite)' != 'true'" />
-    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" ExcludeAssets="native" Condition="'$(StaticSqlite)' == 'true'" />
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Condition="'$(StaticSqlite)' != 'true'" />
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" ExcludeAssets="native" Condition="'$(StaticSqlite)' == 'true'" />
   </ItemGroup>
 
   <PropertyGroup>

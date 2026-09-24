@@ -49,12 +49,12 @@ public sealed class ReleaseCatalogTests
         using var fixture = ReleaseFixture.Create();
         fixture.WriteManifest(fixture.Manifest with { SchemaVersion = 2 });
 
-        var exception = Assert.ThrowsException<InvalidOperationException>(() => fixture.CreateCatalog());
+        var exception = Assert.ThrowsExactly<InvalidOperationException>(() => fixture.CreateCatalog());
 
         StringAssert.Contains(exception.Message, "schemaVersion");
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("missing RID")]
     [DataRow("duplicate RID")]
     [DataRow("duplicate filename")]
@@ -88,7 +88,7 @@ public sealed class ReleaseCatalogTests
         }
         fixture.WriteManifest(fixture.Manifest with { Assets = assets });
 
-        var exception = Assert.ThrowsException<InvalidOperationException>(() => fixture.CreateCatalog());
+        var exception = Assert.ThrowsExactly<InvalidOperationException>(() => fixture.CreateCatalog());
 
         StringAssert.Contains(exception.Message, "invalid asset");
     }
@@ -131,7 +131,7 @@ public sealed class ReleaseCatalogTests
             catalog.FindAsset("1.3.0", "win-arm64")!.FileName);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("linux-x64")]
     [DataRow("linux-arm64")]
     [DataRow("linux-musl-x64")]
