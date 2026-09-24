@@ -1,53 +1,46 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <img src="assets/logo-light.svg" alt="HyPanel" width="360">
+  </picture>
+</p>
+
 # HyPanel
 
-Lightweight centralized proxy backend orchestration panel based on .NET 10 NativeAOT.
+一个面板集中管理多台节点上的 Hysteria2 / Xray 代理服务，节点一条命令接入，用户和订阅统一分发。
 
-HyPanel runs one control-plane Server and outbound-polling Agents on your nodes. Each Agent can reconcile multiple
-independent proxy services without exposing a management port or accepting arbitrary remote shell commands.
+## 核心功能
 
-## Features
+- **多节点、多服务**：一个面板管理多台节点，每台节点可同时运行 Hysteria2、Xray REALITY、Shadowsocks 2022 等多个服务。
+- **一键接入**：一条命令安装 Agent，节点主动连接面板，无需开放管理端口；卸载同样一条命令。
+- **用户与订阅**：按用户组分配服务，支持流量上限、到期时间和每月重置；订阅为 Clash / Mihomo 格式，自带分流规则。
+- **证书管理**：支持手动上传、路径映射和 ACME 自动续期，证书更新后自动下发到节点。
+- **自动更新与备份**：面板、Agent 和代理内核都可在线更新，失败自动回滚；支持在线备份与恢复。
+- **轻量部署**：Server 和 Agent 都是单个可执行文件。
 
-- One Server manages many Nodes and multiple Services per Node.
-- Hysteria2, Xray, Mihomo and sing-box compile-time Backend providers.
-- Short-lived one-click Agent enrollment with durable high-entropy Agent credentials.
-- Desired-state reconciliation, per-Service health, logs and isolated failure recovery.
-- Agent, Backend and bare-metal Server updates with size/SHA256 verification and rollback.
-- Users, per-Service grants, subscription URLs and Xray per-user traffic accounting.
-- Panel-managed Hysteria2 certificates with encrypted private keys and safe rotation.
-- WAL-safe online backups, restore preflight, emergency rollback and disaster-recovery CLI.
-- SQLite, NativeAOT and a lightweight Preact/Vite administration UI.
+## 架构
 
-## Architecture
-
-```text
-                         HTTPS
- Browser/Admin  <-------------------->  HyPanel.Server
-                                             |
-                                             | desired state + commands
-                                             | outbound Agent polling
-                                             v
-                                      HyPanel.Agent
-                                      |    |    |
-                                      HY2  Xray  other Services
+```mermaid
+flowchart TD
+    User["浏览器 / 管理员"] <-->|HTTPS| Server["hypanel-server"]
+    Server <-->|"期望状态 + 一次性命令<br/>(Agent 主动轮询)"| Agent["hypanel-agent"]
+    Agent --> HY2["HY2"]
+    Agent --> Xray["Xray-Core"]
+    Agent --> Other["其他服务..."]
 ```
 
-The Server owns desired state in SQLite. Agents reconcile actual Backend processes toward that state. Nodes do not
-need an inbound Agent management port, and HyPanel does not use Redis, a message queue, runtime plugins or a persistent
-SSH control channel. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the detailed boundaries.
+## 快速开始
 
-## Quick Start
-
-Docker Compose is the recommended way to start the Server. Generate and safely store both secrets first:
+推荐用 Docker Compose 启动 Server。先生成并妥善保存两个密钥：
 
 ```bash
 export HYPANEL_ADMIN_TOKEN="$(openssl rand -hex 32)"
 export HYPANEL_MASTER_KEY="$(openssl rand -base64 32)"
 ```
 
-`HYPANEL_MASTER_KEY` encrypts proxy credentials and certificate private keys. It must remain stable for the lifetime of
-the installation.
+`HYPANEL_MASTER_KEY` 用于加密代理凭据和证书私钥，安装后必须长期保持不变。
 
-Create `compose.yml`:
+创建 `compose.yml`：
 
 ```yaml
 services:
@@ -66,182 +59,39 @@ volumes:
   hypanel-data:
 ```
 
-Start it:
+启动：
 
 ```bash
 docker compose up -d
 ```
 
-Open `http://SERVER_IP:8080`, choose **Initial token**, and enter `HYPANEL_ADMIN_TOKEN`. Create an Admin account for
-normal use, then place the Server behind an HTTPS reverse proxy before enrolling Internet nodes.
+打开 `http://SERVER_IP:8080`。首次使用时登录页会显示“创建管理员”，填入 `HYPANEL_ADMIN_TOKEN` 以及新管理员的用户名和
+密码即可；之后这个入口会自动关闭。接入公网节点之前，请先把 Server 放到 HTTPS 反向代理之后。
 
 ## Docker
 
-The image is published for `linux/amd64` and `linux/arm64`, runs as a non-root user, listens on port 8080 and stores
-durable state beneath `/data`. Do not mount the Docker socket into HyPanel.
+镜像提供 `linux/amd64` 和 `linux/arm64`，以非 root 用户运行，监听 8080 端口，持久数据位于 `/data`。不要把 Docker
+socket 挂载进 HyPanel。
 
-Docker Server updates are owned by the operator:
+Docker 部署由运维者自行更新：
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-HyPanel reports image availability but never replaces its own binary inside a container.
+面板会提示有新版本，但在容器内不会替换自身的可执行文件。
 
-## Bare-metal Server
+## 裸机部署 Server
 
-Download the matching `hypanel-server-<version>-linux-<arch>.tar.gz` from
-[GitHub Releases](https://github.com/greepar/HyPanel/releases), verify it against `SHA256SUMS`, and install it at
-`/opt/hypanel/server/hypanel-server`. A hardened example unit is provided at
-[`deploy/systemd/hypanel-server.service`](deploy/systemd/hypanel-server.service).
+从 [GitHub Releases](https://github.com/greepar/HyPanel/releases) 下载并部署
 
-Create `/etc/hypanel/server.env` with permissions `0600`:
 
-```bash
-HYPANEL_ADMIN_TOKEN=<high-entropy bootstrap token>
-HYPANEL_MASTER_KEY=<persistent 32-byte Base64 key>
-HYPANEL_DATA_DIR=/var/lib/hypanel
-```
 
-The example unit binds `127.0.0.1:5291`; publish it through an HTTPS reverse proxy. The dedicated `hypanel` user must
-own `/var/lib/hypanel` and `/opt/hypanel/server` so backup/restore and verified self-update can use their fixed paths.
+## 开发
 
-## Add Agent
-
-1. Sign in as Admin and create a Node.
-2. Open the Node and copy its generated Linux install command.
-3. Run the command as root on the target node.
-4. Wait for the Node to become Online, then create Services from its detail page.
-
-The command resembles:
-
-```bash
-curl -fsSL https://panel.example/i/123456 | sh
-```
-
-The six-digit code is valid for 15 minutes and one successful enrollment. It is not the Agent's long-term password.
-After enrollment, the Agent stores a separate high-entropy identity and polls the Server over HTTPS.
-
-## Create Service
-
-Current shipped profiles are:
-
-| Backend | Profile | Current capability |
-| --- | --- | --- |
-| Hysteria2 | Hysteria2 / QUIC | Panel-managed certificate selection; one configured auth password |
-| Xray | VLESS TCP REALITY Vision | Independent per-user UUIDs and official per-user traffic counters |
-| Mihomo | Shadowsocks 2022 | Managed single inbound password; no claimed per-user traffic |
-| sing-box | Shadowsocks 2022 | Managed single inbound password; no claimed per-user traffic |
-
-For Hysteria2, upload a matching certificate/private-key pair under **Settings → TLS Certificates**, then select that
-managed certificate in the Service form. The normal API never returns the private key.
-
-For Xray, configure the REALITY key pair, short ID, server name and destination. Granting a user access and rotating
-their Service credential creates a distinct VLESS UUID used for subscription and traffic accounting.
-
-## Users & Subscription
-
-Create a User, grant only the required Services, and rotate/create credentials where supported. Each User receives a
-high-entropy, revocable subscription token. Available projections include raw links, Base64, Mihomo and sing-box.
-
-Normal users see only their own subscription and usage. They cannot inspect Nodes, Agent state, Backend configuration,
-diagnostics or other users.
-
-## Updates
-
-- **Agent Update:** the Server offers a verified release; the Agent stages, self-tests, replaces and proves a successful
-  authenticated reconnect before deleting its previous binary.
-- **Backend Update:** the Server caches official artifacts; the Agent reconciles one target Service and rolls back that
-  Service on failed health verification.
-- **Server Update:** bare-metal Linux downloads and self-tests the official Server asset, atomically replaces it and
-  verifies startup. Docker installations do not use binary self-replacement.
-- **Docker Update:** run `docker compose pull && docker compose up -d` externally.
-
-Automatic Agent/Backend updates are opt-in. Manual is the default.
-
-## Backup & Restore
-
-Create and restore backups under **Settings → Data Backup & Restore**. Restore first validates format, SHA256, SQLite
-integrity, schema compatibility, repository shape, MasterKey fingerprint and every encrypted credential/key. A
-successful request creates an emergency backup and restarts the Server before replacement; failed migration or startup
-validation restores the prior database.
-
-The bare-metal CLI remains available if the Web UI cannot start:
-
-```bash
-# Online backup is allowed while the Server runs.
-sudo -u hypanel /opt/hypanel/server/hypanel-server backup
-
-sudo -u hypanel /opt/hypanel/server/hypanel-server backup validate /path/to/hypanel-backup.tar.gz
-
-# Offline restore refuses to run while the Server process owns the data directory.
-sudo systemctl stop hypanel-server
-sudo -u hypanel /opt/hypanel/server/hypanel-server restore /path/to/hypanel-backup.tar.gz
-sudo systemctl start hypanel-server
-```
-
-**A database backup alone is not complete disaster recovery.** Preserve both:
-
-```text
-HyPanel backup archive
-+
-the matching HYPANEL_MASTER_KEY
-```
-
-The MasterKey is intentionally not inside the archive. Store it separately from backups and do not place both in the
-same unprotected location. Without the matching key, encrypted proxy credentials and certificate private keys cannot
-be recovered.
-
-## Security
-
-- Use HTTPS for every Internet-facing Server and Agent connection.
-- Keep `HYPANEL_ADMIN_TOKEN` and `HYPANEL_MASTER_KEY` out of source control and logs.
-- Treat backup archives as sensitive: they contain users, service config, token hashes and usage, even though dedicated
-  credential/private-key fields remain encrypted.
-- Run Server and Agent under their dedicated unprivileged system users.
-- Expose only required proxy Service ports. The Agent control plane is outbound-only.
-- HyPanel intentionally provides no arbitrary remote shell and no Docker socket integration.
-
-## Supported Platforms
-
-Production acceptance currently focuses on Linux glibc x64 with systemd. Linux arm64 NativeAOT artifacts and CI gates
-are published, but real arm64 glibc runtime acceptance is still an explicit evidence gap. Release assets also exist for
-other RIDs; see [`docs/CROSS_PLATFORM_ACCEPTANCE.md`](docs/CROSS_PLATFORM_ACCEPTANCE.md) before treating them as
-production-verified. OpenWrt MIPS is not currently supported.
-
-## Troubleshooting
-
-Useful Linux commands:
-
-```bash
-systemctl status hypanel-agent --no-pager
-journalctl -u hypanel-agent -n 100 --no-pager
-systemctl restart hypanel-agent
-
-systemctl status hypanel-server --no-pager
-journalctl -u hypanel-server -n 100 --no-pager
-systemctl restart hypanel-server
-```
-
-- **Agent offline:** verify DNS/HTTPS reachability, system time and `hypanel-agent` logs. Running Backends stay up during
-  a temporary Panel outage.
-- **Enrollment expired:** generate a new Node install command. Enrollment codes are intentionally short-lived and
-  single-use.
-- **Backend failed:** inspect the Service error and bounded diagnostic logs; check port conflicts and configuration.
-- **Update rollback:** inspect Agent or Server update status and journal entries. The previous binary is retained until
-  the replacement proves healthy.
-- **Certificate expired:** replace the managed certificate in Settings. Only referencing Hysteria2 Services reconcile.
-- **MasterKey missing/mismatch:** restore the original persistent `HYPANEL_MASTER_KEY`; do not generate a replacement
-  for an existing database.
-- **Restore failed:** read `restore-status.json` and Server logs. HyPanel retains the current DB on preflight failure and
-  creates an emergency backup before replacement.
-- **Subscription empty:** confirm the User is enabled/not expired, has Service grants, and has an active credential for
-  profiles that require one.
-
-## Development
-
-Requirements: the SDK pinned by [`global.json`](global.json), Node.js 22+, and a NativeAOT toolchain for publish gates.
+需要 [`global.json`](global.json) 指定的 .NET SDK、Node.js 22+，发布时还需要 NativeAOT 工具链（交叉编译由
+StuDev.AotAnywhere 自动下载 zig）。
 
 ```bash
 npm ci --prefix web/HyPanel.Web
@@ -252,9 +102,8 @@ dotnet publish src/HyPanel.Server/HyPanel.Server.csproj -c Release -r linux-x64
 dotnet publish src/HyPanel.Agent/HyPanel.Agent.csproj -c Release -r linux-x64
 ```
 
-Contributor architecture and contract rules are in [`AGENTS.md`](AGENTS.md), [`docs/CONTEXT.md`](docs/CONTEXT.md),
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/CONTRACTS.md`](docs/CONTRACTS.md).
+Linux 版 Server 发布时会下载固定版本的 SQLite 源码（校验 SHA256）并静态链接。
 
-## License
+## 许可证
 
-HyPanel is licensed under the [GNU General Public License v3.0](LICENSE).
+HyPanel 使用 [GNU General Public License v3.0](LICENSE) 授权。
