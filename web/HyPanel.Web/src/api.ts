@@ -8,7 +8,7 @@ export class ApiClient {
   constructor(private token: () => string, private unauthorized: () => void) {}
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     // Sign-in endpoints are anonymous: they never carry a token and a 401 there means bad credentials.
-    const anonymous = path === '/api/auth/v1/login' || path.startsWith('/api/auth/v1/passkey/')
+    const anonymous = path === '/api/auth/v1/login' || path.startsWith('/api/auth/v1/passkey/') || path === '/api/auth/v1/setup'
     const bearer = anonymous ? '' : this.token()
     const response = await fetch(path, { ...init, headers: { ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}), ...init.headers } })
     if (!response.ok) {

@@ -98,6 +98,11 @@ internal sealed record AdminServiceResponse(
 
 internal sealed record LoginRequest(string Username, string Password);
 
+internal sealed record SetupStatusResponse(bool NeedsSetup);
+
+/// <summary>Creates the first administrator; authorised by the install-time HYPANEL_ADMIN_TOKEN.</summary>
+internal sealed record SetupRequest(string Token, string Username, string Password);
+
 internal sealed record UserResponse(
     Guid Id,
     string Username,

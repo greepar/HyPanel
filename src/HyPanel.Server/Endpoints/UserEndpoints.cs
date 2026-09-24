@@ -13,6 +13,8 @@ internal static class UserEndpoints
     {
         endpoints.MapPost("/api/auth/v1/login", LoginAsync).RequireRateLimiting("login");
         endpoints.MapPost("/api/auth/v1/logout", LogoutAsync);
+        endpoints.MapGet("/api/auth/v1/setup", SetupStatusAsync);
+        endpoints.MapPost("/api/auth/v1/setup", SetupAsync).RequireRateLimiting("login");
         endpoints.MapGet("/api/user/v1/me", MeAsync);
         endpoints.MapGet("/api/admin/v1/users", GetUsersAsync);
         endpoints.MapPost("/api/admin/v1/users", CreateUserAsync);
@@ -41,6 +43,24 @@ internal static class UserEndpoints
         if (user is null || hash is null || !user.Enabled || user.ExpiresAtUtc <= time.GetUtcNow() ||
             !passwords.Verify(request.Password, hash)) return Results.Unauthorized();
         return await IssueSessionAsync(user, repository, time, ct);
+    }
+
+    private static async Task<IResult> SetupStatusAsync(SqliteServerRepository repository, CancellationToken ct) =>
+        Results.Json(new SetupStatusResponse((await repository.GetUsersAsync(ct)).Count == 0),
+            ServerJsonSerializerContext.Default.SetupStatusResponse);
+
+    /// <summary>First run only: creates the initial administrator and signs it in.</summary>
+    private static async Task<IResult> SetupAsync(SetupRequest request, AdminTokenAuthentication bootstrap,
+        SqliteServerRepository repository, PasswordService passwords, TimeProvider time, CancellationToken ct)
+    {
+        if (!bootstrap.Matches(request.Token)) return Results.Unauthorized();
+        if ((await repository.GetUsersAsync(ct)).Count != 0) return Results.Conflict();
+        if (!TryUsername(request.Username, out var username, out var normalized) ||
+            request.Password is not { Length: >= MinimumPasswordLength and <= 256 }) return Results.BadRequest();
+        var issue = await repository.CreateUserAsync(Guid.NewGuid(), username, normalized, passwords.Hash(request.Password),
+            "Admin", true, null, null, NewToken(), ct);
+        await repository.SetUserGroupAsync(issue.User.Id, SqliteServerRepository.DefaultGroupId, ct);
+        return await IssueSessionAsync(issue.User, repository, time, ct);
     }
 
     internal static async Task<IResult> IssueSessionAsync(UserRecord user, SqliteServerRepository repository,

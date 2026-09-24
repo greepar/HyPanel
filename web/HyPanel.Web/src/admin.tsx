@@ -114,11 +114,11 @@ function SettingsPage({ api, setError, account }: PageProps & { account: boolean
   const [settings, setSettings] = useState<GlobalSettings | null>(null);
   const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [loading, setLoading] = useState(true);
-  const load = async () => {
-    setLoading(true);
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true);
     try { const [nextSettings, nextCertificates] = await Promise.all([api.settings(), api.certificates()]); setSettings(nextSettings); setCertificates(nextCertificates); }
     catch (reason) { setError(messageFor(reason, "无法加载设置")); }
-    finally { setLoading(false); }
+    finally { if (!silent) setLoading(false); }
   };
   useEffect(() => { void load(); }, []);
   const server = settings?.server;
@@ -127,7 +127,7 @@ function SettingsPage({ api, setError, account }: PageProps & { account: boolean
     try { const result = await api.updateServer(); setError(`Server ${result.version} 更新已开始。`); }
     catch (reason) { setError(messageFor(reason, "无法更新 Server")); }
   };
-  const save = async () => { if (!settings) return; try { await api.updateSettings(settings); setError("全局设置已保存。"); await load(); } catch (reason) { setError(messageFor(reason, "无法保存设置")); } };
+  const save = async () => { if (!settings) return; try { await api.updateSettings(settings); setError("全局设置已保存。"); await load(true); } catch (reason) { setError(messageFor(reason, "无法保存设置")); } };
   if (loading || !server || !settings)
     return <Page title="设置" description="控制面更新、Release 来源和数据目录。"><Loading /></Page>;
   return (
@@ -437,7 +437,7 @@ function OverviewPage({ api, setError }: PageProps) {
         <button
           className="button button-secondary"
           type="button"
-          onClick={() => void load()}
+          onClick={() => void load(true)}
         >
           刷新
         </button>
@@ -586,7 +586,7 @@ function NodesPage({ api, setError }: PageProps) {
       const node = await api.createNode(name);
       setShowCreate(false);
       setName("");
-      await load();
+      await load(true);
       await generate(node, "unix");
     } catch (reason) {
       setError(messageFor(reason, "无法创建节点"));
@@ -641,7 +641,7 @@ function NodesPage({ api, setError }: PageProps) {
       setError(
         `已请求更新 ${result.updatedNodes} 个节点到 ${result.version}。`,
       );
-      await load();
+      await load(true);
     } catch (reason) {
       setError(messageFor(reason, "无法请求批量更新"));
     } finally {
@@ -653,7 +653,7 @@ function NodesPage({ api, setError }: PageProps) {
     try {
       const result = await api.updateAgent(node.id);
       setError(`已请求 ${node.displayName} 更新到 ${result.version}。`);
-      await load();
+      await load(true);
     } catch (reason) {
       setError(messageFor(reason, "无法请求 Agent 更新"));
     } finally {
@@ -891,7 +891,7 @@ function NodesPage({ api, setError }: PageProps) {
           close={() => setDeleting(null)}
           deleted={() => {
             setDeleting(null);
-            void load();
+            void load(true);
           }}
           setError={setError}
         />
@@ -1191,7 +1191,7 @@ function NodeDetailPage({
     ) : tab === "logs" ? (
       <NodeLogs api={api} nodeId={node.id} services={services} setError={setError} />
     ) : tab === "settings" ? (
-      <NodeSettings api={api} node={node} setError={setError} reload={() => void load()} />
+      <NodeSettings api={api} node={node} setError={setError} reload={() => void load(true)} />
     ) : (
       <NodeOverview api={api} node={node} services={services} />
     );
@@ -1218,7 +1218,7 @@ function NodeDetailPage({
           <button
             className="button button-secondary"
             type="button"
-            onClick={() => void load()}
+            onClick={() => void load(true)}
           >
             刷新
           </button>
@@ -1661,7 +1661,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
         : { method: "DELETE" });
     }
     setEditor(null);
-    await loadServices(nodeId);
+    await loadServices(nodeId, undefined, true);
   };
   const remove = async (service: Service) => {
     if (!confirm(`确定删除“${service.name}”？Agent 将停止并清理此实例。`))
@@ -1671,7 +1671,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
         `/api/admin/v1/nodes/${nodeId}/services/${service.id}`,
         { method: "DELETE" },
       );
-      await loadServices(nodeId);
+      await loadServices(nodeId, undefined, true);
     } catch (reason) {
       setError(messageFor(reason, "无法删除服务"));
     }
@@ -1682,7 +1682,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
         `/api/admin/v1/nodes/${nodeId}/services/${service.id}/enabled`,
         { method: "PUT", body: JSON.stringify({ enabled: value }) },
       );
-      await loadServices(nodeId);
+      await loadServices(nodeId, undefined, true);
     } catch (reason) {
       setError(messageFor(reason, "无法更新服务状态"));
     }
@@ -1699,7 +1699,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
           })),
         }),
       });
-      await loadServices(nodeId);
+      await loadServices(nodeId, undefined, true);
     } catch (reason) {
       setError(messageFor(reason, "无法批量更新服务"));
     }
@@ -1776,7 +1776,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
                 edit={() => setEditor({ service })}
                 remove={() => void remove(service)}
               enabled={(value) => void enabled(service, value)}
-              refresh={() => loadServices(nodeId)}
+              refresh={() => loadServices(nodeId, undefined, true)}
               setError={setError}
               />
             ))}
@@ -2405,9 +2405,11 @@ function UsersPage({ api, setError }: PageProps) {
     fresh: boolean;
   } | null>(null);
   const rotationInFlight = useRef(false);
-  const load = async () => {
-    setLoading(true);
-    setLoadError("");
+  const load = async (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setLoadError("");
+    }
     try {
       const [nextUsers, nodes, nextUsage, nextGroups] = await Promise.all([
         api.users(),
@@ -2429,9 +2431,9 @@ function UsersPage({ api, setError }: PageProps) {
       setServices(nested.flat());
       setUsage(nextUsage);
     } catch (reason) {
-      setLoadError(messageFor(reason, "无法加载用户"));
+      if (!silent) setLoadError(messageFor(reason, "无法加载用户"));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
   useEffect(() => {
@@ -2469,7 +2471,7 @@ function UsersPage({ api, setError }: PageProps) {
         });
       }
       setEditor(null);
-      await load();
+      await load(true);
     } catch (reason) {
       setError(messageFor(reason, "无法保存用户"));
     }
@@ -2479,7 +2481,7 @@ function UsersPage({ api, setError }: PageProps) {
       return;
     try {
       await api.request(`/api/admin/v1/users/${user.id}`, { method: "DELETE" });
-      await load();
+      await load(true);
     } catch (reason) {
       setError(messageFor(reason, "无法删除用户"));
     }
@@ -2534,7 +2536,7 @@ function UsersPage({ api, setError }: PageProps) {
           groupId,
         }),
       });
-      await load();
+      await load(true);
       setError(`已将 ${user.username} 移到“${groups.find((group) => group.id === groupId)?.name}”。`);
     } catch (reason) {
       setError(messageFor(reason, "无法修改用户组"));
@@ -2550,7 +2552,7 @@ function UsersPage({ api, setError }: PageProps) {
         serviceIds: groupEditor.serviceIds,
       });
       setGroupEditor(null);
-      await load();
+      await load(true);
       setError("用户组已保存，成员的服务权限已同步。");
     } catch (reason) {
       setError(reason instanceof ApiError && reason.status === 409 ? "已有同名用户组。" : messageFor(reason, "无法保存用户组"));
@@ -2560,7 +2562,7 @@ function UsersPage({ api, setError }: PageProps) {
     if (!confirm(`删除用户组“${group.name}”？其 ${group.memberCount} 名成员会移到默认组。`)) return;
     try {
       await api.deleteGroup(group.id);
-      await load();
+      await load(true);
       setError("用户组已删除。");
     } catch (reason) {
       setError(messageFor(reason, "无法删除用户组"));

@@ -4,7 +4,7 @@ import type { Theme, User } from './domain'
 import { useRoute } from './router'
 import { AdminApp } from './admin'
 import { SubscriptionPage } from './subscription'
-import { AppShell, messageFor, Notice, Splash } from './ui'
+import { AppShell, messageFor, Notice, Splash, Toast } from './ui'
 import { BrandMark } from './brand'
 import { passkeySupported, signInWithPasskey } from './passkey'
 
@@ -29,12 +29,6 @@ const storeAccountSession = (token: string, user: User) => {
   for (const key of ['hypanel-bootstrap', 'hypanel-session-token', 'hypanel-session-user', 'hypanel-admin-token']) sessionStorage.removeItem(key)
 }
 
-const storeBootstrapSession = (token: string) => {
-  sessionStorage.setItem('hypanel-token', token)
-  sessionStorage.setItem('hypanel-bootstrap', 'true')
-  for (const key of ['hypanel-user', 'hypanel-session-token', 'hypanel-session-user', 'hypanel-admin-token']) sessionStorage.removeItem(key)
-}
-
 export function App() {
   const [theme, setTheme] = useState<Theme>(storedTheme)
   const [token, setToken] = useState(storedToken)
@@ -53,12 +47,6 @@ export function App() {
   }, [theme])
   const endSession = () => { for (const key of ['hypanel-token', 'hypanel-user', 'hypanel-bootstrap', 'hypanel-session-token', 'hypanel-session-user', 'hypanel-admin-token']) sessionStorage.removeItem(key); setToken(''); setUser(null); setBootstrap(false) }
   const api = useMemo(() => new ApiClient(() => token, endSession), [token])
-  // Success toasts fade on their own; errors stay a little longer so they can be read.
-  useEffect(() => {
-    if (!error) return
-    const timer = setTimeout(() => setError(''), /已|排队|成功/.test(error) ? 3500 : 8000)
-    return () => clearTimeout(timer)
-  }, [error])
 
   useEffect(() => {
     if (!checkingSession || !token) return
@@ -82,21 +70,40 @@ export function App() {
 
   if (checkingSession) return <AppShell theme={theme} setTheme={setTheme}><Splash label="正在验证会话…" /></AppShell>
 
-  if (!token || !role) return <Login theme={theme} setTheme={setTheme} api={api} onLogin={(nextToken, nextUser) => { storeAccountSession(nextToken, nextUser); setToken(nextToken); setUser(nextUser); setBootstrap(false) }} onBootstrap={nextToken => { storeBootstrapSession(nextToken); setToken(nextToken); setUser(null); setBootstrap(true) }} />
+  if (!token || !role) return <Login theme={theme} setTheme={setTheme} api={api} onLogin={(nextToken, nextUser) => { storeAccountSession(nextToken, nextUser); setToken(nextToken); setUser(nextUser); setBootstrap(false) }} />
 
   const logout = async () => { try { if (!bootstrap) await api.request<void>('/api/auth/v1/logout', { method: 'POST' }) } catch { /* local logout remains available */ } finally { endSession() } }
   return <AppShell theme={theme} setTheme={setTheme} route={route} navigate={navigate} identity={bootstrap ? '初始管理员' : user?.username} role={role ?? 'User'} logout={() => void logout()}>
-    {error && <div className="global-notice"><Notice kind={/已|排队|成功/.test(error) ? 'success' : 'error'} dismiss={() => setError('')}>{error}</Notice></div>}
+    {/* Success toasts go quickly; errors stay longer so they can be read. */}
+    {error && (() => { const ok = /已|排队|成功/.test(error); return <Toast key={error} message={error} kind={ok ? 'success' : 'error'} duration={ok ? 3500 : 8000} dismiss={() => setError('')} /> })()}
     {role === 'User' ? <SubscriptionPage api={api} setError={setError} /> : <AdminApp route={route} api={api} setError={setError} account={!bootstrap} />}
   </AppShell>
 }
 
-function Login({ theme, setTheme, api, onLogin, onBootstrap }: { theme: Theme; setTheme: (value: Theme) => void; api: ApiClient; onLogin: (token: string, user: User) => void; onBootstrap: (token: string) => void }) {
-  const [mode, setMode] = useState<'account' | 'bootstrap'>('account')
+function Login({ theme, setTheme, api, onLogin }: { theme: Theme; setTheme: (value: Theme) => void; api: ApiClient; onLogin: (token: string, user: User) => void }) {
   const [form, setForm] = useState({ username: '', password: '', token: '' })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const submit = async (event: Event) => { event.preventDefault(); setBusy(true); setError(''); try { if (mode === 'bootstrap') { if (!form.token.trim()) throw new Error('请输入初始管理员令牌。'); await api.validateAdminToken(form.token.trim()); onBootstrap(form.token.trim()) } else { const result = await api.login(form.username, form.password); onLogin(result.token, result.user) } } catch (reason) { setError(messageFor(reason, '登录失败')) } finally { setBusy(false) } }
+  // A fresh install has no accounts: the first administrator is created with the install token instead.
+  const [setup, setSetup] = useState(false)
+  useEffect(() => { void api.request<{ needsSetup: boolean }>('/api/auth/v1/setup').then(result => setSetup(result.needsSetup), () => undefined) }, [])
+  const submit = async (event: Event) => {
+    event.preventDefault(); setBusy(true); setError('')
+    try {
+      const result = setup
+        ? await api.request<{ token: string; user: User }>('/api/auth/v1/setup', { method: 'POST', body: JSON.stringify({ token: form.token.trim(), username: form.username, password: form.password }) })
+        : await api.login(form.username, form.password)
+      onLogin(result.token, result.user)
+    } catch (reason) { setError(messageFor(reason, setup ? '无法创建管理员，请检查安装令牌' : '登录失败')) } finally { setBusy(false) }
+  }
   const passkey = async () => { setBusy(true); setError(''); try { const result = await signInWithPasskey(api); if (result) onLogin(result.token, result.user) } catch (reason) { setError(messageFor(reason, '通行密钥登录失败')) } finally { setBusy(false) } }
-  return <AppShell theme={theme} setTheme={setTheme}><div className="login-layout"><form className="card login-card" onSubmit={event => void submit(event)}><div className="login-head"><BrandMark size={48} detail="full" /><h2>{mode === 'account' ? '登录 HyPanel' : '初始管理模式'}</h2><p className="muted">{mode === 'account' ? '使用账户密码或通行密钥继续。' : '令牌仅保存在当前浏览器会话。'}</p></div><div className="segmented"><button type="button" className={mode === 'account' ? 'active' : ''} onClick={() => setMode('account')}>账户登录</button><button type="button" className={mode === 'bootstrap' ? 'active' : ''} onClick={() => setMode('bootstrap')}>初始令牌</button></div>{mode === 'account' ? <><label>用户名<input required autoComplete="username" value={form.username} onInput={event => setForm({ ...form, username: event.currentTarget.value })} /></label><label>密码<input required type="password" autoComplete="current-password" value={form.password} onInput={event => setForm({ ...form, password: event.currentTarget.value })} /></label></> : <label>Bearer 令牌<input required type="password" autoComplete="off" value={form.token} onInput={event => setForm({ ...form, token: event.currentTarget.value })} /></label>}{error && <Notice kind="error">{error}</Notice>}<button className="button button-primary button-wide" disabled={busy}>{busy ? '正在验证…' : '继续'}</button>{mode === 'account' && passkeySupported() && <button className="button button-secondary button-wide" type="button" disabled={busy} onClick={() => void passkey()}>使用通行密钥登录</button>}</form></div></AppShell>
+  return <AppShell theme={theme} setTheme={setTheme}><div className="login-layout"><form className="card login-card" onSubmit={event => void submit(event)}>
+    <div className="login-head"><BrandMark size={48} detail="full" /><h2>{setup ? '创建管理员' : '登录 HyPanel'}</h2><p className="muted">{setup ? '首次使用：用安装时生成的管理令牌创建第一个管理员账户。' : '使用账户密码或通行密钥继续。'}</p></div>
+    {setup && <label>安装令牌<input required type="password" autoComplete="off" value={form.token} onInput={event => setForm({ ...form, token: event.currentTarget.value })} /></label>}
+    <label>用户名<input required autoComplete="username webauthn" value={form.username} onInput={event => setForm({ ...form, username: event.currentTarget.value })} /></label>
+    <label>密码<input required type="password" minLength={setup ? 6 : undefined} autoComplete={setup ? 'new-password' : 'current-password'} value={form.password} onInput={event => setForm({ ...form, password: event.currentTarget.value })} /></label>
+    {error && <Notice kind="error">{error}</Notice>}
+    <button className="button button-primary button-wide" disabled={busy}>{busy ? '正在验证…' : setup ? '创建并登录' : '登录'}</button>
+    {!setup && passkeySupported() && <button className="button button-secondary button-wide" type="button" disabled={busy} onClick={() => void passkey()}>使用通行密钥登录</button>}
+  </form></div></AppShell>
 }

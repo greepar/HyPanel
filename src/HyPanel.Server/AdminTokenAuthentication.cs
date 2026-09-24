@@ -42,13 +42,10 @@ internal sealed class AdminTokenAuthentication
             return false;
         }
 
-        var token = value[7..];
-        if (token.Length == 0)
-        {
-            return false;
-        }
-
-        var candidateHash = SHA256.HashData(Encoding.UTF8.GetBytes(token));
-        return CryptographicOperations.FixedTimeEquals(_tokenHash, candidateHash);
+        return Matches(value[7..]);
     }
+
+    public bool Matches(string? token) =>
+        !string.IsNullOrEmpty(token) &&
+        CryptographicOperations.FixedTimeEquals(_tokenHash, SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 }

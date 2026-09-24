@@ -1,6 +1,6 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
-import { Check, ChevronDown, ChevronsUpDown, LayoutDashboard, LogOut, Monitor, Moon, Server, Settings, Sun, Users } from 'lucide-preact'
+import { Check, ChevronDown, ChevronsUpDown, CircleAlert, CircleCheck, LayoutDashboard, LogOut, Monitor, Moon, Server, Settings, Sun, Users, X } from 'lucide-preact'
 import type { AppRoute, Role, Theme } from './domain'
 import { BrandLockup, BrandMark } from './brand'
 
@@ -17,6 +17,7 @@ const navigation: { route: AppRoute; label: string; admin: boolean; icon: typeof
 export function AppShell({ children, theme, setTheme, route, navigate, identity, role, logout }: { children: ComponentChildren; theme: Theme; setTheme: (value: Theme) => void; route?: AppRoute; navigate?: (value: AppRoute) => void; identity?: string; role?: Role | 'Bootstrap'; logout?: () => void }) {
   const items = navigation.filter(item => role === 'User' ? !item.admin : item.admin)
   const activeRoute = route?.startsWith('nodes/') ? 'nodes' : route
+  const signedIn = !!(route && navigate && role)
   // Dropdown menus are <details>; close them after choosing an item, clicking elsewhere or pressing Escape.
   useEffect(() => {
     const closeMenus = (keep?: Element | null) => document.querySelectorAll<HTMLDetailsElement>('details.more-menu[open], details.user-menu[open]')
@@ -35,17 +36,33 @@ export function AppShell({ children, theme, setTheme, route, navigate, identity,
     <header className="topbar">
       <a className="brand" href={role === 'User' ? '#/subscription' : '#/overview'} aria-label="HyPanel 首页"><BrandLockup size={28} /></a>
       <div className="topbar-actions">
-        <div className="theme-switch" role="radiogroup" aria-label="主题">{themes.map(value => { const Icon = value === 'light' ? Sun : value === 'dark' ? Moon : Monitor; return <button key={value} type="button" role="radio" aria-checked={theme === value} aria-label={themeLabels[value]} title={themeLabels[value]} className={theme === value ? 'active' : ''} onClick={() => setTheme(value)}><Icon size={15} /></button> })}</div>
+        {/* Signed in, the switch lives at the bottom of the sidebar; the top-bar copy is for sign-in and phones. */}
+        <ThemeSwitch theme={theme} setTheme={setTheme} className={signedIn ? 'mobile-only' : undefined} />
         {logout && <details className="user-menu"><summary><span className="avatar-sm" aria-hidden="true">{(identity ?? 'H').slice(0, 1).toUpperCase()}</span><span className="user-menu-name">{identity ?? '账户'}</span><ChevronDown size={14} /></summary><div className="user-menu-popover"><div className="user-menu-identity"><strong>{identity ?? '账户'}</strong><small>{role === 'Bootstrap' ? '初始管理员令牌' : role === 'Admin' ? '管理员' : '普通用户'}</small></div><button type="button" onClick={logout}><LogOut size={16} />退出登录</button></div></details>}
       </div>
     </header>
     {route && navigate && role ? <div className="workspace">
       <aside className="sidebar">
         <nav aria-label="主导航">{items.map(item => { const Icon = item.icon; return <a key={item.route} href={`#/${item.route}`} className={activeRoute === item.route ? 'nav-item active' : 'nav-item'} aria-current={activeRoute === item.route ? 'page' : undefined} onClick={event => { event.preventDefault(); navigate(item.route) }}><Icon size={18} />{item.label}</a> })}</nav>
-        <div className="sidebar-footer"><span>当前身份</span><strong>{identity}</strong><small>{role === 'Bootstrap' ? '初始管理员令牌' : role === 'Admin' ? '管理员' : '普通用户'}</small></div>
+        <div className="sidebar-footer"><ThemeSwitch theme={theme} setTheme={setTheme} /></div>
       </aside>
       <main className="main">{children}</main>
     </div> : <main className="auth-main">{children}</main>}
+  </div>
+}
+
+function ThemeSwitch({ theme, setTheme, className }: { theme: Theme; setTheme: (value: Theme) => void; className?: string }) {
+  return <div className={className ? `theme-switch ${className}` : 'theme-switch'} role="radiogroup" aria-label="主题">{themes.map(value => { const Icon = value === 'light' ? Sun : value === 'dark' ? Moon : Monitor; return <button key={value} type="button" role="radio" aria-checked={theme === value} aria-label={themeLabels[value]} title={themeLabels[value]} className={theme === value ? 'active' : ''} onClick={() => setTheme(value)}><Icon size={15} /></button> })}</div>
+}
+
+/** Black-and-white toast; the bar along the bottom counts down and dismisses it (paused while hovered). */
+export function Toast({ message, kind, duration, dismiss }: { message: string; kind: 'success' | 'error'; duration: number; dismiss: () => void }) {
+  const Icon = kind === 'success' ? CircleCheck : CircleAlert
+  return <div className="toast" role={kind === 'error' ? 'alert' : 'status'}>
+    <Icon size={17} aria-hidden="true" />
+    <span>{message}</span>
+    <button type="button" aria-label="关闭消息" onClick={dismiss}><X size={15} /></button>
+    <i className="toast-progress" style={{ '--toast-duration': `${duration}ms` }} onAnimationEnd={dismiss} />
   </div>
 }
 
