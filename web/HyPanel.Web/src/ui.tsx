@@ -1,6 +1,6 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
-import { Check, ChevronDown, ChevronsUpDown, CircleAlert, CircleCheck, LayoutDashboard, LogOut, Monitor, Moon, Server, Settings, Sun, Users, X } from 'lucide-preact'
+import { Check, ChevronDown, ChevronsUpDown, CircleAlert, CircleCheck, Eye, EyeOff, LayoutDashboard, LogOut, Monitor, Moon, Server, Settings, Sun, Users, X } from 'lucide-preact'
 import type { AppRoute, Role, Theme } from './domain'
 import { BrandLockup, BrandMark } from './brand'
 
@@ -69,6 +69,33 @@ export function Toast({ message, kind, duration, dismiss }: { message: string; k
     <button type="button" aria-label="关闭消息" onClick={() => setLeaving(true)}><X size={15} /></button>
     <i className="toast-progress" style={{ '--toast-duration': `${duration}ms` }} onAnimationEnd={event => { event.stopPropagation(); setLeaving(true) }} />
   </div>
+}
+
+/**
+ * Password field with a show/hide eye button. `beforeReveal` runs before the first reveal, e.g. to load a secret the
+ * server redacted; returning false keeps it hidden.
+ */
+export function PasswordInput({ value, onValue, required, minLength, autoComplete = 'off', placeholder, beforeReveal }: {
+  value: string; onValue: (value: string) => void; required?: boolean; minLength?: number; autoComplete?: string
+  placeholder?: string; beforeReveal?: () => Promise<boolean>
+}) {
+  const [visible, setVisible] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const toggle = async () => {
+    if (!visible && beforeReveal) {
+      setBusy(true)
+      try { if (!await beforeReveal()) return } finally { setBusy(false) }
+    }
+    setVisible(!visible)
+  }
+  return <span className="password-field">
+    <input type={visible ? 'text' : 'password'} value={value} required={required} minLength={minLength} autoComplete={autoComplete}
+      placeholder={placeholder} spellcheck={false} onInput={event => onValue(event.currentTarget.value)} />
+    <button type="button" className="password-toggle" aria-label={visible ? '隐藏密码' : '显示密码'} title={visible ? '隐藏密码' : '显示密码'}
+      aria-pressed={visible} disabled={busy} onClick={() => void toggle()}>
+      {visible ? <EyeOff size={16} /> : <Eye size={16} />}
+    </button>
+  </span>
 }
 
 export function Page({ title, description, actions, children, eyebrow }: { title: ComponentChildren; description?: ComponentChildren; actions?: ComponentChildren; children: ComponentChildren; eyebrow?: ComponentChildren }) {

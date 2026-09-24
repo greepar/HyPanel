@@ -56,6 +56,7 @@ import {
   usedBytes,
   countryFlag,
   NodeName,
+  PasswordInput,
 } from "./ui";
 
 type PageProps = { api: ApiClient; setError: (value: string) => void };
@@ -69,6 +70,8 @@ const emptyUser: UserForm = {
   expiresAtUtc: "",
   groupId: "",
 };
+/** Placeholder the Server returns in place of stored secrets. */
+const REDACTED = "[REDACTED]";
 const GIB = 1024 ** 3;
 const gbFromBytes = (bytes: number | null) =>
   bytes === null ? "" : String(Math.round((bytes / GIB) * 100) / 100);
@@ -415,7 +418,7 @@ function CertificatePanel({ api, certificates, setCertificates, setError }: { ap
           <label>联系邮箱<input required type="email" placeholder="用于证书到期通知" value={draft.acmeEmail} onInput={event => change("acmeEmail", event.currentTarget.value)} /></label>
           <label>验证方式<Select ariaLabel="验证方式" value={draft.acmeChallenge} onChange={value => change("acmeChallenge", value as AcmeChallenge)}
             options={(Object.keys(acmeChallengeLabels) as AcmeChallenge[]).map(value => ({ value, label: acmeChallengeLabels[value] }))} /></label>
-          {draft.acmeChallenge === "cloudflare" && <label>Cloudflare API Token<input type="password" autoComplete="off" required={!editing?.hasAcmeDnsToken} placeholder={editing?.hasAcmeDnsToken ? "已保存，留空则保持不变" : "需要 Zone.DNS 编辑权限"} value={draft.acmeDnsToken} onInput={event => change("acmeDnsToken", event.currentTarget.value)} /></label>}
+          {draft.acmeChallenge === "cloudflare" && <label>Cloudflare API Token<PasswordInput required={!editing?.hasAcmeDnsToken} placeholder={editing?.hasAcmeDnsToken ? "已保存，留空则保持不变" : "需要 Zone.DNS 编辑权限"} value={draft.acmeDnsToken} onValue={value => change("acmeDnsToken", value)} /></label>}
         </div>
         {draft.acmeChallenge !== "cloudflare" && <p className="field-help">HTTP / TLS 验证要求节点的 TCP {draft.acmeChallenge === "http" ? "80" : "443"} 端口可从公网访问且未被占用；较早安装的节点需重新运行一次安装命令，以授予 Agent 绑定低端口的权限。</p>}
       </>}
@@ -2166,6 +2169,28 @@ function ServiceEditor({
     if (form?.backendType !== "hysteria2") return;
     void api.certificates().then(setCertificates).catch(reason => setError(messageFor(reason, "无法加载证书")));
   }, [form?.backendType]);
+  // Stored secrets arrive as "[REDACTED]"; revealing one loads the real values of all of them into the form.
+  const revealSecrets = async () => {
+    if (!service || !form || !Object.values(form.values).includes(REDACTED)) return true;
+    try {
+      const secrets = await api.request<Record<string, string>>(
+        `/api/admin/v1/nodes/${nodeId}/services/${service.id}/secrets`,
+      );
+      const fields = backendFor(form.backendType).fields;
+      setForm((current) => {
+        if (!current) return current;
+        const values = { ...current.values };
+        for (const field of fields)
+          if (field.configKey && values[field.key] === REDACTED && secrets[field.configKey] != null)
+            values[field.key] = secrets[field.configKey];
+        return { ...current, values };
+      });
+      return true;
+    } catch (reason) {
+      setError(messageFor(reason, "无法读取密码"));
+      return false;
+    }
+  };
   const change = (key: string, next: string) =>
     setForm((current) =>
       current
@@ -2245,8 +2270,20 @@ function ServiceEditor({
         </label>
       );
     }
-    const type =
-      field.kind === "number" ? "number" : field.kind === "password" ? "password" : "text";
+    if (field.kind === "password")
+      return (
+        <label key={field.key}>
+          {field.label}
+          <PasswordInput
+            required={field.required}
+            value={form.values[field.key] ?? ""}
+            placeholder={field.placeholder ?? undefined}
+            onValue={(value) => change(field.key, value)}
+            beforeReveal={revealSecrets}
+          />
+        </label>
+      );
+    const type = field.kind === "number" ? "number" : "text";
     const label =
       service && field.secret ? `${field.label}（保留当前占位值即可沿用）` : field.label;
     return (
@@ -2929,14 +2966,12 @@ function UserEditor({
           </label>
           <label>
             {value.user ? "新密码（留空则不修改）" : "密码"}
-            <input
+            <PasswordInput
               required={!value.user}
               minLength={6}
-              type="password"
+              autoComplete="new-password"
               value={form.password}
-              onInput={(event) =>
-                update({ password: event.currentTarget.value })
-              }
+              onValue={(password) => update({ password })}
             />
           </label>
           <label>

@@ -28,6 +28,7 @@ internal static class AdminServicesEndpoints
         endpoints.MapDelete("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}/public-endpoint",
             ClearPublicEndpointAsync);
         endpoints.MapDelete("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}", DeleteAsync);
+        endpoints.MapGet("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}/secrets", GetSecretsAsync);
     }
 
     private static async Task<IResult> ListAsync(Guid nodeId, HttpRequest request,
@@ -40,6 +41,28 @@ internal static class AdminServicesEndpoints
         var services = await repository.GetServicesForNodeAsync(nodeId, cancellationToken);
         var response = services.Select(item => Map(item, releaseCatalog)).ToArray();
         return Results.Json(response, ServerJsonSerializerContext.Default.AdminServiceResponseArray);
+    }
+
+    /// <summary>
+    /// The service's top-level secrets (passwords, REALITY private key) that the list redacts, for the editor's
+    /// "show password" button. Admin only; the same values already reach admins through subscription links.
+    /// </summary>
+    private static async Task<IResult> GetSecretsAsync(Guid nodeId, Guid serviceId, HttpRequest request,
+        AdminAuthorization authorization, SqliteServerRepository repository, CancellationToken cancellationToken)
+    {
+        var access = await authorization.AuthorizeAsync(request, cancellationToken);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        var service = (await repository.GetServicesForNodeAsync(nodeId, cancellationToken))
+            .Select(static item => item.Service)
+            .FirstOrDefault(item => item.Id == serviceId);
+        if (service is null) return Results.NotFound();
+        var secrets = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (JsonNode.Parse(service.ConfigJson) is JsonObject config)
+            foreach (var pair in config)
+                if (IsSecretName(pair.Key) && pair.Value is JsonValue value && value.TryGetValue<string>(out var text))
+                    secrets[pair.Key] = text;
+        request.HttpContext.Response.Headers.CacheControl = "no-store";
+        return Results.Json(secrets, ServerJsonSerializerContext.Default.DictionaryStringString);
     }
 
     private static async Task<IResult> CreateAsync(Guid nodeId, CreateServiceRequest request, HttpRequest httpRequest,

@@ -31,6 +31,7 @@ using HyPanel.Shared.Contracts;
 [JsonSerializable(typeof(ServiceMutationResponse))]
 [JsonSerializable(typeof(AdminServiceResponse[]))]
 [JsonSerializable(typeof(LoginRequest))]
+[JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSerializable(typeof(SetupStatusResponse))]
 [JsonSerializable(typeof(SetupRequest))]
 [JsonSerializable(typeof(LoginResponse))]

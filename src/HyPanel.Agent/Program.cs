@@ -18,6 +18,9 @@ public static class Program
         }
 
         var builder = Host.CreateApplicationBuilder(args);
+        // Reports to the Windows service control manager when run by sc.exe (else Windows kills it: error 1053);
+        // a no-op everywhere else.
+        builder.Services.AddWindowsService(options => options.ServiceName = "HyPanelAgent");
 
         var enrollmentOptions = AgentEnrollmentOptions.FromConfiguration(builder.Configuration);
         builder.Services.AddSingleton(enrollmentOptions);

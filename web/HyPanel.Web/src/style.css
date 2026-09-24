@@ -540,3 +540,7 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
   .snapshot-row { grid-template-columns: 1fr }
 }
 .modal-action-start { margin-right: auto }
+.password-field { position: relative; display: block }
+.password-field input { width: 100%; padding-right: 40px }
+.password-toggle { position: absolute; top: 50%; right: 6px; display: grid; width: 30px; height: 30px; place-items: center; padding: 0; border: 0; border-radius: 6px; color: var(--muted); background: transparent; cursor: pointer; transform: translateY(-50%) }
+.password-toggle:hover { color: var(--text); background: var(--surface-2) }

@@ -4,7 +4,7 @@ import type { Theme, User } from './domain'
 import { useRoute } from './router'
 import { AdminApp } from './admin'
 import { SubscriptionPage } from './subscription'
-import { AppShell, messageFor, Notice, Splash, Toast } from './ui'
+import { AppShell, messageFor, Notice, PasswordInput, Splash, Toast } from './ui'
 import { BrandMark } from './brand'
 import { passkeySupported, signInWithPasskey } from './passkey'
 
@@ -99,9 +99,9 @@ function Login({ theme, setTheme, api, onLogin }: { theme: Theme; setTheme: (val
   const passkey = async () => { setBusy(true); setError(''); try { const result = await signInWithPasskey(api); if (result) onLogin(result.token, result.user) } catch (reason) { setError(messageFor(reason, '通行密钥登录失败')) } finally { setBusy(false) } }
   return <AppShell theme={theme} setTheme={setTheme}><div className="login-layout"><form className="card login-card" onSubmit={event => void submit(event)}>
     <div className="login-head"><BrandMark size={48} detail="full" /><h2>{setup ? '创建管理员' : '登录 HyPanel'}</h2><p className="muted">{setup ? '首次使用：用安装时生成的管理令牌创建第一个管理员账户。' : '使用账户密码或通行密钥继续。'}</p></div>
-    {setup && <label>安装令牌<input required type="password" autoComplete="off" value={form.token} onInput={event => setForm({ ...form, token: event.currentTarget.value })} /></label>}
+    {setup && <label>安装令牌<PasswordInput required value={form.token} onValue={token => setForm({ ...form, token })} /></label>}
     <label>用户名<input required autoComplete="username webauthn" value={form.username} onInput={event => setForm({ ...form, username: event.currentTarget.value })} /></label>
-    <label>密码<input required type="password" minLength={setup ? 6 : undefined} autoComplete={setup ? 'new-password' : 'current-password'} value={form.password} onInput={event => setForm({ ...form, password: event.currentTarget.value })} /></label>
+    <label>密码<PasswordInput required minLength={setup ? 6 : undefined} autoComplete={setup ? 'new-password' : 'current-password'} value={form.password} onValue={password => setForm({ ...form, password })} /></label>
     {error && <Notice kind="error">{error}</Notice>}
     <button className="button button-primary button-wide" disabled={busy}>{busy ? '正在验证…' : setup ? '创建并登录' : '登录'}</button>
     {!setup && passkeySupported() && <button className="button button-secondary button-wide" type="button" disabled={busy} onClick={() => void passkey()}>使用通行密钥登录</button>}
