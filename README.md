@@ -31,62 +31,26 @@ flowchart TD
 
 ## 快速开始
 
-推荐用 Docker Compose 启动 Server。先生成并妥善保存两个密钥：
+在一台 Linux x64 服务器上下载并运行面板（其他架构见 [Releases](https://github.com/greepar/HyPanel/releases)）：
 
 ```bash
-export HYPANEL_ADMIN_TOKEN="$(openssl rand -hex 32)"
-export HYPANEL_MASTER_KEY="$(openssl rand -base64 32)"
+mkdir -p /opt/hypanel && cd /opt/hypanel
+curl -fsSL https://github.com/greepar/HyPanel/releases/download/v0.5.1/hypanel-server-0.5.1-linux-x64.tar.gz | tar -xz
+
+# 生成并保存两个密钥：MasterKey 用于加密凭据，之后不能再改
+cat > server.env <<EOF
+HYPANEL_ADMIN_TOKEN=$(openssl rand -hex 32)
+HYPANEL_MASTER_KEY=$(openssl rand -base64 32)
+EOF
+
+set -a; . ./server.env; set +a
+ASPNETCORE_URLS=http://0.0.0.0:8080 ./hypanel-server
 ```
 
-`HYPANEL_MASTER_KEY` 用于加密代理凭据和证书私钥，安装后必须长期保持不变。
+打开 `http://服务器IP:8080`，用 `server.env` 里的 `HYPANEL_ADMIN_TOKEN` 创建管理员，然后在“节点”页新建节点，复制安装命令到
+节点服务器上运行即可。
 
-创建 `compose.yml`：
-
-```yaml
-services:
-  hypanel:
-    image: ghcr.io/greepar/hypanel:latest
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-    environment:
-      HYPANEL_ADMIN_TOKEN: ${HYPANEL_ADMIN_TOKEN:?required}
-      HYPANEL_MASTER_KEY: ${HYPANEL_MASTER_KEY:?required}
-    volumes:
-      - hypanel-data:/data
-
-volumes:
-  hypanel-data:
-```
-
-启动：
-
-```bash
-docker compose up -d
-```
-
-打开 `http://SERVER_IP:8080`。首次使用时登录页会显示“创建管理员”，填入 `HYPANEL_ADMIN_TOKEN` 以及新管理员的用户名和
-密码即可；之后这个入口会自动关闭。接入公网节点之前，请先把 Server 放到 HTTPS 反向代理之后。
-
-## Docker
-
-镜像提供 `linux/amd64` 和 `linux/arm64`，以非 root 用户运行，监听 8080 端口，持久数据位于 `/data`。不要把 Docker
-socket 挂载进 HyPanel。
-
-Docker 部署由运维者自行更新：
-
-```bash
-docker compose pull
-docker compose up -d
-```
-
-面板会提示有新版本，但在容器内不会替换自身的可执行文件。
-
-## 裸机部署 Server
-
-从 [GitHub Releases](https://github.com/greepar/HyPanel/releases) 下载并部署
-
-
+以 systemd 常驻运行、配置 HTTPS、添加服务和用户等，请看 **[使用文档](https://greepar.github.io/HyPanel/)**。
 
 ## 开发
 
