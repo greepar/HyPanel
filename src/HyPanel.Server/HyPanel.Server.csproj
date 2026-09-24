@@ -5,7 +5,22 @@
   <ItemGroup>
     <ProjectReference Include="..\HyPanel.Shared\HyPanel.Shared.csproj" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
-    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" />
+    <!-- Linux AOT publishes link SQLite statically (see CompileStaticSqlite), so the prebuilt libe_sqlite3.so is
+         only used by JIT builds and tests. -->
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" Condition="'$(StaticSqlite)' != 'true'" />
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" ExcludeAssets="native" Condition="'$(StaticSqlite)' == 'true'" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <SqliteVersion>3530400</SqliteVersion>
+    <SqliteYear>2026</SqliteYear>
+    <SqliteSha256>1e71ddf93849c6a6ecf58b827c0692073d2dd7ee40196158068f7b29f422e87d</SqliteSha256>
+    <SqliteCacheDirectory>$(BaseIntermediateOutputPath)sqlite-$(SqliteVersion)/</SqliteCacheDirectory>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(StaticSqlite)' == 'true'">
+    <!-- SQLitePCLRaw's DllImport("e_sqlite3") calls bind to the statically linked object instead of dlopen. -->
+    <DirectPInvoke Include="e_sqlite3" />
   </ItemGroup>
 
   <ItemGroup>
@@ -27,6 +42,8 @@
     <WebProjectDirectory>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../../web/HyPanel.Web'))</WebProjectDirectory>
     <ServerBuildVersion Condition="'$(ServerBuildVersion)' == ''">$(Version)</ServerBuildVersion>
     <ServerRuntimeIdentifier Condition="'$(ServerRuntimeIdentifier)' == ''">$(RuntimeIdentifier)</ServerRuntimeIdentifier>
+    <!-- Must follow PublishAot: properties are evaluated in file order. -->
+    <StaticSqlite Condition="'$(PublishAot)' == 'true' and $(RuntimeIdentifier.StartsWith('linux'))">true</StaticSqlite>
     <GeneratedBuildInfo>$(BaseIntermediateOutputPath)$(Configuration)/$(TargetFramework)/ServerBuildInfo.g.cs</GeneratedBuildInfo>
   </PropertyGroup>
 
@@ -34,6 +51,35 @@
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(GeneratedBuildInfo)'))" />
     <WriteLinesToFile File="$(GeneratedBuildInfo)" Overwrite="true" Lines="namespace HyPanel.Server%3B internal static class ServerBuildInfo { public const string Version = &quot;$(ServerBuildVersion)&quot;%3B private const string PublishedRuntimeIdentifier = &quot;$(ServerRuntimeIdentifier)&quot;%3B public static string RuntimeIdentifier => string.IsNullOrEmpty(PublishedRuntimeIdentifier) ? System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier : PublishedRuntimeIdentifier%3B }" />
     <ItemGroup><Compile Include="$(GeneratedBuildInfo)" /></ItemGroup>
+  </Target>
+
+  <!-- Downloads the pinned SQLite amalgamation (checksum-verified) and compiles it for the target: with AotAnywhere's
+       zig when cross-compiling, otherwise with the native AOT toolchain (the Docker build drops AotAnywhere). The
+       object is linked into the single-file Server binary. -->
+  <Target Name="CompileStaticSqlite" Condition="'$(StaticSqlite)' == 'true'"
+          AfterTargets="SetupOSSpecificProps;OverwriteTargetTriple;SetPathToZig" BeforeTargets="LinkNative">
+    <PropertyGroup>
+      <_SqliteZip>$(SqliteCacheDirectory)sqlite-amalgamation-$(SqliteVersion).zip</_SqliteZip>
+      <_SqliteSource>$(SqliteCacheDirectory)sqlite-amalgamation-$(SqliteVersion)/sqlite3.c</_SqliteSource>
+      <_SqliteObject>$(SqliteCacheDirectory)e_sqlite3-$(RuntimeIdentifier).o</_SqliteObject>
+      <_SqliteCompiler Condition="'$(_AotAnywhereZigExe)' != '' and '$(TargetTriple)' != ''">&quot;$(_AotAnywhereZigExe)&quot; cc -target $(TargetTriple)</_SqliteCompiler>
+      <_SqliteCompiler Condition="'$(_SqliteCompiler)' == '' and '$(TargetTriple)' != ''">&quot;$(CppCompilerAndLinker)&quot; --target=$(TargetTriple)</_SqliteCompiler>
+      <_SqliteCompiler Condition="'$(_SqliteCompiler)' == ''">&quot;$(CppCompilerAndLinker)&quot;</_SqliteCompiler>
+      <_SqliteCompiler Condition="'$(_SqliteCompiler)' == '&quot;&quot;'">cc</_SqliteCompiler>
+    </PropertyGroup>
+    <DownloadFile Condition="!Exists('$(_SqliteZip)')" SourceUrl="https://www.sqlite.org/$(SqliteYear)/sqlite-amalgamation-$(SqliteVersion).zip"
+                  DestinationFolder="$(SqliteCacheDirectory)" />
+    <GetFileHash Files="$(_SqliteZip)" Algorithm="SHA256">
+      <Output TaskParameter="Hash" PropertyName="_SqliteZipHash" />
+    </GetFileHash>
+    <Error Condition="'$(_SqliteZipHash.ToLowerInvariant())' != '$(SqliteSha256)'" Text="SQLite amalgamation checksum mismatch: $(_SqliteZipHash)" />
+    <Unzip Condition="!Exists('$(_SqliteSource)')" SourceFiles="$(_SqliteZip)" DestinationFolder="$(SqliteCacheDirectory)" />
+    <!-- Same feature set Microsoft.Data.Sqlite expects from e_sqlite3. -->
+    <Exec Condition="!Exists('$(_SqliteObject)')"
+          Command="$(_SqliteCompiler) -O2 -fPIC -c &quot;$(_SqliteSource)&quot; -o &quot;$(_SqliteObject)&quot; -DSQLITE_THREADSAFE=1 -DSQLITE_DEFAULT_MEMSTATUS=0 -DSQLITE_ENABLE_COLUMN_METADATA -DSQLITE_ENABLE_FTS4 -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_MATH_FUNCTIONS -DSQLITE_ENABLE_RTREE -DSQLITE_ENABLE_SNAPSHOT -DSQLITE_ENABLE_UNLOCK_NOTIFY -DSQLITE_ENABLE_LOAD_EXTENSION -DSQLITE_API=" />
+    <ItemGroup>
+      <LinkerArg Include="&quot;$(_SqliteObject)&quot;" />
+    </ItemGroup>
   </Target>
 
   <ItemGroup>

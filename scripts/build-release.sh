@@ -74,12 +74,7 @@ publish_and_package() {
         exit 1
     }
     cp -p "$publish_dir/$binary_name" "$package_dir/"
-    if [ -f "$publish_dir/appsettings.json" ]; then
-        cp -p "$publish_dir/appsettings.json" "$package_dir/"
-    fi
-    if [ "$kind" = server ] && [ -f "$publish_dir/libe_sqlite3.so" ]; then
-        cp -p "$publish_dir/libe_sqlite3.so" "$package_dir/"
-    fi
+    # Single file: settings come from environment variables and SQLite is linked into the Server binary.
     if [ "$rid" = win-x64 ] || [ "$rid" = win-arm64 ]; then
         command -v zip >/dev/null 2>&1 || { printf '%s\n' 'zip is required for Windows artifacts' >&2; exit 1; }
         (cd "$package_dir" && zip -q -X "$OUTPUT_DIR/$archive_name.zip" ./*)

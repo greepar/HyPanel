@@ -22,7 +22,8 @@ public static class Program
             return;
         }
         var builder = WebApplication.CreateBuilder(args);
-        builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+        // Per-request framework logs are noise in journald; no appsettings.json ships with the binary.
+        builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 
         builder.Services.ConfigureHttpJsonOptions(options =>
         {
