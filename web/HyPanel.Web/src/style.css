@@ -116,7 +116,7 @@ code, .mono { font-family: var(--mono); font-size: .92em }
 .button-small { height: 30px; padding: 0 10px; font-size: 12px }
 .button-wide { width: 100% }
 .link-button, .more-button, .icon-button { border: 0; background: transparent; cursor: pointer; font-weight: 500 }
-.link-button { padding: 4px 0; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px }
+.link-button { padding: 4px 0; white-space: nowrap; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px }
 .more-button { color: var(--muted); font-size: 12px }
 .icon-button { display: grid; width: 32px; height: 32px; place-items: center; border-radius: var(--radius-sm); color: var(--muted); font-size: 22px; line-height: 1 }
 .icon-button:hover { color: var(--text); background: var(--surface-2) }
@@ -152,7 +152,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield }
 .group-card strong .badge { margin-left: 6px; vertical-align: middle }
 .group-card small { color: var(--muted); font-size: 12px }
 .group-card .service-tags { margin-top: 6px }
-.group-card > .row-actions { flex-wrap: nowrap }
+.group-card > .row-actions { flex: 0 0 auto; flex-wrap: nowrap }
 .user-group-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 10px; padding: 12px 18px; border-top: 1px solid var(--border) }
 .user-group-row > span { color: var(--muted); font-size: 12px }
 .group-services { display: grid; gap: 14px; max-height: 360px; overflow: auto }
@@ -334,6 +334,7 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 .service-facts, .user-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--border); background: var(--surface-2) }
 .service-facts span, .user-facts span { display: grid; gap: 2px; min-width: 0; padding: 10px 16px; font-size: 12px; overflow-wrap: anywhere }
 .service-facts span + span, .user-facts span + span { border-left: 1px solid var(--border) }
+.user-facts { grid-template-columns: repeat(4, minmax(0, 1fr)) }
 .service-facts b, .user-facts b { color: var(--muted); font-size: 11px; font-weight: 500 }
 .service-error { display: flex; gap: 10px; padding: 10px 16px; border-top: 1px solid color-mix(in srgb, var(--danger) 30%, var(--border)); color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, var(--surface)); font-size: 12px }
 .service-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 16px; border-top: 1px solid var(--border) }
@@ -351,7 +352,6 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 .user-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px }
 .user-card header p { margin: 2px 0 0; color: var(--muted); font-size: 12px }
 .user-card footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: auto }
-.user-card { overflow: hidden }
 .user-card > header { display: flex; align-items: center; gap: 12px; padding: 16px 18px }
 .user-card > header > div:nth-child(2) { min-width: 0; flex: 1 }
 .avatar { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 50%; color: var(--accent-text); background: var(--accent); font-weight: 600 }
@@ -498,6 +498,9 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
   .workspace { display: block; min-height: 0 }
   .sidebar { position: sticky; top: var(--topbar); z-index: 30; display: block; height: auto; border-right: 0; border-bottom: 1px solid var(--border) }
   .sidebar-footer { display: none }
+  .user-facts { grid-template-columns: repeat(2, minmax(0, 1fr)) }
+  .user-facts span:nth-child(3) { border-left: 0 }
+  .user-facts span:nth-child(n+3) { border-top: 1px solid var(--border) }
   .mobile-only { display: inline-flex }
   .sidebar nav { display: flex; overflow-x: auto; padding: 8px 12px }
   .nav-item { flex: 0 0 auto }
