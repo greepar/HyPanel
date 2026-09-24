@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks'
 import QRCode from 'qrcode'
 import type { ApiClient } from './api'
 import type { Usage, User } from './domain'
+import { PasskeyPanel } from './passkey'
 import { copyText, Empty, ErrorState, formatBytes, Loading, messageFor, Page, Stat } from './ui'
 
 export function SubscriptionPage({ api, setError }: { api: ApiClient; setError: (value: string) => void }) {
@@ -81,6 +82,7 @@ export function SubscriptionPage({ api, setError }: { api: ApiClient; setError: 
         <div className="section-heading"><div><h2>服务用量</h2><p>数据由 Agent 按服务幂等上报。</p></div></div>
         {usage.length ? <div className="usage-list">{usage.map(row => <div key={row.serviceId}><code>{row.serviceId}</code><span>上传 {formatBytes(row.uploadBytes)}</span><span>下载 {formatBytes(row.downloadBytes)}</span><strong>{formatBytes(row.uploadBytes + row.downloadBytes)}</strong></div>)}</div> : <Empty title="暂无用量数据" description="服务开始产生并上报流量后，这里会显示明细。" />}
       </section>
+      <PasskeyPanel api={api} setError={setError} />
     </> : null}
   </Page>
 }

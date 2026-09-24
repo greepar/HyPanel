@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ApiError, type ApiClient } from "./api";
 import { SubscriptionLinks } from "./subscription";
+import { PasskeyPanel } from "./passkey";
 import {
   backendFor,
   emptyService,
@@ -70,7 +71,8 @@ export function AdminApp({
   route,
   api,
   setError,
-}: PageProps & { route: AppRoute }) {
+  account = false,
+}: PageProps & { route: AppRoute; account?: boolean }) {
   const nodeRoute = route.match(
     /^nodes\/([^/]+)\/(overview|services|network|logs|settings)$/,
   );
@@ -85,7 +87,7 @@ export function AdminApp({
     );
   if (route === "nodes") return <NodesPage api={api} setError={setError} />;
   if (route === "users") return <UsersPage api={api} setError={setError} />;
-  if (route === "settings") return <SettingsPage api={api} setError={setError} />;
+  if (route === "settings") return <SettingsPage api={api} setError={setError} account={account} />;
   return <OverviewPage api={api} setError={setError} />;
 }
 
@@ -108,7 +110,7 @@ function useAutoRefresh(refresh: () => unknown, deps: unknown[] = [], intervalMs
     };
   }, deps);
 }
-function SettingsPage({ api, setError }: PageProps) {
+function SettingsPage({ api, setError, account }: PageProps & { account: boolean }) {
   const [settings, setSettings] = useState<GlobalSettings | null>(null);
   const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -139,6 +141,7 @@ function SettingsPage({ api, setError }: PageProps) {
         </section>
         <section className="card panel"><SectionTitle title="自动更新" description="新建节点和服务时的默认策略；已有节点可在节点设置里单独开关。" /><div className="modal-form"><label className="switch"><input type="checkbox" checked={settings.agentUpdateDefaultPolicy === "Auto"} onChange={event => setSettings({ ...settings, agentUpdateDefaultPolicy: event.currentTarget.checked ? "Auto" : "Manual" })} /><span />新节点自动更新 Agent</label><label className="switch"><input type="checkbox" checked={settings.backendUpdateDefaultPolicy === "Auto"} onChange={event => setSettings({ ...settings, backendUpdateDefaultPolicy: event.currentTarget.checked ? "Auto" : "Manual" })} /><span />新服务自动更新代理内核</label><label>GitHub 镜像地址<input placeholder="留空使用 GitHub 官方源" value={settings.githubMirrorBaseUrl ?? ""} onInput={event => setSettings({ ...settings, githubMirrorBaseUrl: event.currentTarget.value || null })} /></label><button className="button button-primary" type="button" onClick={() => void save()}>保存设置</button></div></section>
          <section className="card panel"><SectionTitle title="Release 与数据" description="受控的官方发布来源" /><dl className="facts-list"><div><dt>Agent Release</dt><dd>{settings.agentReleaseVersion ?? "Unavailable"}</dd></div>{Object.entries(settings.backendReleases).map(([name, version]) => <div key={name}><dt>{name}</dt><dd>{version}</dd></div>)}<div><dt>数据目录</dt><dd>{settings.dataDirectory}</dd></div><div><dt>数据库</dt><dd>{formatBytes(settings.databaseSizeBytes)}</dd></div></dl></section>
+          {account && <PasskeyPanel api={api} setError={setError} />}
           <SubscriptionTemplatePanel api={api} setError={setError} />
           <CertificatePanel api={api} certificates={certificates} setCertificates={setCertificates} setError={setError} />
           <BackupPanel api={api} setError={setError} />
@@ -2873,7 +2876,7 @@ function UserEditor({
   return (
     <Modal
       title={value.user ? `编辑 ${value.user.username}` : "添加用户"}
-      description="密码至少 12 个字符。用户能用哪些服务由所在用户组决定。"
+      description="密码至少 6 个字符。用户能用哪些服务由所在用户组决定。"
       close={close}
     >
       <form className="modal-form" onSubmit={(event) => void save(event)}>
@@ -2894,7 +2897,7 @@ function UserEditor({
             {value.user ? "新密码（留空则不修改）" : "密码"}
             <input
               required={!value.user}
-              minLength={12}
+              minLength={6}
               type="password"
               value={form.password}
               onInput={(event) =>

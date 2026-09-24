@@ -8,9 +8,10 @@ using Microsoft.Data.Sqlite;
 internal static class UserEndpoints
 {
     internal const long MaximumBrowserSafeBytes = 9_007_199_254_740_991;
+    internal const int MinimumPasswordLength = 6;
     public static void Map(IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapPost("/api/auth/v1/login", LoginAsync);
+        endpoints.MapPost("/api/auth/v1/login", LoginAsync).RequireRateLimiting("login");
         endpoints.MapPost("/api/auth/v1/logout", LogoutAsync);
         endpoints.MapGet("/api/user/v1/me", MeAsync);
         endpoints.MapGet("/api/admin/v1/users", GetUsersAsync);
@@ -35,10 +36,16 @@ internal static class UserEndpoints
         PasswordService passwords, TimeProvider time, CancellationToken ct)
     {
         if (!TryUsername(request.Username, out _, out var normalized) ||
-            request.Password is not { Length: >= 12 and <= 256 }) return Results.Unauthorized();
+            request.Password is not { Length: >= 1 and <= 256 }) return Results.Unauthorized();
         var (user, hash) = await repository.GetLoginUserAsync(normalized, ct);
         if (user is null || hash is null || !user.Enabled || user.ExpiresAtUtc <= time.GetUtcNow() ||
             !passwords.Verify(request.Password, hash)) return Results.Unauthorized();
+        return await IssueSessionAsync(user, repository, time, ct);
+    }
+
+    internal static async Task<IResult> IssueSessionAsync(UserRecord user, SqliteServerRepository repository,
+        TimeProvider time, CancellationToken ct)
+    {
         var expiry = time.GetUtcNow().AddHours(24);
         var issue = await repository.CreateSessionAsync(user, NewToken(), expiry, ct);
         return Results.Json(new LoginResponse(issue.Token, issue.ExpiresAtUtc, ToResponse(issue.User)),
@@ -79,7 +86,7 @@ internal static class UserEndpoints
         var access = await authorization.AuthorizeAsync(request, ct);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
         if (!TryUsername(body.Username, out var username, out var normalized) ||
-            body.Password is not { Length: >= 12 and <= 256 } || body.Role is not ("Admin" or "User") ||
+            body.Password is not { Length: >= MinimumPasswordLength and <= 256 } || body.Role is not ("Admin" or "User") ||
             !IsValidTrafficLimit(body.TrafficLimitBytes)) return Results.BadRequest();
         try
         {
@@ -104,7 +111,7 @@ internal static class UserEndpoints
         var access = await authorization.AuthorizeAsync(request, ct);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
         if (!TryUsername(body.Username, out var username, out var normalized) ||
-            body.Password is not null and not { Length: >= 12 and <= 256 } || body.Role is not ("Admin" or "User") ||
+            body.Password is not null and not { Length: >= MinimumPasswordLength and <= 256 } || body.Role is not ("Admin" or "User") ||
             !IsValidTrafficLimit(body.TrafficLimitBytes)) return Results.BadRequest();
         try
         {

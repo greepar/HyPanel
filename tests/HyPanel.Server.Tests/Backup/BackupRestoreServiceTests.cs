@@ -278,7 +278,7 @@ public sealed class BackupRestoreServiceTests
         await using (var command = connection.CreateCommand())
         {
             command.CommandText =
-                "ALTER TABLE agents DROP COLUMN public_ipv4; DROP TABLE certificates; DROP TABLE revoked_agents; ALTER TABLE users DROP COLUMN subscription_token_nonce; ALTER TABLE users DROP COLUMN subscription_token_ciphertext; ALTER TABLE users DROP COLUMN subscription_token_tag; DROP TABLE user_group_services; DROP TABLE user_groups; ALTER TABLE users DROP COLUMN group_id; ALTER TABLE global_settings DROP COLUMN mihomo_template; ALTER TABLE service_instances DROP COLUMN control_port; DELETE FROM schema_migrations WHERE version IN (12,13,14,15,16,17,18,19,20);";
+                "ALTER TABLE agents DROP COLUMN public_ipv4; DROP TABLE certificates; DROP TABLE revoked_agents; ALTER TABLE users DROP COLUMN subscription_token_nonce; ALTER TABLE users DROP COLUMN subscription_token_ciphertext; ALTER TABLE users DROP COLUMN subscription_token_tag; DROP TABLE user_group_services; DROP TABLE user_groups; ALTER TABLE users DROP COLUMN group_id; ALTER TABLE global_settings DROP COLUMN mihomo_template; ALTER TABLE service_instances DROP COLUMN control_port; DROP TABLE user_passkeys; DELETE FROM schema_migrations WHERE version IN (12,13,14,15,16,17,18,19,20,21);";
             await command.ExecuteNonQueryAsync();
         }
         SqliteConnection.ClearAllPools();
@@ -308,7 +308,7 @@ public sealed class BackupRestoreServiceTests
         await using (var mutation = connection.CreateCommand())
         {
             mutation.CommandText =
-                "ALTER TABLE agents DROP COLUMN public_ipv4; DELETE FROM schema_migrations WHERE version IN (12,13,14,15,16,17,18,19,20); DELETE FROM nodes;";
+                "ALTER TABLE agents DROP COLUMN public_ipv4; DELETE FROM schema_migrations WHERE version IN (12,13,14,15,16,17,18,19,20,21); DELETE FROM nodes;";
             await mutation.ExecuteNonQueryAsync();
         }
         SqliteConnection.ClearAllPools();
@@ -321,7 +321,7 @@ public sealed class BackupRestoreServiceTests
         await using (var restoreVersion = connection.CreateCommand())
         {
             restoreVersion.CommandText =
-                "INSERT INTO schema_migrations(version,applied_at_utc) VALUES (12,@now),(13,@now),(14,@now),(15,@now),(16,@now),(17,@now),(18,@now),(19,@now),(20,@now);";
+                "INSERT INTO schema_migrations(version,applied_at_utc) VALUES (12,@now),(13,@now),(14,@now),(15,@now),(16,@now),(17,@now),(18,@now),(19,@now),(20,@now),(21,@now);";
             restoreVersion.Parameters.AddWithValue("@now", fixture.Time.GetUtcNow().ToString("O"));
             await restoreVersion.ExecuteNonQueryAsync();
         }

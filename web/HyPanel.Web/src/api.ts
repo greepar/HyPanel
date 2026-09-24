@@ -7,11 +7,13 @@ export class ApiError extends Error {
 export class ApiClient {
   constructor(private token: () => string, private unauthorized: () => void) {}
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const bearer = path === '/api/auth/v1/login' ? '' : this.token()
+    // Sign-in endpoints are anonymous: they never carry a token and a 401 there means bad credentials.
+    const anonymous = path === '/api/auth/v1/login' || path.startsWith('/api/auth/v1/passkey/')
+    const bearer = anonymous ? '' : this.token()
     const response = await fetch(path, { ...init, headers: { ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}), ...init.headers } })
     if (!response.ok) {
-      if (response.status === 401 && path !== '/api/auth/v1/login') this.unauthorized()
-      const labels: Record<number, string> = { 400: '提交内容无效，请检查表单。', 401: '登录已失效，请重新登录。', 403: '当前账户没有此操作权限。', 404: '请求的资源不存在。', 409: '名称或状态发生冲突。' }
+      if (response.status === 401 && !anonymous) this.unauthorized()
+      const labels: Record<number, string> = { 400: '提交内容无效，请检查表单。', 401: anonymous ? '用户名、密码或通行密钥不正确。' : '登录已失效，请重新登录。', 403: '当前账户没有此操作权限。', 404: '请求的资源不存在。', 409: '名称或状态发生冲突。', 429: '尝试次数过多，请几分钟后再试。' }
       // Prefer a specific reason when the Server provides one ({ "error": "..." }).
       let detail: string | undefined
       try { const body = await response.json() as { error?: unknown }; if (typeof body?.error === 'string') detail = body.error } catch { /* no JSON body */ }

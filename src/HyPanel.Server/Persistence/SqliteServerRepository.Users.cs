@@ -225,7 +225,7 @@ internal sealed partial class SqliteServerRepository
         try
         {
             await IncrementBoundNodeRevisionsAsync(c, tx, id, ct);
-            foreach (var table in new[] { "usage_totals", "user_service_credentials", "user_service_bindings", "user_sessions" })
+            foreach (var table in new[] { "usage_totals", "user_service_credentials", "user_service_bindings", "user_sessions", "user_passkeys" })
             {
                 await using var child = c.CreateCommand();
                 child.Transaction = tx;

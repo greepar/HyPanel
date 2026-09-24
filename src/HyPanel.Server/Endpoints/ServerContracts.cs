@@ -109,6 +109,18 @@ internal sealed record UserResponse(
 
 internal sealed record LoginResponse(string Token, DateTimeOffset ExpiresAtUtc, UserResponse User);
 
+/// <summary>WebAuthn ceremony options; binary values are base64url. User fields are set only for registration.</summary>
+internal sealed record PasskeyOptionsResponse(string ChallengeId, string Challenge, string RpId, string RpName,
+    string? UserHandle, string? UserName, string[] ExcludeCredentialIds);
+
+internal sealed record PasskeyRegisterRequest(string ChallengeId, string? Name, string CredentialId,
+    string ClientDataJson, string AuthenticatorData, string PublicKey, int Algorithm);
+
+internal sealed record PasskeyLoginRequest(string ChallengeId, string CredentialId, string ClientDataJson,
+    string AuthenticatorData, string Signature, string? UserHandle);
+
+internal sealed record PasskeyResponse(string Id, string Name, DateTimeOffset CreatedAtUtc, DateTimeOffset? LastUsedAtUtc);
+
 internal sealed record CreateUserRequest(
     string Username,
     string Password,

@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 20;
+    public const long CurrentSchemaVersion = 21;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -25,6 +25,7 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
     private const long SubscriptionTemplateSchemaVersion = 18;
     private const long CertificateSourceStatusSchemaVersion = 19;
     private const long StableControlPortSchemaVersion = 20;
+    private const long PasskeysSchemaVersion = 21;
     public const string DefaultGroupId = "00000000-0000-0000-0000-000000000001";
 
     public async Task MigrateAsync(CancellationToken cancellationToken)
@@ -540,6 +541,27 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             insertMigration.CommandText =
                 "INSERT INTO schema_migrations (version,applied_at_utc) VALUES (@version,@at);";
             insertMigration.Parameters.AddWithValue("@version", StableControlPortSchemaVersion);
+            insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+            await insertMigration.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, PasskeysSchemaVersion, cancellationToken))
+        {
+            // WebAuthn passkeys: id is the base64url credential id, public_key the SubjectPublicKeyInfo DER.
+            await ExecuteAsync(connection, transaction, """
+                CREATE TABLE user_passkeys (
+                    id TEXT NOT NULL PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL,
+                    public_key BLOB NOT NULL, algorithm INTEGER NOT NULL, sign_count INTEGER NOT NULL,
+                    created_at_utc TEXT NOT NULL, last_used_at_utc TEXT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE RESTRICT
+                );
+                CREATE INDEX ix_user_passkeys_user ON user_passkeys (user_id);
+                """, cancellationToken);
+            await using var insertMigration = connection.CreateCommand();
+            insertMigration.Transaction = transaction;
+            insertMigration.CommandText =
+                "INSERT INTO schema_migrations (version,applied_at_utc) VALUES (@version,@at);";
+            insertMigration.Parameters.AddWithValue("@version", PasskeysSchemaVersion);
             insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
             await insertMigration.ExecuteNonQueryAsync(cancellationToken);
         }

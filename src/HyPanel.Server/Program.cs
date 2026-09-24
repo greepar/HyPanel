@@ -37,6 +37,7 @@ public static class Program
         builder.Services.AddSingleton<AgentAuthentication>();
         builder.Services.AddSingleton<UserAuthentication>();
         builder.Services.AddSingleton<PasswordService>();
+        builder.Services.AddSingleton<WebAuthn>();
         builder.Services.AddSingleton<ProxyCredentialProtector>();
         builder.Services.AddSingleton<ServerProcessControl>();
         builder.Services.AddSingleton<ServerOperationCoordinator>();
@@ -58,16 +59,31 @@ public static class Program
         builder.Services.AddSingleton<BackendReleaseSyncWorker>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<BackendReleaseSyncWorker>());
         builder.Services.AddSingleton<InstallCodeService>();
-        builder.Services.AddRateLimiter(options => options.AddPolicy("install-code", context =>
-            RateLimitPartition.GetFixedWindowLimiter(
-                context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-                static _ => new FixedWindowRateLimiterOptions
-                {
-                    PermitLimit = 10,
-                    Window = TimeSpan.FromMinutes(1),
-                    QueueLimit = 0,
-                    AutoReplenishment = true
-                })));
+        builder.Services.AddRateLimiter(options =>
+        {
+            options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+            options.AddPolicy("install-code", context =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                    static _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = 10,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueLimit = 0,
+                        AutoReplenishment = true
+                    }));
+            // Password and passkey sign-in: short passwords are allowed, so guessing is bounded per client address.
+            options.AddPolicy("login", context =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                    static _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = 20,
+                        Window = TimeSpan.FromMinutes(5),
+                        QueueLimit = 0,
+                        AutoReplenishment = true
+                    }));
+        });
 
         var app = builder.Build();
         Directory.CreateDirectory(ServerDataDirectory.Resolve(app.Configuration));
@@ -110,6 +126,7 @@ public static class Program
         AgentEnrollmentEndpoints.Map(app);
         AgentSyncEndpoints.Map(app);
         UserEndpoints.Map(app);
+        PasskeyEndpoints.Map(app);
         SubscriptionEndpoints.Map(app);
         ReleaseEndpoints.Map(app);
         ServerUpdateEndpoints.Map(app);
