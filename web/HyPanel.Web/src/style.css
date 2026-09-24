@@ -57,12 +57,18 @@ code, .mono { font-family: var(--mono); font-size: .92em }
 .brand-lockup svg { display: block; flex: 0 0 auto }
 .brand-mark-svg { border-radius: 22%; box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 8%, transparent) }
 .brand:hover .brand-wordmark { opacity: .85 }
-.login-brand { margin-bottom: 28px }
 .splash { display: grid; min-height: 60vh; place-content: center; justify-items: center; gap: 18px; color: var(--muted) }
 .splash > span { display: inline-flex; align-items: center; gap: 10px; font-size: 13px }
 .splash .spinner { display: inline-block }
 .topbar-actions, .row-actions, .page-actions, .modal-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap }
 .user-menu { position: relative }
+.theme-switch { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2) }
+.theme-switch button { display: grid; width: 28px; height: 28px; place-items: center; padding: 0; border: 0; border-radius: 999px; color: var(--muted); background: transparent; cursor: pointer }
+.theme-switch button:hover { color: var(--text) }
+.theme-switch button.active { color: var(--text); background: var(--surface); box-shadow: 0 1px 2px rgba(0,0,0,.12) }
+.user-menu-identity { display: grid; gap: 2px; margin-bottom: 4px; padding: 8px 8px 10px; border-bottom: 1px solid var(--border) }
+.user-menu-identity strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap }
+.user-menu-identity small { color: var(--faint); font-size: 11px }
 .user-menu summary { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px 0 4px; border: 1px solid transparent; border-radius: 999px; cursor: pointer; font-size: 13px; font-weight: 500; list-style: none }
 .user-menu summary:hover, .user-menu[open] summary { border-color: var(--border); background: var(--surface-2) }
 .user-menu summary::-webkit-details-marker { display: none }
@@ -411,11 +417,12 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 
 /* ---------- auth & subscription ---------- */
 .auth-main { width: min(1120px, calc(100% - 48px)); margin: 0 auto }
-.login-layout { display: grid; min-height: calc(100vh - var(--topbar)); grid-template-columns: minmax(0, 1.15fr) minmax(360px, .85fr); gap: 8vw; align-items: center; padding: 48px 0 }
-.login-copy h1 { max-width: 620px; margin-bottom: 16px; font-size: clamp(34px, 4.4vw, 52px); font-weight: 650; line-height: 1.12; letter-spacing: -.035em }
-.login-copy > p:last-child { max-width: 500px; color: var(--muted); font-size: 16px }
-.login-card { display: grid; gap: 18px; padding: 28px; box-shadow: var(--shadow) }
-.login-card h2 { font-size: 20px }
+.login-layout { display: grid; min-height: calc(100vh - var(--topbar)); place-items: center; padding: 48px 0 }
+.login-card { display: grid; width: min(400px, 100%); gap: 16px; padding: 32px 28px 28px; box-shadow: var(--shadow) }
+.login-head { display: grid; justify-items: center; gap: 6px; margin-bottom: 4px; text-align: center }
+.login-head svg { margin-bottom: 8px }
+.login-head h2 { font-size: 20px }
+.login-head p { margin: 0 }
 .login-card .segmented { display: flex; width: 100% }
 .login-card .segmented button { flex: 1 }
 .subscription-delivery { display: grid; grid-template-columns: minmax(0, 1fr) 230px; align-items: start }
@@ -469,8 +476,7 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 }
 @media (max-width: 960px) {
   .stats-grid.four { grid-template-columns: repeat(2, 1fr) }
-  .overview-grid, .login-layout { grid-template-columns: 1fr }
-  .login-copy { padding-top: 24px }
+  .overview-grid { grid-template-columns: 1fr }
   .user-grid, .group-services fieldset { grid-template-columns: 1fr }
   .backend-picker { grid-template-columns: repeat(2, 1fr) }
   .endpoint-form { grid-template-columns: 1fr 1fr }
@@ -510,7 +516,6 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
   .qr-panel { margin: 0 20px 16px }
   .auth-main { width: calc(100% - 32px) }
   .login-layout { min-height: 0; padding: 32px 0 }
-  .login-copy h1 { font-size: 32px }
   .usage-list > div { grid-template-columns: 1fr 1fr }
   .usage-list code, .usage-list strong { grid-column: 1 / -1; text-align: left }
   .telemetry-row { grid-template-columns: repeat(2, minmax(0, 1fr)) }
