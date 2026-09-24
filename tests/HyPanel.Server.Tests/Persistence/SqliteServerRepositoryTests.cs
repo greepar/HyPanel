@@ -571,6 +571,26 @@ public sealed class SqliteServerRepositoryTests
         Assert.AreEqual(1, await fixture.Repository.ResetDueTrafficAsync(CancellationToken.None));
     }
 
+    [TestMethod]
+    public async Task ResetTraffic_ClearsUsageImmediately()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        var agentId = await CreateAgentAsync(fixture, nodeId, "now-token", "now-secret");
+        var user = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Eve", "eve", "password-hash", "User",
+            true, 100, null, "subscription", CancellationToken.None);
+        var service = XrayService(CreateService(nodeId, Guid.NewGuid(), "now"));
+        await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
+        Assert.IsTrue(await fixture.Repository.BindServiceAsync(user.User.Id, service.Id, CancellationToken.None));
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "2.0", "linux-x64", 1, null, [], [],
+            CancellationToken.None, [new UsageBatch(Guid.NewGuid(), fixture.Time.GetUtcNow(),
+                [new UserUsageDelta(user.User.Id, service.Id, 70, 70)])]));
+
+        Assert.IsTrue(await fixture.Repository.ResetTrafficAsync(user.User.Id, CancellationToken.None));
+        Assert.AreEqual(0, (await fixture.Repository.GetUsageTotalsAsync(user.User.Id, null, CancellationToken.None)).Count);
+        Assert.IsFalse(await fixture.Repository.ResetTrafficAsync(Guid.NewGuid(), CancellationToken.None));
+    }
+
     [DataTestMethod]
     [DataRow("2026-09-09T12:00:00Z", 10, "2026-08-10T00:00:00Z")]
     [DataRow("2026-09-10T00:00:00Z", 10, "2026-09-10T00:00:00Z")]

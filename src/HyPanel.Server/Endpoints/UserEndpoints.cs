@@ -21,6 +21,7 @@ internal static class UserEndpoints
         endpoints.MapPut("/api/admin/v1/users/{id:guid}", UpdateUserAsync);
         endpoints.MapDelete("/api/admin/v1/users/{id:guid}", DeleteUserAsync);
         endpoints.MapPost("/api/admin/v1/users/{id:guid}/subscription-token/rotate", RotateAsync);
+        endpoints.MapPost("/api/admin/v1/users/{id:guid}/traffic/reset", ResetTrafficAsync);
         endpoints.MapGet("/api/admin/v1/users/{id:guid}/subscription-token", GetTokenAsync);
         endpoints.MapGet("/api/admin/v1/users/{id:guid}/services", GetServicesAsync);
         endpoints.MapGet("/api/admin/v1/users/{id:guid}/service-access", GetServiceAccessAsync);
@@ -171,6 +172,14 @@ internal static class UserEndpoints
             ? Results.NotFound()
             : Results.Json(new RotateSubscriptionTokenResponse(token),
                 ServerJsonSerializerContext.Default.RotateSubscriptionTokenResponse);
+    }
+
+    private static async Task<IResult> ResetTrafficAsync(Guid id, HttpRequest request, AdminAuthorization authorization,
+        SqliteServerRepository repository, CancellationToken ct)
+    {
+        var access = await authorization.AuthorizeAsync(request, ct);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        return await repository.ResetTrafficAsync(id, ct) ? Results.NoContent() : Results.NotFound();
     }
 
     private static async Task<IResult> GetServicesAsync(Guid id, HttpRequest request, AdminAuthorization authorization,

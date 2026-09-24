@@ -91,6 +91,8 @@ code, .mono { font-family: var(--mono); font-size: .92em }
 .nav-item.active { color: var(--text); background: var(--surface-3); font-weight: 600 }
 .sidebar-footer { display: flex; margin-top: auto; padding: 14px 16px; border-top: 1px solid var(--border) }
 .mobile-only { display: none }
+.stack-panel { display: flex; flex-direction: column }
+.card-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; padding-top: 16px }
 
 .main { min-width: 0 }
 .page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; width: min(1200px, calc(100% - 64px)); margin: 0 auto; padding: 28px 0 20px }
@@ -533,3 +535,4 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
   .backup-row .row-actions { width: 100% }
   .snapshot-row { grid-template-columns: 1fr }
 }
+.modal-action-start { margin-right: auto }

@@ -139,22 +139,39 @@ function SettingsPage({ api, setError, account }: PageProps & { account: boolean
   };
   useEffect(() => { void load(); }, []);
   const server = settings?.server;
+  // "检查更新" asks GitHub for the latest release; only after a check that finds one does the button offer to update.
+  const [checked, setChecked] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const check = async () => {
+    setChecking(true);
+    try {
+      const next = await api.serverUpdate();
+      setSettings((current) => (current ? { ...current, server: next } : current));
+      setChecked(true);
+      if (!next.updateAvailable) setError(`已是最新版本 ${next.currentVersion}。`);
+    } catch (reason) { setError(messageFor(reason, "无法检查更新")); }
+    finally { setChecking(false); }
+  };
   const update = async () => {
     if (!server?.latestVersion || !confirm(`更新 Server 到 ${server.latestVersion}？服务会短暂重启。`)) return;
-    try { const result = await api.updateServer(); setError(`Server ${result.version} 更新已开始。`); }
+    try { const result = await api.updateServer(); setError(`Server ${result.version} 更新已开始，完成后刷新页面。`); }
     catch (reason) { setError(messageFor(reason, "无法更新 Server")); }
   };
+  const statusLabels: Record<string, string> = { Idle: "正常", Succeeded: "正常", Downloading: "正在下载", Applying: "正在应用", Failed: "失败" };
+  const updating = server?.status === "Downloading" || server?.status === "Applying";
   const save = async () => { if (!settings) return; try { await api.updateSettings(settings); setError("全局设置已保存。"); await load(true); } catch (reason) { setError(messageFor(reason, "无法保存设置")); } };
   if (loading || !server || !settings)
-    return <Page title="设置" description="控制面更新、Release 来源和数据目录。"><Loading /></Page>;
+    return <Page title="设置"><Loading /></Page>;
   return (
-    <Page title="设置" description="控制面更新、Release 来源和数据目录。">
+    <Page title="设置">
       <div className="detail-grid">
-        <section className="card panel">
+        <section className="card panel stack-panel">
           <SectionTitle title="Server 版本" description={server.deploymentMode === "Docker" ? "容器由外部编排更新，HyPanel 不访问 Docker daemon。" : "Bare-metal Server 使用 size、SHA256 和 self-test 校验。"} />
-          <dl className="facts-list"><div><dt>当前版本</dt><dd>{server.currentVersion}</dd></div><div><dt>最新版本</dt><dd>{server.latestVersion ?? "暂不可用"}</dd></div><div><dt>部署方式</dt><dd>{server.deploymentMode}</dd></div><div><dt>状态</dt><dd>{server.status}</dd></div></dl>
+          <dl className="facts-list"><div><dt>当前版本</dt><dd>{server.currentVersion}</dd></div><div><dt>最新版本</dt><dd>{server.latestVersion ?? "暂不可用"}</dd></div><div><dt>部署方式</dt><dd>{server.deploymentMode}</dd></div><div><dt>状态</dt><dd>{statusLabels[server.status] ?? server.status}</dd></div></dl>
           {server.error && <Notice kind="error">{server.error}</Notice>}
-          {server.deploymentMode === "Docker" ? <Notice>发现新镜像时运行 <code>docker compose pull &amp;&amp; docker compose up -d</code>。</Notice> : <div className="section-toolbar"><button className="button button-primary" type="button" disabled={!server.updateAvailable || server.status === "Downloading" || server.status === "Applying"} onClick={() => void update()}>更新 Server</button></div>}
+          {server.deploymentMode === "Docker" ? <Notice>发现新镜像时运行 <code>docker compose pull &amp;&amp; docker compose up -d</code>。</Notice> : <div className="card-actions">{checked && server.updateAvailable
+            ? <button className="button button-primary" type="button" disabled={updating} onClick={() => void update()}>{updating ? "正在更新…" : `立即更新到 ${server.latestVersion}`}</button>
+            : <button className="button button-secondary" type="button" disabled={checking || updating} onClick={() => void check()}>{checking ? "正在检查…" : "检查更新"}</button>}</div>}
         </section>
         <section className="card panel"><SectionTitle title="自动更新" description="新建节点和服务时的默认策略；已有节点可在节点设置里单独开关。" /><div className="modal-form"><label className="switch"><input type="checkbox" checked={settings.agentUpdateDefaultPolicy === "Auto"} onChange={event => setSettings({ ...settings, agentUpdateDefaultPolicy: event.currentTarget.checked ? "Auto" : "Manual" })} /><span />新节点自动更新 Agent</label><label className="switch"><input type="checkbox" checked={settings.backendUpdateDefaultPolicy === "Auto"} onChange={event => setSettings({ ...settings, backendUpdateDefaultPolicy: event.currentTarget.checked ? "Auto" : "Manual" })} /><span />新服务自动更新代理内核</label><label>GitHub 镜像地址<input placeholder="留空使用 GitHub 官方源" value={settings.githubMirrorBaseUrl ?? ""} onInput={event => setSettings({ ...settings, githubMirrorBaseUrl: event.currentTarget.value || null })} /></label><button className="button button-primary" type="button" onClick={() => void save()}>保存设置</button></div></section>
          <section className="card panel"><SectionTitle title="Release 与数据" description="受控的官方发布来源" /><dl className="facts-list"><div><dt>Agent Release</dt><dd>{settings.agentReleaseVersion ?? "Unavailable"}</dd></div>{Object.entries(settings.backendReleases).map(([name, version]) => <div key={name}><dt>{name}</dt><dd>{version}</dd></div>)}<div><dt>数据目录</dt><dd>{settings.dataDirectory}</dd></div><div><dt>数据库</dt><dd>{formatBytes(settings.databaseSizeBytes)}</dd></div></dl></section>
@@ -441,7 +458,6 @@ function OverviewPage({ api, setError }: PageProps) {
     return (
       <Page
         title="概览"
-        description="节点连通性、配置收敛和服务运行状态。"
       >
         <ErrorState message={loadError} retry={() => void load()} />
       </Page>
@@ -449,7 +465,6 @@ function OverviewPage({ api, setError }: PageProps) {
   return (
     <Page
       title="概览"
-      description="节点连通性、配置收敛和服务运行状态。"
       actions={
         <button
           className="button button-secondary"
@@ -681,7 +696,6 @@ function NodesPage({ api, setError }: PageProps) {
     return (
       <Page
         title="节点"
-        description="每个节点运行一个 Agent，可承载多个独立的代理服务。"
       >
         <ErrorState message={loadError} retry={() => void load()} />
       </Page>
@@ -689,7 +703,6 @@ function NodesPage({ api, setError }: PageProps) {
   return (
     <Page
       title="节点"
-      description="每个节点运行一个 Agent，可承载多个独立的代理服务。"
       actions={
         <>
           {updateable.length > 0 && (
@@ -1189,7 +1202,7 @@ function NodeDetailPage({
     );
   if (loading || !node)
     return (
-      <Page title="节点详情" description="正在读取节点。">
+      <Page title="节点详情">
         <Loading />
       </Page>
     );
@@ -2417,7 +2430,7 @@ function UsersPage({ api, setError }: PageProps) {
     form: UserForm;
   } | null>(null);
   const [token, setToken] = useState<{
-    username: string;
+    user: User;
     value: string;
     fresh: boolean;
   } | null>(null);
@@ -2468,7 +2481,7 @@ function UsersPage({ api, setError }: PageProps) {
       } else {
         const result = await api.createUser(userPayload(editor.form));
         setToken({
-          username: result.user.username,
+          user: result.user,
           value: result.subscriptionToken,
           fresh: true,
         });
@@ -2502,7 +2515,7 @@ function UsersPage({ api, setError }: PageProps) {
         `/api/admin/v1/users/${user.id}/subscription-token/rotate`,
         { method: "POST" },
       );
-      setToken({ username: user.username, value: result.subscriptionToken, fresh: true });
+      setToken({ user, value: result.subscriptionToken, fresh: true });
     } catch (reason) {
       setError(messageFor(reason, "无法轮换令牌"));
     } finally {
@@ -2510,12 +2523,22 @@ function UsersPage({ api, setError }: PageProps) {
       setRotatingUserId(null);
     }
   };
+  const resetTraffic = async (user: User) => {
+    if (!confirm(`立即清零“${user.username}”的已用流量？因超额停用的服务会恢复。`)) return;
+    try {
+      await api.request<void>(`/api/admin/v1/users/${user.id}/traffic/reset`, { method: "POST" });
+      await load(true);
+      setError(`已重置 ${user.username} 的流量。`);
+    } catch (reason) {
+      setError(messageFor(reason, "无法重置流量"));
+    }
+  };
   const showLink = async (user: User) => {
     try {
       const result = await api.request<{ subscriptionToken: string }>(
         `/api/admin/v1/users/${user.id}/subscription-token`,
       );
-      setToken({ username: user.username, value: result.subscriptionToken, fresh: false });
+      setToken({ user, value: result.subscriptionToken, fresh: false });
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 404) {
         if (confirm(`“${user.username}”的订阅链接由旧版本签发，无法再次显示。要签发新链接吗？旧链接会失效。`))
@@ -2576,7 +2599,6 @@ function UsersPage({ api, setError }: PageProps) {
     return (
       <Page
         title="用户与访问"
-        description="按用户组分配可用服务，管理账户、流量限制和订阅链接。"
       >
         <ErrorState message={loadError} retry={() => void load()} />
       </Page>
@@ -2584,7 +2606,6 @@ function UsersPage({ api, setError }: PageProps) {
   return (
     <Page
       title="用户与访问"
-      description="按用户组分配可用服务，管理账户、流量限制和订阅链接。"
       actions={
         <>
           <button
@@ -2746,10 +2767,10 @@ function UsersPage({ api, setError }: PageProps) {
                   <button
                     className="link-button"
                     type="button"
-                    disabled={rotatingUserId !== null}
-                    onClick={() => void rotate(user)}
+                    disabled={total === 0}
+                    onClick={() => void resetTraffic(user)}
                   >
-                    {rotatingUserId === user.id ? "正在重置…" : "重置链接"}
+                    重置流量
                   </button>
                 </footer>
               </article>
@@ -2851,12 +2872,15 @@ function UsersPage({ api, setError }: PageProps) {
       )}
       {token && (
         <Modal
-          title={`${token.username} 的订阅链接`}
+          title={`${token.user.username} 的订阅链接`}
           description={token.fresh ? "新链接已生效（如有旧链接则已失效），之后可随时在这里再次查看。" : "随时可以在这里再次查看，不会影响已导入的客户端。"}
           close={() => setToken(null)}
         >
           <SubscriptionLinks token={token.value} setError={setError} />
           <footer className="modal-actions">
+            <button className="button button-secondary modal-action-start" type="button" disabled={rotatingUserId !== null} onClick={() => void rotate(token.user)}>
+              {rotatingUserId === token.user.id ? "正在重置…" : "重置链接"}
+            </button>
             <button className="button button-primary" type="button" onClick={() => setToken(null)}>
               完成
             </button>

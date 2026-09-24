@@ -62,7 +62,6 @@ export function SubscriptionPage({ api, setError }: { api: ApiClient; setError: 
   return <Page
     eyebrow="订阅中心"
     title="我的订阅"
-    description="复制订阅链接导入客户端，并查看额度与用量。"
     actions={<button className="button button-secondary" type="button" disabled={loading || rotating} onClick={() => void rotate()}>{rotating ? '正在重置…' : tokenMissing ? '签发订阅链接' : '重置链接'}</button>}
   >
     {loading ? <Loading /> : loadError ? <ErrorState message={loadError} retry={() => void load()} /> : me ? <>

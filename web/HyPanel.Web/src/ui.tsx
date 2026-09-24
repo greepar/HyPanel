@@ -71,8 +71,8 @@ export function Toast({ message, kind, duration, dismiss }: { message: string; k
   </div>
 }
 
-export function Page({ title, description, actions, children, eyebrow }: { title: ComponentChildren; description: ComponentChildren; actions?: ComponentChildren; children: ComponentChildren; eyebrow?: ComponentChildren }) {
-  return <><header className="page-header"><div>{eyebrow && <p className="eyebrow">{eyebrow}</p>}<h1>{title}</h1><p>{description}</p></div>{actions && <div className="page-actions">{actions}</div>}</header><div className="page-content">{children}</div></>
+export function Page({ title, description, actions, children, eyebrow }: { title: ComponentChildren; description?: ComponentChildren; actions?: ComponentChildren; children: ComponentChildren; eyebrow?: ComponentChildren }) {
+  return <><header className="page-header"><div>{eyebrow && <p className="eyebrow">{eyebrow}</p>}<h1>{title}</h1>{description && <p>{description}</p>}</div>{actions && <div className="page-actions">{actions}</div>}</header><div className="page-content">{children}</div></>
 }
 
 export function Loading({ label = '正在加载…' }: { label?: string }) { return <div className="state" role="status"><span className="spinner" />{label}</div> }

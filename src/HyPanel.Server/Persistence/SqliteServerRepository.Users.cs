@@ -775,22 +775,44 @@ internal sealed partial class SqliteServerRepository
             }
         }
 
-        foreach (var userId in due)
-        {
-            await using var tx = (SqliteTransaction)await c.BeginTransactionAsync(ct);
-            await using (var clear = c.CreateCommand())
-            {
-                clear.Transaction = tx;
-                clear.CommandText = "DELETE FROM usage_totals WHERE user_id=@id; UPDATE users SET traffic_reset_at_utc=@now WHERE id=@id;";
-                clear.Parameters.AddWithValue("@id", userId.ToString("D"));
-                clear.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(now));
-                await clear.ExecuteNonQueryAsync(ct);
-            }
-            await IncrementBoundNodeRevisionsAsync(c, tx, userId, ct);
-            await tx.CommitAsync(ct);
-        }
-
+        foreach (var userId in due) await ResetTrafficAsync(c, userId, now, ct);
         return due.Count;
+    }
+
+    /// <summary>Clears the user's usage now; with a monthly reset day the current period restarts too.</summary>
+    public async Task<bool> ResetTrafficAsync(Guid userId, CancellationToken ct)
+    {
+        await using var c = await connectionFactory.OpenAsync(ct);
+        return await ResetTrafficAsync(c, userId, timeProvider.GetUtcNow(), ct);
+    }
+
+    private static async Task<bool> ResetTrafficAsync(SqliteConnection c, Guid userId, DateTimeOffset now,
+        CancellationToken ct)
+    {
+        await using var tx = (SqliteTransaction)await c.BeginTransactionAsync(ct);
+        await using (var mark = c.CreateCommand())
+        {
+            mark.Transaction = tx;
+            mark.CommandText = "UPDATE users SET traffic_reset_at_utc=CASE WHEN traffic_reset_day IS NULL THEN NULL ELSE @now END WHERE id=@id;";
+            mark.Parameters.AddWithValue("@id", userId.ToString("D"));
+            mark.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(now));
+            if (await mark.ExecuteNonQueryAsync(ct) != 1)
+            {
+                await tx.RollbackAsync(ct);
+                return false;
+            }
+        }
+        await using (var clear = c.CreateCommand())
+        {
+            clear.Transaction = tx;
+            clear.CommandText = "DELETE FROM usage_totals WHERE user_id=@id;";
+            clear.Parameters.AddWithValue("@id", userId.ToString("D"));
+            await clear.ExecuteNonQueryAsync(ct);
+        }
+        // Credentials cut off by the traffic limit come back on the next sync.
+        await IncrementBoundNodeRevisionsAsync(c, tx, userId, ct);
+        await tx.CommitAsync(ct);
+        return true;
     }
 
     internal static DateTimeOffset LastTrafficResetBoundary(DateTimeOffset now, int day)
