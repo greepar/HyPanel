@@ -54,6 +54,8 @@ import {
   Select,
   Stat,
   usedBytes,
+  countryFlag,
+  NodeName,
 } from "./ui";
 
 type PageProps = { api: ApiClient; setError: (value: string) => void };
@@ -62,10 +64,25 @@ const emptyUser: UserForm = {
   password: "",
   role: "User",
   enabled: true,
-  trafficLimitBytes: "",
+  trafficLimitGb: "",
+  trafficResetDay: "",
   expiresAtUtc: "",
   groupId: "",
 };
+const GIB = 1024 ** 3;
+const gbFromBytes = (bytes: number | null) =>
+  bytes === null ? "" : String(Math.round((bytes / GIB) * 100) / 100);
+/** Request body for creating or updating a user from the editor form. */
+const userPayload = (form: UserForm) => ({
+  username: form.username,
+  password: form.password || null,
+  role: form.role,
+  enabled: form.enabled,
+  trafficLimitBytes: form.trafficLimitGb ? Math.round(Number(form.trafficLimitGb) * GIB) : null,
+  trafficResetDay: form.trafficResetDay ? Number(form.trafficResetDay) : null,
+  expiresAtUtc: form.expiresAtUtc ? new Date(form.expiresAtUtc).toISOString() : null,
+  groupId: form.groupId || null,
+});
 
 export function AdminApp({
   route,
@@ -1201,7 +1218,7 @@ function NodeDetailPage({
       title={
         <span className="title-with-status">
           <i className={node.online ? "online-dot" : "offline-dot"} />
-          {node.displayName}
+          <NodeName node={node} />
         </span>
       }
       description={
@@ -1754,7 +1771,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
       ) : services.length ? (
         <section className="card panel">
           <SectionTitle
-            title={node.displayName}
+            title={`${countryFlag(node.countryCode)} ${node.displayName}`.trim()}
             description={`${services.length} 个独立服务实例`}
           />
           <div className="service-list">
@@ -2423,7 +2440,7 @@ function UsersPage({ api, setError }: PageProps) {
           (await api.services(node.id)).map((service) => ({
             ...service,
             nodeId: node.id,
-            nodeName: node.displayName,
+            nodeName: `${countryFlag(node.countryCode)} ${node.displayName}`.trim(),
           })),
         ),
       );
@@ -2443,27 +2460,13 @@ function UsersPage({ api, setError }: PageProps) {
     event.preventDefault();
     if (!editor) return;
     try {
-      const expiresAtUtc = editor.form.expiresAtUtc
-        ? new Date(editor.form.expiresAtUtc).toISOString()
-        : null;
       if (editor.user) {
         await api.request(`/api/admin/v1/users/${editor.user.id}`, {
           method: "PUT",
-          body: JSON.stringify({
-            ...editor.form,
-            password: editor.form.password || null,
-            trafficLimitBytes: editor.form.trafficLimitBytes
-              ? Number(editor.form.trafficLimitBytes)
-              : null,
-            expiresAtUtc,
-            groupId: editor.form.groupId || null,
-          }),
+          body: JSON.stringify(userPayload(editor.form)),
         });
       } else {
-        const result = await api.createUser({
-          ...editor.form,
-          expiresAtUtc: expiresAtUtc ?? "",
-        });
+        const result = await api.createUser(userPayload(editor.form));
         setToken({
           username: result.user.username,
           value: result.subscriptionToken,
@@ -2532,6 +2535,7 @@ function UsersPage({ api, setError }: PageProps) {
           role: user.role,
           enabled: user.enabled,
           trafficLimitBytes: user.trafficLimitBytes,
+          trafficResetDay: user.trafficResetDay ?? null,
           expiresAtUtc: user.expiresAtUtc,
           groupId,
         }),
@@ -2683,8 +2687,8 @@ function UsersPage({ api, setError }: PageProps) {
                             password: "",
                             role: user.role,
                             enabled: user.enabled,
-                            trafficLimitBytes:
-                              user.trafficLimitBytes?.toString() ?? "",
+                            trafficLimitGb: gbFromBytes(user.trafficLimitBytes),
+                            trafficResetDay: user.trafficResetDay?.toString() ?? "",
                             expiresAtUtc: toLocalDate(user.expiresAtUtc),
                             groupId: user.groupId ?? "",
                           },
@@ -2712,6 +2716,10 @@ function UsersPage({ api, setError }: PageProps) {
                     {user.trafficLimitBytes === null
                       ? "不限"
                       : formatBytes(user.trafficLimitBytes)}
+                  </span>
+                  <span>
+                    <b>流量重置</b>
+                    {user.trafficResetDay ? `每月 ${user.trafficResetDay} 日` : "不重置"}
                   </span>
                   <span>
                     <b>有效期</b>
@@ -2929,17 +2937,33 @@ function UserEditor({
             />
           </label>
           <label>
-            流量上限（字节）
+            流量上限（GB）
             <input
               type="number"
               min="0"
-              step="1"
-              max="9007199254740991"
+              step="0.01"
+              max="8388608"
+              inputMode="decimal"
               placeholder="留空表示不限"
-              value={form.trafficLimitBytes}
+              value={form.trafficLimitGb}
               onInput={(event) =>
-                update({ trafficLimitBytes: event.currentTarget.value })
+                update({ trafficLimitGb: event.currentTarget.value })
               }
+            />
+          </label>
+          <label>
+            流量重置
+            <Select
+              ariaLabel="流量重置"
+              value={form.trafficResetDay}
+              options={[
+                { value: "", label: "不重置" },
+                ...Array.from({ length: 28 }, (_, index) => ({
+                  value: String(index + 1),
+                  label: `每月 ${index + 1} 日`,
+                })),
+              ]}
+              onChange={(value) => update({ trafficResetDay: value })}
             />
           </label>
           <label>
@@ -3000,7 +3024,7 @@ function NodeSummary({ node }: { node: Node }) {
     <div className="node-summary">
       <i className={node.online ? "online-dot" : node.agentId ? "offline-dot" : "pending-dot"} />
       <span>
-        <strong>{node.displayName}</strong>
+        <strong><NodeName node={node} /></strong>
         <small>
           {node.online ? "在线" : node.agentId ? "离线" : "等待安装"}
           {node.publicIpv4 && <span className="mono"> · {node.publicIpv4}</span>}

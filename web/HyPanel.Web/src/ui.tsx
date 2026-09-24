@@ -55,14 +55,19 @@ function ThemeSwitch({ theme, setTheme, className }: { theme: Theme; setTheme: (
   return <div className={className ? `theme-switch ${className}` : 'theme-switch'} role="radiogroup" aria-label="主题">{themes.map(value => { const Icon = value === 'light' ? Sun : value === 'dark' ? Moon : Monitor; return <button key={value} type="button" role="radio" aria-checked={theme === value} aria-label={themeLabels[value]} title={themeLabels[value]} className={theme === value ? 'active' : ''} onClick={() => setTheme(value)}><Icon size={15} /></button> })}</div>
 }
 
-/** Black-and-white toast; the bar along the bottom counts down and dismisses it (paused while hovered). */
+/**
+ * Black-and-white toast in the bottom-right corner. It springs in, the bar along the bottom counts down (paused
+ * while hovered), and it slides out before being removed.
+ */
 export function Toast({ message, kind, duration, dismiss }: { message: string; kind: 'success' | 'error'; duration: number; dismiss: () => void }) {
+  const [leaving, setLeaving] = useState(false)
   const Icon = kind === 'success' ? CircleCheck : CircleAlert
-  return <div className="toast" role={kind === 'error' ? 'alert' : 'status'}>
+  return <div className={leaving ? 'toast leaving' : 'toast'} role={kind === 'error' ? 'alert' : 'status'}
+    onAnimationEnd={event => { if (leaving && event.target === event.currentTarget) dismiss() }}>
     <Icon size={17} aria-hidden="true" />
     <span>{message}</span>
-    <button type="button" aria-label="关闭消息" onClick={dismiss}><X size={15} /></button>
-    <i className="toast-progress" style={{ '--toast-duration': `${duration}ms` }} onAnimationEnd={dismiss} />
+    <button type="button" aria-label="关闭消息" onClick={() => setLeaving(true)}><X size={15} /></button>
+    <i className="toast-progress" style={{ '--toast-duration': `${duration}ms` }} onAnimationEnd={event => { event.stopPropagation(); setLeaving(true) }} />
   </div>
 }
 
@@ -127,6 +132,16 @@ export async function copyText(value: string) {
   area.value = value; area.setAttribute('readonly', ''); area.style.position = 'fixed'; area.style.opacity = '0'
   document.body.append(area); area.select()
   try { if (!document.execCommand('copy')) throw new Error('无法复制，请手动选择文本。') } finally { area.remove() }
+}
+
+/** Flag emoji for an ISO 3166-1 alpha-2 code ("GB" → 🇬🇧); empty when unknown. */
+export const countryFlag = (code?: string | null) =>
+  code && /^[A-Za-z]{2}$/.test(code) ? String.fromCodePoint(...[...code.toUpperCase()].map(char => 0x1f1e6 + char.charCodeAt(0) - 65)) : ''
+
+/** Node name with its country flag in front. */
+export function NodeName({ node }: { node: { displayName: string; countryCode?: string | null } }) {
+  const flag = countryFlag(node.countryCode)
+  return <>{flag && <span className="flag" title={node.countryCode ?? undefined} aria-hidden="true">{flag}</span>}{node.displayName}</>
 }
 
 export const formatBytes = (value: number) => {

@@ -107,7 +107,8 @@ internal static class UserEndpoints
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
         if (!TryUsername(body.Username, out var username, out var normalized) ||
             body.Password is not { Length: >= MinimumPasswordLength and <= 256 } || body.Role is not ("Admin" or "User") ||
-            !IsValidTrafficLimit(body.TrafficLimitBytes)) return Results.BadRequest();
+            !IsValidTrafficLimit(body.TrafficLimitBytes) || body.TrafficResetDay is not (null or >= 1 and <= 28))
+            return Results.BadRequest();
         try
         {
             var issue = await repo.CreateUserAsync(Guid.NewGuid(), username, normalized, passwords.Hash(body.Password),
@@ -115,7 +116,8 @@ internal static class UserEndpoints
             // Every user belongs to a group; its service list decides what the user can use.
             if (!await repo.SetUserGroupAsync(issue.User.Id, body.GroupId ?? SqliteServerRepository.DefaultGroupId, ct))
                 await repo.SetUserGroupAsync(issue.User.Id, SqliteServerRepository.DefaultGroupId, ct);
-            return Results.Json(new CreateUserResponse(ToResponse(issue.User), issue.SubscriptionToken),
+            await repo.SetTrafficResetDayAsync(issue.User.Id, body.TrafficResetDay, ct);
+            return Results.Json(new CreateUserResponse(ToResponse(issue.User with { TrafficResetDay = body.TrafficResetDay }), issue.SubscriptionToken),
                 ServerJsonSerializerContext.Default.CreateUserResponse);
         }
         catch (SqliteException ex) when (ex.SqliteErrorCode == 19)
@@ -132,7 +134,8 @@ internal static class UserEndpoints
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
         if (!TryUsername(body.Username, out var username, out var normalized) ||
             body.Password is not null and not { Length: >= MinimumPasswordLength and <= 256 } || body.Role is not ("Admin" or "User") ||
-            !IsValidTrafficLimit(body.TrafficLimitBytes)) return Results.BadRequest();
+            !IsValidTrafficLimit(body.TrafficLimitBytes) || body.TrafficResetDay is not (null or >= 1 and <= 28))
+            return Results.BadRequest();
         try
         {
             var user = await repo.UpdateUserAsync(id, username, normalized,
@@ -140,7 +143,9 @@ internal static class UserEndpoints
                 body.TrafficLimitBytes, body.ExpiresAtUtc, ct);
             if (user is null) return Results.NotFound();
             if (body.GroupId is { } groupId && !await repo.SetUserGroupAsync(id, groupId, ct)) return Results.BadRequest();
-            return Results.Json(ToResponse(user) with { GroupId = body.GroupId }, ServerJsonSerializerContext.Default.UserResponse);
+            await repo.SetTrafficResetDayAsync(id, body.TrafficResetDay, ct);
+            return Results.Json(ToResponse(user with { TrafficResetDay = body.TrafficResetDay }) with { GroupId = body.GroupId },
+                ServerJsonSerializerContext.Default.UserResponse);
         }
         catch (SqliteException ex) when (ex.SqliteErrorCode == 19)
         {
@@ -298,7 +303,7 @@ internal static class UserEndpoints
         .Replace('+', '-').Replace('/', '_');
 
     private static UserResponse ToResponse(UserRecord u) =>
-        new(u.Id, u.Username, u.Role, u.Enabled, u.TrafficLimitBytes, u.ExpiresAtUtc);
+        new(u.Id, u.Username, u.Role, u.Enabled, u.TrafficLimitBytes, u.ExpiresAtUtc, TrafficResetDay: u.TrafficResetDay);
 
     private static UsageTotalResponse ToResponse(UsageTotalRecord u) =>
         new(u.UserId, u.ServiceId, u.UploadBytes, u.DownloadBytes, u.UpdatedAtUtc);

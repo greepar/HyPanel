@@ -1,4 +1,4 @@
-import type { BackendDefinition, Backup, BackupValidation, Certificate, CertificateRequest, GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Usage, User, UserForm, UserGroup } from './domain'
+import type { BackendDefinition, Backup, BackupValidation, Certificate, CertificateRequest, GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Usage, User, UserGroup } from './domain'
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message) }
@@ -105,5 +105,5 @@ export class ApiClient {
     return await response.json() as BackupValidation
   }
   restoreBackup = (validationId: string) => this.request<{ status: string }>('/api/admin/v1/backups/restore', { method: 'POST', body: JSON.stringify({ validationId, confirmation: 'RESTORE' }) })
-  createUser = (form: UserForm) => this.request<{ user: User; subscriptionToken: string }>('/api/admin/v1/users', { method: 'POST', body: JSON.stringify({ ...form, trafficLimitBytes: form.trafficLimitBytes ? Number(form.trafficLimitBytes) : null, expiresAtUtc: form.expiresAtUtc || null, groupId: form.groupId || null }) })
+  createUser = (payload: Record<string, unknown>) => this.request<{ user: User; subscriptionToken: string }>('/api/admin/v1/users', { method: 'POST', body: JSON.stringify(payload) })
 }

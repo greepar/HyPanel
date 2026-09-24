@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 21;
+    public const long CurrentSchemaVersion = 22;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -26,6 +26,7 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
     private const long CertificateSourceStatusSchemaVersion = 19;
     private const long StableControlPortSchemaVersion = 20;
     private const long PasskeysSchemaVersion = 21;
+    private const long CountryAndTrafficResetSchemaVersion = 22;
     public const string DefaultGroupId = "00000000-0000-0000-0000-000000000001";
 
     public async Task MigrateAsync(CancellationToken cancellationToken)
@@ -562,6 +563,24 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             insertMigration.CommandText =
                 "INSERT INTO schema_migrations (version,applied_at_utc) VALUES (@version,@at);";
             insertMigration.Parameters.AddWithValue("@version", PasskeysSchemaVersion);
+            insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+            await insertMigration.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, CountryAndTrafficResetSchemaVersion, cancellationToken))
+        {
+            // Node country (reported by the Agent, shown as a flag) and per-user monthly traffic reset:
+            // traffic_reset_day is the day of month (1-28) usage restarts; traffic_reset_at_utc the last reset.
+            await ExecuteAsync(connection, transaction, """
+                ALTER TABLE agents ADD COLUMN country_code TEXT NULL;
+                ALTER TABLE users ADD COLUMN traffic_reset_day INTEGER NULL CHECK (traffic_reset_day BETWEEN 1 AND 28);
+                ALTER TABLE users ADD COLUMN traffic_reset_at_utc TEXT NULL;
+                """, cancellationToken);
+            await using var insertMigration = connection.CreateCommand();
+            insertMigration.Transaction = transaction;
+            insertMigration.CommandText =
+                "INSERT INTO schema_migrations (version,applied_at_utc) VALUES (@version,@at);";
+            insertMigration.Parameters.AddWithValue("@version", CountryAndTrafficResetSchemaVersion);
             insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
             await insertMigration.ExecuteNonQueryAsync(cancellationToken);
         }

@@ -174,7 +174,8 @@ public sealed class SyncWorker(
     {
         var publicIpv4 = await publicIpv4Resolver.GetAsync(cancellationToken);
         var request = new AgentSyncRequest(BuildInfo.Version, BuildInfo.RuntimeIdentifier, appliedRevision,
-            metricsCollector.Collect(), services, usageBatches, results, updateReport, publicIpv4);
+            metricsCollector.Collect(), services, usageBatches, results, updateReport, publicIpv4,
+            publicIpv4Resolver.CountryCode);
         using var message =
             new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(credentials.PanelBaseUrl), SyncPath));
         message.Headers.Add("X-HyPanel-Agent-Id", credentials.AgentId.ToString("D"));

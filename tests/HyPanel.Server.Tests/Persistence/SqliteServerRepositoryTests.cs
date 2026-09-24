@@ -35,7 +35,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L), (22L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -536,6 +536,66 @@ public sealed class SqliteServerRepositoryTests
 
         Assert.AreEqual(20_001, second[b], "an existing service keeps its port");
         Assert.AreEqual(20_000, second[c], "a new service reuses a freed port without shifting others");
+    }
+
+    [TestMethod]
+    public async Task ResetDueTraffic_ClearsUsageOncePerMonthOnTheResetDay()
+    {
+        // Fixture clock starts at 2026-09-09 12:00 UTC.
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        var agentId = await CreateAgentAsync(fixture, nodeId, "reset-token", "reset-secret");
+        var user = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Dana", "dana", "password-hash", "User",
+            true, 100, null, "subscription", CancellationToken.None);
+        var service = XrayService(CreateService(nodeId, Guid.NewGuid(), "reset"));
+        await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
+        Assert.IsTrue(await fixture.Repository.BindServiceAsync(user.User.Id, service.Id, CancellationToken.None));
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "2.0", "linux-x64", 1, null, [], [],
+            CancellationToken.None, [new UsageBatch(Guid.NewGuid(), fixture.Time.GetUtcNow(),
+                [new UserUsageDelta(user.User.Id, service.Id, 60, 60)])]));
+
+        await fixture.Repository.SetTrafficResetDayAsync(user.User.Id, 10, CancellationToken.None);
+        Assert.AreEqual(10, (await fixture.Repository.GetUserAsync(user.User.Id, CancellationToken.None))!.TrafficResetDay);
+        Assert.AreEqual(0, await fixture.Repository.ResetDueTrafficAsync(CancellationToken.None),
+            "enabling a reset day does not wipe the current period");
+
+        fixture.Time.Advance(TimeSpan.FromHours(13)); // 2026-09-10 01:00
+        var revision = (await fixture.Repository.GetNodeObservationsAsync(CancellationToken.None)).Single().DesiredRevision;
+        Assert.AreEqual(1, await fixture.Repository.ResetDueTrafficAsync(CancellationToken.None));
+        Assert.AreEqual(0, (await fixture.Repository.GetUsageTotalsAsync(user.User.Id, null, CancellationToken.None)).Count);
+        Assert.IsTrue((await fixture.Repository.GetNodeObservationsAsync(CancellationToken.None)).Single().DesiredRevision > revision,
+            "nodes re-sync so credentials over the limit come back");
+        Assert.AreEqual(0, await fixture.Repository.ResetDueTrafficAsync(CancellationToken.None), "once per period");
+
+        fixture.Time.Advance(TimeSpan.FromDays(30)); // 2026-10-10 01:00
+        Assert.AreEqual(1, await fixture.Repository.ResetDueTrafficAsync(CancellationToken.None));
+    }
+
+    [DataTestMethod]
+    [DataRow("2026-09-09T12:00:00Z", 10, "2026-08-10T00:00:00Z")]
+    [DataRow("2026-09-10T00:00:00Z", 10, "2026-09-10T00:00:00Z")]
+    [DataRow("2026-01-05T00:00:00Z", 28, "2025-12-28T00:00:00Z")]
+    public void LastTrafficResetBoundary_IsTheMostRecentResetDay(string now, int day, string expected) =>
+        Assert.AreEqual(DateTimeOffset.Parse(expected),
+            SqliteServerRepository.LastTrafficResetBoundary(DateTimeOffset.Parse(now), day));
+
+    [TestMethod]
+    public async Task AgentSync_CountryCodeIsStoredAndFlaggedInSubscriptionNames()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        var agentId = await CreateAgentAsync(fixture, nodeId, "country-token", "country-secret");
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "2.0", "linux-x64", 1, null, [], [],
+            CancellationToken.None, null, "203.0.113.9", "GB"));
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "2.0", "linux-x64", 1, null, [], [],
+            CancellationToken.None), "an Agent that omits the country keeps the stored one");
+
+        Assert.AreEqual("GB", (await fixture.Repository.GetNodeObservationsAsync(CancellationToken.None)).Single().CountryCode);
+        Assert.AreEqual("🇬🇧", SqliteServerRepository.CountryFlag("GB"));
+        Assert.AreEqual("🇺🇸", SqliteServerRepository.CountryFlag("us"));
+        Assert.IsTrue(AgentSyncEndpoints.IsCountryCode("SG"));
+        Assert.IsFalse(AgentSyncEndpoints.IsCountryCode("sg"));
+        Assert.IsFalse(AgentSyncEndpoints.IsCountryCode("GBR"));
     }
 
     [DataTestMethod]

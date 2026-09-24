@@ -68,7 +68,7 @@ export function App() {
     return () => { active = false }
   }, [checkingSession, token, bootstrap])
 
-  if (checkingSession) return <AppShell theme={theme} setTheme={setTheme}><Splash label="正在验证会话…" /></AppShell>
+  if (checkingSession) return <div className="splash-screen"><Splash label="正在验证会话…" /></div>
 
   if (!token || !role) return <Login theme={theme} setTheme={setTheme} api={api} onLogin={(nextToken, nextUser) => { storeAccountSession(nextToken, nextUser); setToken(nextToken); setUser(nextUser); setBootstrap(false) }} />
 

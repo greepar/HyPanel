@@ -51,7 +51,8 @@ internal static class AdminObservationEndpoints
                 observation.DesiredAgentVersion,
                 GetUpdateStatus(observation, latest, nowUtc),
                 observation.UpdateError,
-                observation.PublicIpv4);
+                observation.PublicIpv4,
+                observation.CountryCode);
         }
 
         return Results.Json(response, ServerJsonSerializerContext.Default.AdminNodeObservationResponseArray);

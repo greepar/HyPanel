@@ -209,49 +209,49 @@ proxy-groups:
     interval: 300
     tolerance: 50
     include-all: true
-    filter: "(?i)(港|hk|hong ?kong)"
+    filter: "(?i)(🇭🇰|港|hk|hong ?kong)"
   - name: 🇨🇳 台湾节点
     type: url-test
     url: http://www.gstatic.com/generate_204
     interval: 300
     tolerance: 50
     include-all: true
-    filter: "(?i)(台|tw|taiwan)"
+    filter: "(?i)(🇹🇼|台|tw|taiwan)"
   - name: 🇸🇬 狮城节点
     type: url-test
     url: http://www.gstatic.com/generate_204
     interval: 300
     tolerance: 50
     include-all: true
-    filter: "(?i)(新加坡|狮城|sg|singapore)"
+    filter: "(?i)(🇸🇬|新加坡|狮城|sg|singapore)"
   - name: 🇯🇵 日本节点
     type: url-test
     url: http://www.gstatic.com/generate_204
     interval: 300
     tolerance: 50
     include-all: true
-    filter: "(?i)(日本|东京|大阪|jp|japan)"
+    filter: "(?i)(🇯🇵|日本|东京|大阪|jp|japan)"
   - name: 🇺🇲 美国节点
     type: url-test
     url: http://www.gstatic.com/generate_204
     interval: 300
     tolerance: 50
     include-all: true
-    filter: "(?i)(美|洛杉矶|硅谷|西雅图|us|united states|america)"
+    filter: "(?i)(🇺🇸|美|洛杉矶|硅谷|西雅图|us|united states|america)"
   - name: 🇰🇷 韩国节点
     type: url-test
     url: http://www.gstatic.com/generate_204
     interval: 300
     tolerance: 50
     include-all: true
-    filter: "(?i)(韩|韓|首尔|kr|korea)"
+    filter: "(?i)(🇰🇷|韩|韓|首尔|kr|korea)"
   - name: 🇬🇧 英国节点
     type: url-test
     url: http://www.gstatic.com/generate_204
     interval: 300
     tolerance: 50
     include-all: true
-    filter: "(?i)(英|伦敦|uk|united kingdom|britain)"
+    filter: "(?i)(🇬🇧|英|伦敦|uk|united kingdom|britain)"
 
 rules:
   - DOMAIN,clash.razord.top,DIRECT

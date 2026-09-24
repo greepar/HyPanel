@@ -41,7 +41,7 @@ internal sealed partial class SqliteServerRepository
         await using var c = await connectionFactory.OpenAsync(cancellationToken);
         await using var cmd = c.CreateCommand();
         cmd.CommandText =
-            "SELECT id,username,normalized_username,role,enabled,traffic_limit_bytes,expires_at_utc,created_at_utc,updated_at_utc FROM users WHERE normalized_username=@name;";
+            "SELECT id,username,normalized_username,role,enabled,traffic_limit_bytes,expires_at_utc,created_at_utc,updated_at_utc,traffic_reset_day FROM users WHERE normalized_username=@name;";
         cmd.Parameters.AddWithValue("@name", normalizedUsername);
         await using var r = await cmd.ExecuteReaderAsync(cancellationToken);
         return await r.ReadAsync(cancellationToken) ? ReadUser(r) : null;
@@ -53,7 +53,7 @@ internal sealed partial class SqliteServerRepository
         await using var c = await connectionFactory.OpenAsync(cancellationToken);
         await using var cmd = c.CreateCommand();
         cmd.CommandText =
-            "SELECT id,username,normalized_username,password_hash,role,enabled,traffic_limit_bytes,expires_at_utc,created_at_utc,updated_at_utc FROM users WHERE normalized_username=@name;";
+            "SELECT id,username,normalized_username,password_hash,role,enabled,traffic_limit_bytes,expires_at_utc,created_at_utc,updated_at_utc,traffic_reset_day FROM users WHERE normalized_username=@name;";
         cmd.Parameters.AddWithValue("@name", normalizedUsername);
         await using var r = await cmd.ExecuteReaderAsync(cancellationToken);
         if (!await r.ReadAsync(cancellationToken)) return (null, null);
@@ -88,7 +88,7 @@ internal sealed partial class SqliteServerRepository
         await using var c = await connectionFactory.OpenAsync(ct);
         await using var cmd = c.CreateCommand();
         cmd.CommandText =
-            "SELECT u.id,u.username,u.normalized_username,u.role,u.enabled,u.traffic_limit_bytes,u.expires_at_utc,u.created_at_utc,u.updated_at_utc FROM user_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=@hash AND s.revoked_at_utc IS NULL AND s.expires_at_utc>@now AND u.enabled=1 AND (u.expires_at_utc IS NULL OR u.expires_at_utc>@now);";
+            "SELECT u.id,u.username,u.normalized_username,u.role,u.enabled,u.traffic_limit_bytes,u.expires_at_utc,u.created_at_utc,u.updated_at_utc,u.traffic_reset_day FROM user_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=@hash AND s.revoked_at_utc IS NULL AND s.expires_at_utc>@now AND u.enabled=1 AND (u.expires_at_utc IS NULL OR u.expires_at_utc>@now);";
         cmd.Parameters.Add("@hash", SqliteType.Blob).Value = TokenHash(token);
         cmd.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(now));
         await using var r = await cmd.ExecuteReaderAsync(ct);
@@ -171,7 +171,7 @@ internal sealed partial class SqliteServerRepository
         await using var c = await connectionFactory.OpenAsync(ct);
         await using var cmd = c.CreateCommand();
         cmd.CommandText =
-            "SELECT id,username,normalized_username,role,enabled,traffic_limit_bytes,expires_at_utc,created_at_utc,updated_at_utc FROM users ORDER BY created_at_utc,id;";
+            "SELECT id,username,normalized_username,role,enabled,traffic_limit_bytes,expires_at_utc,created_at_utc,updated_at_utc,traffic_reset_day FROM users ORDER BY created_at_utc,id;";
         await using var r = await cmd.ExecuteReaderAsync(ct);
         while (await r.ReadAsync(ct)) users.Add(ReadUser(r));
         return users;
@@ -182,7 +182,7 @@ internal sealed partial class SqliteServerRepository
         await using var c = await connectionFactory.OpenAsync(ct);
         await using var cmd = c.CreateCommand();
         cmd.CommandText =
-            "SELECT id,username,normalized_username,role,enabled,traffic_limit_bytes,expires_at_utc,created_at_utc,updated_at_utc FROM users WHERE id=@id;";
+            "SELECT id,username,normalized_username,role,enabled,traffic_limit_bytes,expires_at_utc,created_at_utc,updated_at_utc,traffic_reset_day FROM users WHERE id=@id;";
         cmd.Parameters.AddWithValue("@id", id.ToString("D"));
         await using var r = await cmd.ExecuteReaderAsync(ct);
         return await r.ReadAsync(ct) ? ReadUser(r) : null;
@@ -509,7 +509,7 @@ internal sealed partial class SqliteServerRepository
                                   COALESCE(p.host,a.public_ipv4),
                                   COALESCE(p.port,CAST(json_extract(s.config_json,'$.listenPort') AS INTEGER)),
                                   p.tls_server_name,COALESCE(p.updated_at_utc,a.last_seen_at_utc),
-                                   k.nonce,k.ciphertext,k.tag,c.san,c.certificate_pem,n.display_name
+                                   k.nonce,k.ciphertext,k.tag,c.san,c.certificate_pem,n.display_name,a.country_code
                            FROM user_service_bindings b
                            JOIN service_instances s ON s.id=b.service_id
                            JOIN nodes n ON n.id=s.node_id
@@ -535,7 +535,8 @@ internal sealed partial class SqliteServerRepository
             var san = r.IsDBNull(11) ? null : r.GetString(11);
             var pem = r.IsDBNull(12) ? null : r.GetString(12);
             var serverName = r.IsDBNull(6) ? ServerNameFor(san, r.GetString(13)) : r.GetString(6);
-            services.Add(new SubscriptionServiceRecord(SqliteValue.ToGuid(userId), serviceId, r.GetString(1), backend, r.GetString(3), credential,
+            var name = r.IsDBNull(14) ? r.GetString(1) : $"{CountryFlag(r.GetString(14))} {r.GetString(1)}";
+            services.Add(new SubscriptionServiceRecord(SqliteValue.ToGuid(userId), serviceId, name, backend, r.GetString(3), credential,
                 new ServicePublicEndpointRecord(serviceId, r.GetString(4), r.GetInt32(5),
                     serverName, SqliteValue.ToDateTimeOffset(r.GetString(7))), SelfSignedFingerprint(pem)));
         }
@@ -725,8 +726,76 @@ internal sealed partial class SqliteServerRepository
         new(SqliteValue.ToGuid(r.GetString(0)), r.GetString(1), r.GetInt32(2),
             r.IsDBNull(3) ? null : r.GetString(3), SqliteValue.ToDateTimeOffset(r.GetString(4)));
 
+    /// <summary>Regional-indicator flag emoji for an ISO 3166-1 alpha-2 code ("GB" → 🇬🇧).</summary>
+    internal static string CountryFlag(string code) => code.Length == 2 && char.IsAsciiLetter(code[0]) &&
+                                                       char.IsAsciiLetter(code[1])
+        ? char.ConvertFromUtf32(0x1F1E6 + char.ToUpperInvariant(code[0]) - 'A') +
+          char.ConvertFromUtf32(0x1F1E6 + char.ToUpperInvariant(code[1]) - 'A')
+        : string.Empty;
+
     private static UserRecord ReadUser(SqliteDataReader r) => new(SqliteValue.ToGuid(r.GetString(0)), r.GetString(1),
         r.GetString(2), r.GetString(3), r.GetInt64(4) != 0, r.IsDBNull(5) ? null : r.GetInt64(5),
         r.IsDBNull(6) ? null : SqliteValue.ToDateTimeOffset(r.GetString(6)),
-        SqliteValue.ToDateTimeOffset(r.GetString(7)), SqliteValue.ToDateTimeOffset(r.GetString(8)));
+        SqliteValue.ToDateTimeOffset(r.GetString(7)), SqliteValue.ToDateTimeOffset(r.GetString(8)),
+        r.FieldCount > 9 && !r.IsDBNull(9) ? r.GetInt32(9) : null);
+
+    /// <summary>
+    /// Sets the day of month (1-28) the user's usage restarts, or null to never reset. The period starts now, so
+    /// enabling a reset day never wipes the current month's usage straight away.
+    /// </summary>
+    public async Task SetTrafficResetDayAsync(Guid userId, int? day, CancellationToken ct)
+    {
+        await using var c = await connectionFactory.OpenAsync(ct);
+        await using var cmd = c.CreateCommand();
+        cmd.CommandText = "UPDATE users SET traffic_reset_day=@day, traffic_reset_at_utc=CASE WHEN @day IS NULL THEN NULL ELSE COALESCE(traffic_reset_at_utc,@now) END WHERE id=@id;";
+        cmd.Parameters.AddWithValue("@id", userId.ToString("D"));
+        cmd.Parameters.AddWithValue("@day", day is null ? DBNull.Value : day.Value);
+        cmd.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>
+    /// Clears the usage of every user whose monthly reset boundary (00:00 UTC on the reset day) has passed since
+    /// their last reset, and re-syncs their nodes so credentials cut off by the traffic limit come back.
+    /// </summary>
+    public async Task<int> ResetDueTrafficAsync(CancellationToken ct)
+    {
+        var now = timeProvider.GetUtcNow();
+        var due = new List<Guid>();
+        await using var c = await connectionFactory.OpenAsync(ct);
+        await using (var select = c.CreateCommand())
+        {
+            select.CommandText = "SELECT id,traffic_reset_day,traffic_reset_at_utc FROM users WHERE traffic_reset_day IS NOT NULL;";
+            await using var r = await select.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct))
+            {
+                var last = r.IsDBNull(2) ? (DateTimeOffset?)null : SqliteValue.ToDateTimeOffset(r.GetString(2));
+                if (last is null || last < LastTrafficResetBoundary(now, r.GetInt32(1)))
+                    due.Add(SqliteValue.ToGuid(r.GetString(0)));
+            }
+        }
+
+        foreach (var userId in due)
+        {
+            await using var tx = (SqliteTransaction)await c.BeginTransactionAsync(ct);
+            await using (var clear = c.CreateCommand())
+            {
+                clear.Transaction = tx;
+                clear.CommandText = "DELETE FROM usage_totals WHERE user_id=@id; UPDATE users SET traffic_reset_at_utc=@now WHERE id=@id;";
+                clear.Parameters.AddWithValue("@id", userId.ToString("D"));
+                clear.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(now));
+                await clear.ExecuteNonQueryAsync(ct);
+            }
+            await IncrementBoundNodeRevisionsAsync(c, tx, userId, ct);
+            await tx.CommitAsync(ct);
+        }
+
+        return due.Count;
+    }
+
+    internal static DateTimeOffset LastTrafficResetBoundary(DateTimeOffset now, int day)
+    {
+        var boundary = new DateTimeOffset(now.UtcDateTime.Year, now.UtcDateTime.Month, day, 0, 0, 0, TimeSpan.Zero);
+        return boundary <= now ? boundary : boundary.AddMonths(-1);
+    }
 }

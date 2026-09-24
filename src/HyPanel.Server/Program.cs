@@ -38,6 +38,7 @@ public static class Program
         builder.Services.AddSingleton<UserAuthentication>();
         builder.Services.AddSingleton<PasswordService>();
         builder.Services.AddSingleton<WebAuthn>();
+        builder.Services.AddHostedService<TrafficResetWorker>();
         builder.Services.AddSingleton<ProxyCredentialProtector>();
         builder.Services.AddSingleton<ServerProcessControl>();
         builder.Services.AddSingleton<ServerOperationCoordinator>();

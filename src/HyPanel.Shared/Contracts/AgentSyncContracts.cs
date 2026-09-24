@@ -9,7 +9,8 @@ public sealed record AgentSyncRequest(
     IReadOnlyList<UsageBatch> UsageBatches,
     IReadOnlyList<AgentCommandResult> CommandResults,
     AgentUpdateReport? AgentUpdate = null,
-    string? PublicIpv4 = null);
+    string? PublicIpv4 = null,
+    string? CountryCode = null);
 
 public sealed record AgentSyncResponse(
     long DesiredRevision,

@@ -62,7 +62,8 @@ internal static class AgentSyncEndpoints
                 request.CommandResults,
                 cancellationToken,
                 request.UsageBatches,
-                publicIpv4))
+                publicIpv4,
+                request.CountryCode))
         {
             return Results.Unauthorized();
         }
@@ -193,6 +194,7 @@ internal static class AgentSyncEndpoints
             || request.UsageBatches.Count > 32
             || !IsValidMetrics(request.Metrics, nowUtc)
             || !IsValidPublicIpv4(request.PublicIpv4)
+            || request.CountryCode is not null && !IsCountryCode(request.CountryCode)
             || !IsValidUpdateReport(request.AgentUpdate, request.Platform, nowUtc))
         {
             return false;
@@ -227,6 +229,10 @@ internal static class AgentSyncEndpoints
 
         return true;
     }
+
+    /// <summary>ISO 3166-1 alpha-2, upper case.</summary>
+    internal static bool IsCountryCode(string value) => value.Length == 2 && char.IsAsciiLetterUpper(value[0]) &&
+                                                        char.IsAsciiLetterUpper(value[1]);
 
     internal static bool IsValidPublicIpv4(string? value) => value is null ||
         IPAddress.TryParse(value, out var address) && PublicIpv4From(address) == value;

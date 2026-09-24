@@ -24,7 +24,8 @@ internal sealed record AdminNodeObservationResponse(
     string? DesiredAgentVersion,
     string AgentUpdateStatus,
     string? AgentUpdateError,
-    string? PublicIpv4);
+    string? PublicIpv4,
+    string? CountryCode = null);
 
 internal sealed record SetAgentUpdatePolicyRequest(string Policy);
 internal sealed record RequestAgentUpdateResponse(Guid UpdateId, string Version);
@@ -110,7 +111,8 @@ internal sealed record UserResponse(
     bool Enabled,
     long? TrafficLimitBytes,
     DateTimeOffset? ExpiresAtUtc,
-    Guid? GroupId = null);
+    Guid? GroupId = null,
+    int? TrafficResetDay = null);
 
 internal sealed record LoginResponse(string Token, DateTimeOffset ExpiresAtUtc, UserResponse User);
 
@@ -133,7 +135,8 @@ internal sealed record CreateUserRequest(
     bool Enabled,
     long? TrafficLimitBytes,
     DateTimeOffset? ExpiresAtUtc,
-    Guid? GroupId = null);
+    Guid? GroupId = null,
+    int? TrafficResetDay = null);
 
 internal sealed record UpdateUserRequest(
     string Username,
@@ -142,7 +145,8 @@ internal sealed record UpdateUserRequest(
     bool Enabled,
     long? TrafficLimitBytes,
     DateTimeOffset? ExpiresAtUtc,
-    Guid? GroupId = null);
+    Guid? GroupId = null,
+    int? TrafficResetDay = null);
 
 internal sealed record UserGroupRequest(string Name, bool AutoIncludeNewServices, Guid[]? ServiceIds);
 internal sealed record UserGroupResponse(Guid Id, string Name, bool IsDefault, bool AutoIncludeNewServices,

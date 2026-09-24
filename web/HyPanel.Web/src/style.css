@@ -57,6 +57,8 @@ code, .mono { font-family: var(--mono); font-size: .92em }
 .brand-lockup svg { display: block; flex: 0 0 auto }
 .brand-mark-svg { border-radius: 22%; box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 8%, transparent) }
 .brand:hover .brand-wordmark { opacity: .85 }
+.flag { margin-right: .35em; font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif }
+.splash-screen { display: grid; min-height: 100vh; min-height: 100dvh; place-items: center; background: var(--bg) }
 .splash { display: grid; min-height: 60vh; place-content: center; justify-items: center; gap: 18px; color: var(--muted) }
 .splash > span { display: inline-flex; align-items: center; gap: 10px; font-size: 13px }
 .splash .spinner { display: inline-block }
@@ -376,12 +378,15 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 .notice button { padding: 0 2px; border: 0; color: inherit; background: none; cursor: pointer; font-size: 16px; line-height: 1; opacity: .7 }
 .notice button:hover { opacity: 1 }
 .error-code { display: inline-block; margin-left: 8px; padding: 0 6px; border-radius: 4px; background: color-mix(in srgb, currentColor 10%, transparent); font-size: 11px }
-.toast { position: fixed; z-index: 90; top: calc(var(--topbar) + 12px); right: 20px; display: grid; grid-template-columns: 18px minmax(0, 1fr) 24px; gap: 10px; align-items: center; width: min(380px, calc(100vw - 32px)); overflow: hidden; padding: 12px 12px 14px 14px; border-radius: var(--radius); color: var(--surface); background: var(--text); box-shadow: 0 12px 32px rgba(0,0,0,.22); font-size: 13px; line-height: 1.45; animation: slide-in .18s ease-out }
+.toast { position: fixed; z-index: 90; right: 20px; bottom: 20px; display: grid; grid-template-columns: 18px minmax(0, 1fr) 24px; gap: 10px; align-items: center; width: min(380px, calc(100vw - 32px)); overflow: hidden; padding: 12px 12px 14px 14px; border-radius: var(--radius); color: var(--surface); background: var(--text); box-shadow: 0 12px 32px rgba(0,0,0,.22); font-size: 13px; line-height: 1.45; animation: toast-in .32s cubic-bezier(.2, .9, .3, 1.15) both }
+.toast.leaving { animation: toast-out .22s ease-in forwards }
 .toast button { display: grid; width: 24px; height: 24px; place-items: center; padding: 0; border: 0; border-radius: 6px; color: inherit; background: transparent; opacity: .65; cursor: pointer }
 .toast button:hover { opacity: 1; background: color-mix(in srgb, var(--surface) 14%, transparent) }
 .toast-progress { position: absolute; right: 0; bottom: 0; left: 0; height: 3px; background: currentColor; opacity: .45; transform-origin: left; animation: toast-progress var(--toast-duration, 4000ms) linear forwards }
 .toast:hover .toast-progress { animation-play-state: paused }
 @keyframes toast-progress { from { transform: scaleX(1) } to { transform: scaleX(0) } }
+@keyframes toast-in { from { opacity: 0; transform: translateY(16px) scale(.96) } to { opacity: 1; transform: none } }
+@keyframes toast-out { to { opacity: 0; transform: translateX(24px) scale(.98) } }
 
 /* ---------- modal ---------- */
 .modal-backdrop { position: fixed; z-index: 80; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(10,10,12,.55); animation: fade-in .14s ease-out }
