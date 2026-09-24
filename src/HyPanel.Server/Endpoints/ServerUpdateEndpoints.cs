@@ -24,6 +24,12 @@ internal static class ServerUpdateEndpoints
     {
         var access = await authorization.AuthorizeAsync(request, cancellationToken);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        // The cached release may predate a new tag (it refreshes periodically or on GET); re-check once.
+        if (!updater.CanUpdate(out _))
+        {
+            try { await updater.RefreshAsync(cancellationToken); }
+            catch (Exception ex) when (ex is HttpRequestException or InvalidDataException or System.Text.Json.JsonException) { }
+        }
         if (!updater.CanUpdate(out var target)) return Results.Conflict();
         updater.QueueUpdate();
         return Results.Json(new ServerUpdateRequestResponse(target!),
