@@ -5,16 +5,7 @@ HyPanel 由两部分组成：
 - **面板（hypanel-server）**：网页管理界面和 API，保存节点、服务、用户等全部配置。通常只部署一台。
 - **节点（hypanel-agent）**：安装在每台代理服务器上，定期主动连接面板，领取配置并在本机运行代理服务。
 
-```text
-                 HTTPS
-   浏览器  <------------>  面板 hypanel-server
-                              ^          ^
-                 Agent 主动同步 |          | Agent 主动同步
-                              |          |
-                     节点 A hypanel-agent   节点 B hypanel-agent
-                      |            |              |
-                  Hysteria2   Xray REALITY   Shadowsocks 2022
-```
+<ArchitectureDiagram />
 
 节点只需要能访问面板，不需要开放任何管理端口；面板只下发“应该是什么样”，节点自己把实际运行状态调整过去。
 某个服务出错不会影响同一节点上的其他服务。
