@@ -12,3 +12,7 @@ artifacts/
 *.db
 *.db-shm
 *.db-wal
+
+# VitePress
+docs/.vitepress/cache/
+docs/.vitepress/dist/
