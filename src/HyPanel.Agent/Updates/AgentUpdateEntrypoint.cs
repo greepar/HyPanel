@@ -26,7 +26,7 @@ internal static class AgentUpdateEntrypoint
 
     private static async Task<int> RunWindowsHelperAsync(int parentPid, string targetPath, string stagedPath, Guid updateId)
     {
-        if (!OperatingSystem.IsWindows() || updateId == Guid.Empty || Path.GetFileName(targetPath) != "HyPanel.Agent.exe") return 2;
+        if (!OperatingSystem.IsWindows() || updateId == Guid.Empty || !IsWindowsAgentExecutable(targetPath)) return 2;
         var helperPath = Path.GetFullPath(Environment.ProcessPath ?? string.Empty);
         var target = Path.GetFullPath(targetPath);
         var staged = Path.GetFullPath(stagedPath);
@@ -83,6 +83,10 @@ internal static class AgentUpdateEntrypoint
         return Path.GetFullPath(helperPath).Equals(target + ".update-helper.exe", StringComparison.OrdinalIgnoreCase)
                && Path.GetFullPath(stagedPath).Equals(AgentUpdater.StagedExecutablePath(target),
                    StringComparison.OrdinalIgnoreCase)
-               && Path.GetFileName(target).Equals("HyPanel.Agent.exe", StringComparison.OrdinalIgnoreCase);
+               && IsWindowsAgentExecutable(target);
     }
+
+    private static bool IsWindowsAgentExecutable(string path) =>
+        Path.GetFileName(path).Equals("hypanel-agent.exe", StringComparison.OrdinalIgnoreCase) ||
+        Path.GetFileName(path).Equals("HyPanel.Agent.exe", StringComparison.OrdinalIgnoreCase);
 }

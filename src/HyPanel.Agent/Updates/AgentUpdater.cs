@@ -198,6 +198,13 @@ public sealed class AgentUpdater(
             UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
     }
 
+    /// <summary>
+    /// Archive member names of the Agent binary. Releases up to 0.4.39 used the .NET project name; either is written
+    /// to the running executable's path, so existing installs keep their file name until reinstalled.
+    /// </summary>
+    internal static bool IsAgentBinary(string name) =>
+        name is "hypanel-agent" or "HyPanel.Agent" or "hypanel-agent.exe" or "HyPanel.Agent.exe";
+
     private static async Task ExtractTarAsync(string archivePath, Stream output, CancellationToken cancellationToken)
     {
         await using var archive = File.OpenRead(archivePath);
@@ -211,7 +218,7 @@ public sealed class AgentUpdater(
             if (name.Length == 0 && entry.EntryType == TarEntryType.Directory) continue;
             if (!seen.Add(name)) throw new InvalidDataException("archive_duplicate_entry");
             if (entry.EntryType != TarEntryType.RegularFile) throw new InvalidDataException("archive_entry_type_invalid");
-            if (name == "HyPanel.Agent")
+            if (IsAgentBinary(name) && !name.EndsWith(".exe", StringComparison.Ordinal))
             {
                 binaryCount++;
                 if (entry.DataStream is null) throw new InvalidDataException("archive_binary_missing");
@@ -232,7 +239,7 @@ public sealed class AgentUpdater(
             var name = NormalizeArchiveName(entry.FullName);
             if (!seen.Add(name)) throw new InvalidDataException("archive_duplicate_entry");
             if ((entry.ExternalAttributes >> 16 & 0xF000) == 0xA000) throw new InvalidDataException("archive_link_rejected");
-            if (name == "HyPanel.Agent.exe")
+            if (IsAgentBinary(name) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
             {
                 binaryCount++;
                 await using var source = entry.Open();

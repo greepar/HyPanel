@@ -63,18 +63,23 @@ function Safe-Zip([string] $ZipPath, [string] $StagingPath) {
             if ($parts | Where-Object { $_ -eq '..' -or $_ -eq '' }) {
                 if ($normalized -notmatch '/$' -or ($parts | Where-Object { $_ -eq '' }).Count -gt 1) { Fail 'Archive contains an unsafe path.' }
             }
-            if ($normalized -eq 'HyPanel.Agent.exe') { $rootExe = $true }
-            if ($normalized -match '(^|/)([^/]+)$' -and $normalized -ne 'HyPanel.Agent.exe' -and $normalized -notmatch '/') {
+            # Releases up to 0.4.39 name the binary HyPanel.Agent.exe; it is installed as hypanel-agent.exe.
+            $isExe = $normalized -eq 'hypanel-agent.exe' -or $normalized -eq 'HyPanel.Agent.exe'
+            if ($isExe) { if ($rootExe) { Fail 'Archive contains more than one Agent binary.' }; $rootExe = $true }
+            if ($normalized -match '(^|/)([^/]+)$' -and -not $isExe -and $normalized -ne 'appsettings.json' -and $normalized -notmatch '/') {
                 Fail 'Archive contains an unexpected root-level file.'
             }
             if ($normalized -match '(^|/)\.(git|ssh|env)(/|$)' -or $normalized -match '(^|/)(bootstrap\.env|credentials\.json)$') {
                 Fail 'Archive contains a forbidden layout.'
             }
         }
-        if (-not $rootExe) { Fail 'Archive must contain root-level HyPanel.Agent.exe.' }
+        if (-not $rootExe) { Fail 'Archive must contain root-level hypanel-agent.exe.' }
     } finally { $archive.Dispose() }
     Expand-Archive -LiteralPath $ZipPath -DestinationPath $StagingPath -Force
-    if (-not (Test-Path (Join-Path $StagingPath 'HyPanel.Agent.exe') -PathType Leaf)) { Fail 'Archive extraction did not produce HyPanel.Agent.exe.' }
+    $legacy = Join-Path $StagingPath 'HyPanel.Agent.exe'
+    if (Test-Path $legacy -PathType Leaf) { Move-Item $legacy (Join-Path $StagingPath 'hypanel-agent.exe') }
+    Remove-Item (Join-Path $StagingPath 'appsettings.json') -Force -ErrorAction SilentlyContinue
+    if (-not (Test-Path (Join-Path $StagingPath 'hypanel-agent.exe') -PathType Leaf)) { Fail 'Archive extraction did not produce hypanel-agent.exe.' }
 }
 
 function Wait-ServiceStopped {
@@ -84,7 +89,7 @@ function Wait-ServiceStopped {
         if ($null -eq $service -or $service.Status -eq 'Stopped') { return }
         Start-Sleep -Milliseconds 500
     }
-    Get-Process -Name HyPanel.Agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Get-Process -Name hypanel-agent, HyPanel.Agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 }
 function Uninstall-Agent {
     $root = Join-Path $env:ProgramFiles 'HyPanel'
@@ -181,8 +186,8 @@ try {
             $serviceKey = 'HKLM:\SYSTEM\CurrentControlSet\Services\HyPanelAgent'
             New-Item -Path $serviceKey -Force | Out-Null
             New-ItemProperty -Path $serviceKey -Name Environment -PropertyType MultiString -Value @("HYPANEL_PANEL_URL=$($panel.AbsoluteUri)", "HYPANEL_ENROLLMENT_TOKEN=$token") -Force | Out-Null
-            if (-not $serviceExists) { sc.exe create HyPanelAgent binPath= "`"$(Join-Path $agentDir 'HyPanel.Agent.exe')`"" start= auto | Out-Null }
-            sc.exe config HyPanelAgent binPath= "`"$(Join-Path $agentDir 'HyPanel.Agent.exe')`"" start= auto | Out-Null
+            if (-not $serviceExists) { sc.exe create HyPanelAgent binPath= "`"$(Join-Path $agentDir 'hypanel-agent.exe')`"" start= auto | Out-Null }
+            sc.exe config HyPanelAgent binPath= "`"$(Join-Path $agentDir 'hypanel-agent.exe')`"" start= auto | Out-Null
             # Restart after any crash, forever: the node must keep working without manual attention.
             sc.exe failure HyPanelAgent reset= 86400 actions= restart/10000/restart/10000/restart/60000 | Out-Null
             sc.exe failureflag HyPanelAgent 1 | Out-Null

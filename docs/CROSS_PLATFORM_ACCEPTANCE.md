@@ -58,7 +58,7 @@ until the listed service manager and executable-replacement path run on that pla
 - Fresh `install.ps1` enrollment under Windows Service Control Manager.
 - Confirm service account ACLs protect credentials and permit only the managed install/data directories.
 - Create and reconcile one backend service.
-- Trigger Agent update while `HyPanel.Agent.exe` is locked.
+- Trigger Agent update while `hypanel-agent.exe` is locked.
 - Verify helper parent PID, fixed sibling paths, UpdateId and state file checks.
 - Verify successful service restart, reconnect and `.previous` cleanup.
 - Inject bad replacement/start failure and verify old executable rollback.

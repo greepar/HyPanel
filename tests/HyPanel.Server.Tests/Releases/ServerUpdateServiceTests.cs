@@ -38,8 +38,10 @@ public sealed class ServerUpdateServiceTests
         Directory.Delete(configuration["HYPANEL_DATA_DIR"]!, recursive: true);
     }
 
-    [TestMethod]
-    public async Task ExtractAsync_ExtractsOnlyServerExecutable()
+    [DataTestMethod]
+    [DataRow("./hypanel-server")]
+    [DataRow("./HyPanel.Server")]
+    public async Task ExtractAsync_ExtractsOnlyServerExecutable(string binaryName)
     {
         using var directory = new TemporaryDirectory();
         var archive = Path.Combine(directory.Path, "server.tar.gz");
@@ -49,7 +51,7 @@ public sealed class ServerUpdateServiceTests
         await using (var gzip = new GZipStream(file, CompressionMode.Compress))
         using (var writer = new TarWriter(gzip, leaveOpen: false))
         {
-            await writer.WriteEntryAsync(new PaxTarEntry(TarEntryType.RegularFile, "./HyPanel.Server")
+            await writer.WriteEntryAsync(new PaxTarEntry(TarEntryType.RegularFile, binaryName)
                 { DataStream = new MemoryStream(payload) });
             await writer.WriteEntryAsync(new PaxTarEntry(TarEntryType.RegularFile, "./appsettings.json")
                 { DataStream = new MemoryStream("{}"u8.ToArray()) });

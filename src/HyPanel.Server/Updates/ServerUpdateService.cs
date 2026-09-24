@@ -202,7 +202,8 @@ internal sealed partial class ServerUpdateService(IConfiguration configuration, 
         while (await reader.GetNextEntryAsync(cancellationToken: cancellationToken) is { } entry)
         {
             var name = entry.Name.TrimStart('.', '/');
-            if (name == "HyPanel.Server" && entry.EntryType == TarEntryType.RegularFile && entry.DataStream is not null)
+            // Releases up to 0.4.39 name the binary after the .NET project.
+            if (name is "hypanel-server" or "HyPanel.Server" && entry.EntryType == TarEntryType.RegularFile && entry.DataStream is not null)
             { if (found) throw new InvalidDataException("server_archive_ambiguous"); found = true; await using var output = File.Create(stagedPath); await entry.DataStream.CopyToAsync(output, cancellationToken); }
         }
         if (!found) throw new InvalidDataException("server_archive_missing");

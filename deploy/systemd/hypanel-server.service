@@ -10,7 +10,7 @@ Group=hypanel
 WorkingDirectory=/var/lib/hypanel
 EnvironmentFile=/etc/hypanel/server.env
 Environment=ASPNETCORE_URLS=http://127.0.0.1:5291
-ExecStart=/opt/hypanel/server/HyPanel.Server
+ExecStart=/opt/hypanel/server/hypanel-server
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

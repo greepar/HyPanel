@@ -93,7 +93,7 @@ HyPanel reports image availability but never replaces its own binary inside a co
 
 Download the matching `hypanel-server-<version>-linux-<arch>.tar.gz` from
 [GitHub Releases](https://github.com/greepar/HyPanel/releases), verify it against `SHA256SUMS`, and install it at
-`/opt/hypanel/server/HyPanel.Server`. A hardened example unit is provided at
+`/opt/hypanel/server/hypanel-server`. A hardened example unit is provided at
 [`deploy/systemd/hypanel-server.service`](deploy/systemd/hypanel-server.service).
 
 Create `/etc/hypanel/server.env` with permissions `0600`:
@@ -171,13 +171,13 @@ The bare-metal CLI remains available if the Web UI cannot start:
 
 ```bash
 # Online backup is allowed while the Server runs.
-sudo -u hypanel /opt/hypanel/server/HyPanel.Server backup
+sudo -u hypanel /opt/hypanel/server/hypanel-server backup
 
-sudo -u hypanel /opt/hypanel/server/HyPanel.Server backup validate /path/to/hypanel-backup.tar.gz
+sudo -u hypanel /opt/hypanel/server/hypanel-server backup validate /path/to/hypanel-backup.tar.gz
 
 # Offline restore refuses to run while the Server process owns the data directory.
 sudo systemctl stop hypanel-server
-sudo -u hypanel /opt/hypanel/server/HyPanel.Server restore /path/to/hypanel-backup.tar.gz
+sudo -u hypanel /opt/hypanel/server/hypanel-server restore /path/to/hypanel-backup.tar.gz
 sudo systemctl start hypanel-server
 ```
 

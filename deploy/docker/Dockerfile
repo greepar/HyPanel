@@ -22,7 +22,8 @@ RUN case "$TARGETARCH" in \
     && dotnet publish src/HyPanel.Server/HyPanel.Server.csproj -c Release -r "$rid" --self-contained true \
       -p:Version="$VERSION" -p:InformationalVersion="$VERSION" \
       -p:IncludeSourceRevisionInInformationalVersion=false -o /publish \
-    && rm -f /publish/*.dbg /publish/*.pdb /publish/*.json
+    && rm -f /publish/*.dbg /publish/*.pdb /publish/*.json \
+    && mv /publish/HyPanel.Server /publish/hypanel-server
 
 FROM mcr.microsoft.com/dotnet/runtime-deps:10.0-alpine
 
@@ -34,7 +35,7 @@ RUN apk add --no-cache wget \
 
 COPY --from=build /publish/ /app/
 
-RUN chmod 0755 /app/HyPanel.Server \
+RUN chmod 0755 /app/hypanel-server \
     && chown -R root:root /app
 
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
@@ -49,4 +50,4 @@ USER 10001:10001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget -q -T 3 -O /dev/null http://127.0.0.1:8080/health || exit 1
 
-ENTRYPOINT ["/app/HyPanel.Server"]
+ENTRYPOINT ["/app/hypanel-server"]

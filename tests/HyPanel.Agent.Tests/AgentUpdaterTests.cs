@@ -183,11 +183,13 @@ public sealed class AgentUpdaterTests
         Assert.AreEqual(expected, exception.Message);
     }
 
-    [TestMethod]
-    public async Task ExtractAgentAsync_WithValidTar_StagesOnlyAgentBinary()
+    [DataTestMethod]
+    [DataRow("hypanel-agent")]
+    [DataRow("HyPanel.Agent")]
+    public async Task ExtractAgentAsync_WithValidTar_StagesOnlyAgentBinary(string binaryName)
     {
         var archive = Path.Combine(directory, "agent.tar.gz");
-        await CreateTarAsync(archive, ("HyPanel.Agent", "new binary"), ("appsettings.json", "ignored"));
+        await CreateTarAsync(archive, (binaryName, "new binary"), ("appsettings.json", "ignored"));
         var staged = Path.Combine(directory, "staged");
 
         await AgentUpdater.ExtractAgentAsync(archive, staged, CancellationToken.None);
@@ -235,6 +237,21 @@ public sealed class AgentUpdaterTests
             archive, Path.Combine(directory, "staged"), CancellationToken.None));
 
         Assert.AreEqual("archive_entry_type_invalid", exception.Message);
+    }
+
+    [DataTestMethod]
+    [DataRow("hypanel-agent.exe")]
+    [DataRow("HyPanel.Agent.exe")]
+    public async Task ExtractZipAsync_AcceptsCurrentAndLegacyBinaryNames(string binaryName)
+    {
+        var archivePath = Path.Combine(directory, "agent.zip");
+        using (var archive = ZipFile.Open(archivePath, ZipArchiveMode.Create))
+        await using (var writer = new StreamWriter(archive.CreateEntry(binaryName).Open())) await writer.WriteAsync("exe");
+        await using var output = new MemoryStream();
+
+        await AgentUpdater.ExtractZipAsync(archivePath, output, CancellationToken.None);
+
+        Assert.AreEqual("exe", System.Text.Encoding.UTF8.GetString(output.ToArray()));
     }
 
     [DataTestMethod]
