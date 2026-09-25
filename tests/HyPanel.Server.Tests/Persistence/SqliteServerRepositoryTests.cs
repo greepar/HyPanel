@@ -645,6 +645,33 @@ public sealed class SqliteServerRepositoryTests
     }
 
     [TestMethod]
+    public async Task Subscription_ListsProxiesByNodeThenService()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var user = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Order", "order", "hash", "User", true,
+            null, null, "order-token", CancellationToken.None);
+        // Service names sort the other way round from their nodes, so ordering by service alone would interleave.
+        foreach (var (node, service) in new[] { ("b-node", "a-svc"), ("a-node", "z-svc"), ("b-node", "c-svc"), ("a-node", "b-svc") })
+        {
+            var nodeId = (await fixture.Repository.GetNodeObservationsAsync(CancellationToken.None))
+                .FirstOrDefault(item => item.DisplayName == node)?.Id ?? Guid.NewGuid();
+            if ((await fixture.Repository.GetNodeAsync(nodeId, CancellationToken.None)) is null)
+                await fixture.Repository.CreateNodeAsync(nodeId, node, CancellationToken.None);
+            var record = XrayService(CreateService(nodeId, Guid.NewGuid(), service));
+            await fixture.Repository.CreateServiceAsync(record, CancellationToken.None);
+            Assert.IsTrue(await fixture.Repository.BindServiceAsync(user.User.Id, record.Id, CancellationToken.None));
+            Assert.IsTrue(await fixture.Repository.SetServicePublicEndpointAsync(nodeId,
+                new ServicePublicEndpointRecord(record.Id, "203.0.113.1", 443, null, fixture.Time.GetUtcNow()),
+                CancellationToken.None));
+        }
+
+        var names = (await fixture.Repository.GetSubscriptionServicesAsync("order-token", CancellationToken.None))!
+            .Select(item => item.Name).ToArray();
+
+        CollectionAssert.AreEqual(new[] { "a-node · b-svc", "a-node · z-svc", "b-node · a-svc", "b-node · c-svc" }, names);
+    }
+
+    [TestMethod]
     public async Task ResetTraffic_ClearsUsageImmediately()
     {
         await using var fixture = await TestDatabase.CreateAsync();

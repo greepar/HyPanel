@@ -520,7 +520,8 @@ internal sealed partial class SqliteServerRepository
                            WHERE b.user_id=@user AND s.enabled=1 AND k.status='Active'
                              AND (p.host IS NOT NULL OR a.public_ipv4 IS NOT NULL)
                              AND COALESCE(p.port,CAST(json_extract(s.config_json,'$.listenPort') AS INTEGER)) BETWEEN 1 AND 65535
-                           ORDER BY s.name,s.id;
+                           -- Grouped by node, then service, so a node's services sit together in the client.
+                           ORDER BY n.display_name COLLATE NOCASE,s.name COLLATE NOCASE,s.id;
                           """;
         cmd.Parameters.AddWithValue("@user", userId);
         await using var r = await cmd.ExecuteReaderAsync(ct);
