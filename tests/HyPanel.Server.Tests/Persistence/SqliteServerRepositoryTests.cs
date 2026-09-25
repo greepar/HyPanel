@@ -572,6 +572,79 @@ public sealed class SqliteServerRepositoryTests
     }
 
     [TestMethod]
+    public async Task ReleaseSync_WithMirror_FetchesMetadataDirectlyAndDownloadsThroughMirror()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        await fixture.Repository.UpdateGlobalSettingsAsync("Manual", "Manual", "https://mirror.example", CancellationToken.None);
+        var releases = Path.Combine(Path.GetTempPath(), "HyPanel.MirrorSync", Guid.NewGuid().ToString("N"));
+        var assets = HyPanel.Server.Releases.ReleaseCatalog.SupportedRids.ToDictionary(
+            rid => $"hypanel-agent-2.0.0-{rid}.{(rid.StartsWith("win-", StringComparison.Ordinal) ? "zip" : "tar.gz")}",
+            rid => Encoding.UTF8.GetBytes(rid));
+        var manifest = new AgentReleaseManifest(1, "2.0.0", DateTimeOffset.Parse("2026-09-20T00:00:00Z"),
+            assets.Select(pair => new AgentReleaseAsset(RidOf(pair.Key),
+                pair.Key, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(pair.Value)).ToLowerInvariant(),
+                pair.Value.Length)).ToArray());
+        var installSh = "sh"u8.ToArray();
+        var installPs1 = "ps1"u8.ToArray();
+        var handler = new RecordingReleaseHandler(new Dictionary<string, byte[]>(assets)
+        {
+            ["manifest.json"] = JsonSerializer.SerializeToUtf8Bytes(manifest, HyPanel.Shared.Serialization.HyPanelJsonSerializerContext.Default.AgentReleaseManifest),
+            ["SHA256SUMS"] = Encoding.ASCII.GetBytes(
+                $"{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(installSh)).ToLowerInvariant()}  install.sh\n" +
+                $"{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(installPs1)).ToLowerInvariant()}  install.ps1\n"),
+            ["install.sh"] = installSh,
+            ["install.ps1"] = installPs1,
+        });
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["HyPanel:ReleasesDirectory"] = releases,
+            ["HyPanel:ReleaseManifestUrl"] = "https://github.com/o/r/releases/latest/download/manifest.json",
+        }).Build();
+        var catalog = new HyPanel.Server.Releases.ReleaseCatalog(configuration);
+        try
+        {
+            await new HyPanel.Server.Releases.ReleaseSyncWorker(
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<HyPanel.Server.Releases.ReleaseSyncWorker>.Instance,
+                configuration, new SingleClientFactory(handler), catalog, fixture.Repository).RefreshAsync(CancellationToken.None);
+
+            Assert.AreEqual("2.0.0", catalog.Manifest!.Version);
+            var direct = handler.Requests.Where(uri => uri.Host == "github.com").Select(uri => uri.Segments[^1]).ToArray();
+            CollectionAssert.AreEquivalent(new[] { "manifest.json", "SHA256SUMS" }, direct, "trust anchors bypass the mirror");
+            var mirrored = handler.Requests.Where(uri => uri.Host == "mirror.example").ToArray();
+            Assert.AreEqual(2 + assets.Count, mirrored.Length, "installers and Agent binaries go through the mirror");
+            Assert.IsTrue(mirrored.All(uri => Uri.UnescapeDataString(uri.AbsolutePath).Contains("https://github.com/o/r/releases/latest/download/")));
+        }
+        finally
+        {
+            Directory.Delete(releases, recursive: true);
+        }
+    }
+
+    private static string RidOf(string fileName) =>
+        HyPanel.Server.Releases.ReleaseCatalog.SupportedRids.Single(rid => fileName.EndsWith($"-{rid}.tar.gz", StringComparison.Ordinal) ||
+                                                                          fileName.EndsWith($"-{rid}.zip", StringComparison.Ordinal));
+
+    /// <summary>Serves files by name (the mirror form carries the official URL, escaped, as its last segment).</summary>
+    private sealed class RecordingReleaseHandler(Dictionary<string, byte[]> files) : HttpMessageHandler
+    {
+        public List<Uri> Requests { get; } = [];
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Requests.Add(request.RequestUri!);
+            var official = Uri.UnescapeDataString(request.RequestUri!.AbsolutePath.TrimStart('/'));
+            var name = official.Contains('/') ? official[(official.LastIndexOf('/') + 1)..] : official;
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                { RequestMessage = request, Content = new ByteArrayContent(files[name]) });
+        }
+    }
+
+    private sealed class SingleClientFactory(HttpMessageHandler handler) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+    }
+
+    [TestMethod]
     public async Task ResetTraffic_ClearsUsageImmediately()
     {
         await using var fixture = await TestDatabase.CreateAsync();

@@ -54,9 +54,10 @@ internal sealed partial class ServerUpdateService(IConfiguration configuration, 
     public async Task RefreshAsync(CancellationToken cancellationToken)
     {
         var client = clients.CreateClient("server-update");
-        var mirror = repository is null ? null : (await repository.GetGlobalSettingsAsync(cancellationToken)).GithubMirrorBaseUrl;
-        using var request = new HttpRequestMessage(HttpMethod.Get, GitHubMirror.Apply(mirror,
-            new Uri("https://api.github.com/repos/greepar/HyPanel/releases/latest")));
+        // Release metadata (version and asset SHA-256 digests) always comes straight from GitHub; the mirror is only
+        // used for the asset download, which is verified against these digests.
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            new Uri("https://api.github.com/repos/greepar/HyPanel/releases/latest"));
         request.Headers.UserAgent.ParseAdd("HyPanel/1.0");
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();

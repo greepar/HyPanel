@@ -30,13 +30,13 @@ internal sealed class BackendReleaseSyncWorker(ILogger<BackendReleaseSyncWorker>
     {
         Directory.CreateDirectory(catalog.ReleasesDirectory);
         var client = clients.CreateClient("backend-release-sync");
-        var mirror = (await repository.GetGlobalSettingsAsync(cancellationToken)).GithubMirrorBaseUrl;
         foreach (var source in BackendReleaseSources.All)
         {
             try
             {
-                using var request = new HttpRequestMessage(HttpMethod.Get, GitHubMirror.Apply(mirror,
-                    new Uri($"https://api.github.com/repos/{source.Repository}/releases/latest")));
+                // Version checks go straight to GitHub; only the binary download below uses the mirror.
+                using var request = new HttpRequestMessage(HttpMethod.Get,
+                    new Uri($"https://api.github.com/repos/{source.Repository}/releases/latest"));
                 request.Headers.UserAgent.ParseAdd("HyPanel/1.0");
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 response.EnsureSuccessStatusCode();

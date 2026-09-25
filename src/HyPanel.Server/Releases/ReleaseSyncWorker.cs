@@ -34,8 +34,10 @@ internal sealed class ReleaseSyncWorker(
                      ?? "https://github.com/greepar/HyPanel/releases/latest/download/manifest.json";
         if (!Uri.TryCreate(source, UriKind.Absolute, out var manifestUri) || manifestUri.Scheme != Uri.UriSchemeHttps)
             throw new InvalidOperationException("HyPanel:ReleaseManifestUrl must be HTTPS.");
-        manifestUri = GitHubMirror.Apply(repository is null ? null
-            : (await repository.GetGlobalSettingsAsync(cancellationToken)).GithubMirrorBaseUrl, manifestUri);
+        // The manifest and SHA256SUMS (the trust anchors) come straight from GitHub; installers and Agent binaries
+        // are downloaded through the mirror when one is set and verified against them.
+        var mirror = repository is null ? null
+            : (await repository.GetGlobalSettingsAsync(cancellationToken)).GithubMirrorBaseUrl;
         var client = clients.CreateClient("release-sync");
         using var manifestResponse = await client.GetAsync(manifestUri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         manifestResponse.EnsureSuccessStatusCode();
@@ -55,13 +57,13 @@ internal sealed class ReleaseSyncWorker(
             var baseUri = new Uri(manifestUri, ".");
             var checksums = await DownloadChecksumsAsync(client, new Uri(baseUri, "SHA256SUMS"), cancellationToken);
             foreach (var fileName in InstallerFileNames)
-                await DownloadBoundedAsync(client, new Uri(baseUri, fileName),
+                await DownloadBoundedAsync(client, GitHubMirror.Apply(mirror, new Uri(baseUri, fileName)),
                     Path.Combine(temporaryDirectory, fileName), checksums[fileName], cancellationToken);
             if (!assetsCurrent)
             {
                 foreach (var asset in manifest.Assets)
                 {
-                    var assetUri = new Uri(baseUri, Uri.EscapeDataString(asset.FileName));
+                    var assetUri = GitHubMirror.Apply(mirror, new Uri(baseUri, Uri.EscapeDataString(asset.FileName)));
                     await DownloadVerifiedAsync(client, assetUri, Path.Combine(temporaryDirectory, asset.FileName), asset,
                         cancellationToken);
                 }
