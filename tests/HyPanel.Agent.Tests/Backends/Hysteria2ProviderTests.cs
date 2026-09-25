@@ -45,6 +45,18 @@ public sealed class Hysteria2ProviderTests
     }
 
     [TestMethod]
+    public async Task RenderConfigAsync_WithoutObfsPassword_OmitsObfuscation()
+    {
+        var json = CreateConfigJson().Replace($",\"obfsPassword\":\"{ObfsPassword}\"", string.Empty, StringComparison.Ordinal);
+        var rendered = await provider.RenderConfigAsync(CreateDesiredState(configJson: json), CancellationToken.None);
+        var yaml = Encoding.UTF8.GetString(rendered.Content.ToArray());
+
+        Assert.IsFalse(json.Contains("obfsPassword", StringComparison.Ordinal));
+        Assert.IsFalse(yaml.Contains("obfs:", StringComparison.Ordinal));
+        Assert.IsFalse(yaml.Contains("salamander", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public async Task RenderConfigAsync_AllowIpv6_UsesBracketedListenAddress()
     {
         var rendered = await provider.RenderConfigAsync(CreateDesiredState(listenHost: "2001:db8::10"), CancellationToken.None);

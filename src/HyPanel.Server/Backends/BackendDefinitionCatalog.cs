@@ -47,7 +47,7 @@ internal static class BackendDefinitionCatalog
                 Field("certificateId", "证书", "certificate", required: true),
                 Field("authPassword", "认证密码", "password", required: true, secret: true, generate: true),
                 Field("masqueradeUrl", "伪装地址", "text", required: true, defaultValue: "https://example.com/"),
-                Field("obfsPassword", "Salamander 混淆密码", "password", secret: true, generate: true),
+                Field("obfsPassword", "Salamander 混淆密码", "password", secret: true),
                 Field("upMbps", "上行 Mbps", "number", required: true, defaultValue: "100", min: 1),
                 Field("downMbps", "下行 Mbps", "number", required: true, defaultValue: "1000", min: 1),
                 Field("portHopping", "端口跳跃（可选）", "text",
@@ -89,7 +89,6 @@ internal static class BackendDefinitionCatalog
         "hysteria2" => new Dictionary<string, string>
         {
             ["authPassword"] = SecretGenerator.Base64Url(24),
-            ["obfsPassword"] = SecretGenerator.Base64Url(24),
             ["masqueradeUrl"] = MasqueradeSites[System.Security.Cryptography.RandomNumberGenerator.GetInt32(MasqueradeSites.Length)]
         },
         "xray" => RealityDefaults(),

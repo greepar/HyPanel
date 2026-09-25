@@ -70,6 +70,11 @@ const emptyUser: UserForm = {
   expiresAtUtc: "",
   groupId: "",
 };
+/** 24 random bytes as base64url, the same shape the Server generates for Hysteria2 secrets. */
+const randomSecret = () => {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+};
 /** Placeholder the Server returns in place of stored secrets. */
 const REDACTED = "[REDACTED]";
 const GIB = 1024 ** 3;
@@ -2260,6 +2265,35 @@ function ServiceEditor({
   };
   const renderField = (field: BackendField) => {
     if (!form) return null;
+    // Salamander obfuscation is opt-in: it costs noticeable CPU on both ends. Off means no obfs password.
+    if (form.backendType === "hysteria2" && field.key === "obfsPassword") {
+      const enabled = (form.values[field.key] ?? "") !== "";
+      return (
+        <div className="obfs-field" key={field.key}>
+          <label className="switch form-switch">
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(event) => change(field.key, event.currentTarget.checked ? randomSecret() : "")}
+            />
+            <span />
+            启用 Salamander 混淆
+          </label>
+          <p className="field-help">混淆可以让流量特征更难识别，但会明显增加服务器和客户端的 CPU 占用。一般不需要开启。</p>
+          {enabled && (
+            <label>
+              {field.label}
+              <PasswordInput
+                required
+                value={form.values[field.key] ?? ""}
+                onValue={(value) => change(field.key, value)}
+                beforeReveal={revealSecrets}
+              />
+            </label>
+          )}
+        </div>
+      );
+    }
     if (field.kind === "fixed") {
       const display =
         field.fixedKind === "boolean"

@@ -551,3 +551,5 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 .qr-reveal img { display: block; filter: blur(9px); transition: filter .2s ease }
 .qr-reveal.revealed img { filter: none }
 .qr-cover { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 6px; color: #171717; font-size: 13px; font-weight: 600 }
+.obfs-field { display: grid; gap: 8px; grid-column: 1 / -1 }
+.obfs-field .field-help { margin: 0 }

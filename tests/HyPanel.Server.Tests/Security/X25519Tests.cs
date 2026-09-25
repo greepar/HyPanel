@@ -61,11 +61,10 @@ public sealed class X25519Tests
     public void GenerateDefaults_UsesPerBackendSecretFieldNamesAndUniqueValues()
     {
         var hysteria = BackendDefinitionCatalog.GenerateDefaults("hysteria2");
-        Assert.AreEqual(3, hysteria.Count);
+        Assert.AreEqual(2, hysteria.Count);
         CollectionAssert.Contains(BackendDefinitionCatalog.MasqueradeSites, hysteria["masqueradeUrl"]);
         Assert.IsTrue(hysteria.ContainsKey("authPassword"));
-        Assert.IsTrue(hysteria.ContainsKey("obfsPassword"));
-        Assert.AreNotEqual(hysteria["authPassword"], hysteria["obfsPassword"]);
+        Assert.IsFalse(hysteria.ContainsKey("obfsPassword"), "Salamander obfuscation is opt-in");
 
         var xray = BackendDefinitionCatalog.GenerateDefaults("xray");
         Assert.AreEqual(5, xray.Count);
