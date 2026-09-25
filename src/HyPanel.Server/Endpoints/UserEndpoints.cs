@@ -256,7 +256,7 @@ internal static class UserEndpoints
         var token = await repository.GetSubscriptionTokenAsync(user.Id, ct);
         return token is null
             ? Results.NotFound()
-            : Results.Json(new RotateSubscriptionTokenResponse(token),
+            : Results.Json(new RotateSubscriptionTokenResponse(token, await SubscriptionUrlAsync(request, repository, token, ct)),
                 ServerJsonSerializerContext.Default.RotateSubscriptionTokenResponse);
     }
 
@@ -268,9 +268,13 @@ internal static class UserEndpoints
         var token = await repository.ResetSubscriptionAsync(user.Id, NewToken(), ct);
         return token is null
             ? Results.Unauthorized()
-            : Results.Json(new RotateSubscriptionTokenResponse(token),
+            : Results.Json(new RotateSubscriptionTokenResponse(token, await SubscriptionUrlAsync(request, repository, token, ct)),
                 ServerJsonSerializerContext.Default.RotateSubscriptionTokenResponse);
     }
+
+    private static async Task<string> SubscriptionUrlAsync(HttpRequest request, SqliteServerRepository repository,
+        string token, CancellationToken ct) =>
+        $"{await PanelAddress.ResolveAsync(request, repository, ct)}/s/{Uri.EscapeDataString(token)}";
 
     internal static bool IsValidTrafficLimit(long? value) => value is null or >= 0 and <= MaximumBrowserSafeBytes;
 

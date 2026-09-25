@@ -86,7 +86,7 @@ internal sealed record ServiceInstanceRecord(
 internal sealed record BackendUpdateTargetRecord(Guid NodeId, Guid ServiceId, string BackendType,
     string DesiredVersion, string ReportedRid, string Policy);
 internal sealed record GlobalSettingsRecord(string AgentUpdateDefaultPolicy, string BackendUpdateDefaultPolicy,
-    string? GithubMirrorBaseUrl, DateTimeOffset UpdatedAtUtc);
+    string? GithubMirrorBaseUrl, DateTimeOffset UpdatedAtUtc, string? PanelUrl = null);
 /// <summary>
 /// A TLS certificate source. <c>Upload</c> carries PEM (validity/fingerprint known); <c>Path</c> and <c>Acme</c> carry
 /// the domain in <see cref="San"/> (<c>DNS:name</c>) so subscriptions can derive SNI the same way.

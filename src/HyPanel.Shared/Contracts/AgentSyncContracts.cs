@@ -18,7 +18,8 @@ public sealed record AgentSyncResponse(
     IReadOnlyList<AgentCommand> Commands,
     IReadOnlyList<Guid> AcceptedUsageBatchIds,
     int SyncIntervalSeconds,
-    AgentUpdateDescriptor? AgentUpdate = null);
+    AgentUpdateDescriptor? AgentUpdate = null,
+    string? PanelUrl = null);
 
 public enum AgentUpdateStatus
 {

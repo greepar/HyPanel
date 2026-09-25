@@ -5,10 +5,10 @@ using HyPanel.Server.Releases;
 using HyPanel.Server.Updates;
 
 internal sealed record UpdateGlobalSettingsRequest(string AgentUpdateDefaultPolicy,
-    string BackendUpdateDefaultPolicy, string? GithubMirrorBaseUrl);
+    string BackendUpdateDefaultPolicy, string? GithubMirrorBaseUrl, string? PanelUrl = null);
 internal sealed record GlobalSettingsResponse(string AgentUpdateDefaultPolicy, string BackendUpdateDefaultPolicy,
     string? GithubMirrorBaseUrl, string? AgentReleaseVersion, IReadOnlyDictionary<string, string> BackendReleases,
-    ServerUpdateStatus Server, string DataDirectory, long DatabaseSizeBytes);
+    ServerUpdateStatus Server, string DataDirectory, long DatabaseSizeBytes, string? PanelUrl, string CurrentUrl);
 
 internal static class GlobalSettingsEndpoints
 {
@@ -31,7 +31,8 @@ internal static class GlobalSettingsEndpoints
         var database = connections.DatabasePath;
         var response = new GlobalSettingsResponse(settings.AgentUpdateDefaultPolicy,
             settings.BackendUpdateDefaultPolicy, settings.GithubMirrorBaseUrl, agents.Manifest?.Version, versions,
-            server.GetStatus(), data, File.Exists(database) ? new FileInfo(database).Length : 0);
+            server.GetStatus(), data, File.Exists(database) ? new FileInfo(database).Length : 0, settings.PanelUrl,
+            PanelAddress.FromRequest(request));
         return Results.Json(response, ServerJsonSerializerContext.Default.GlobalSettingsResponse);
     }
 
@@ -43,6 +44,10 @@ internal static class GlobalSettingsEndpoints
         if (body.AgentUpdateDefaultPolicy is not ("Manual" or "Auto")
             || body.BackendUpdateDefaultPolicy is not ("Manual" or "Auto")
             || !TryMirror(body.GithubMirrorBaseUrl, out var mirror)) return Results.BadRequest();
+        if (!PanelAddress.TryNormalize(body.PanelUrl, out var panelUrl))
+            return Results.Json(new CertificateErrorResponse("面板地址必须是 https:// 开头的域名地址，不能带路径。"),
+                ServerJsonSerializerContext.Default.CertificateErrorResponse, statusCode: StatusCodes.Status400BadRequest);
+        await repository.SetPanelUrlAsync(panelUrl, ct);
         var updated = await repository.UpdateGlobalSettingsAsync(body.AgentUpdateDefaultPolicy,
             body.BackendUpdateDefaultPolicy, mirror, ct);
         return Results.Json(updated, ServerJsonSerializerContext.Default.GlobalSettingsRecord);

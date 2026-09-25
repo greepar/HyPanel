@@ -134,7 +134,9 @@ internal static class AgentSyncEndpoints
             responseCommands,
             request.UsageBatches.Select(batch => batch.BatchId).ToArray(),
             SyncIntervalSeconds,
-            update);
+            update,
+            // Agents move to the configured panel address once an authenticated sync there succeeds.
+            (await repository.GetGlobalSettingsAsync(cancellationToken)).PanelUrl);
         return Results.Json(response, HyPanelJsonSerializerContext.Default.AgentSyncResponse);
     }
 

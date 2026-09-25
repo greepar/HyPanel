@@ -154,7 +154,7 @@ internal sealed record UserGroupResponse(Guid Id, string Name, bool IsDefault, b
 
 internal sealed record CreateUserResponse(UserResponse User, string SubscriptionToken);
 
-internal sealed record RotateSubscriptionTokenResponse(string SubscriptionToken);
+internal sealed record RotateSubscriptionTokenResponse(string SubscriptionToken, string? SubscriptionUrl = null);
 internal sealed record UserServiceAccessResponse(Guid ServiceId, string CredentialStatus, bool MultiUser,
     bool PerUserTraffic, bool TrafficStats);
 

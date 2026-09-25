@@ -49,7 +49,7 @@ internal static class BackendDefinitionCatalog
                 Field("masqueradeUrl", "伪装地址", "text", required: true, defaultValue: "https://example.com/"),
                 Field("obfsPassword", "Salamander 混淆密码", "password", secret: true, generate: true),
                 Field("upMbps", "上行 Mbps", "number", required: true, defaultValue: "100", min: 1),
-                Field("downMbps", "下行 Mbps", "number", required: true, defaultValue: "100", min: 1),
+                Field("downMbps", "下行 Mbps", "number", required: true, defaultValue: "1000", min: 1),
                 Field("portHopping", "端口跳跃（可选）", "text",
                     placeholder: "如 20000-30000 或 20000,20005,21000-21100")
             ]),
@@ -89,7 +89,8 @@ internal static class BackendDefinitionCatalog
         "hysteria2" => new Dictionary<string, string>
         {
             ["authPassword"] = SecretGenerator.Base64Url(24),
-            ["obfsPassword"] = SecretGenerator.Base64Url(24)
+            ["obfsPassword"] = SecretGenerator.Base64Url(24),
+            ["masqueradeUrl"] = MasqueradeSites[System.Security.Cryptography.RandomNumberGenerator.GetInt32(MasqueradeSites.Length)]
         },
         "xray" => RealityDefaults(),
         "xray-ss" => new Dictionary<string, string>
@@ -108,6 +109,13 @@ internal static class BackendDefinitionCatalog
     [
         "www.cloudflare.com", "www.visa.cn", "www.visa.com", "www.nvidia.com", "www.amd.com", "addons.mozilla.org",
         "www.tesla.com", "dl.google.com"
+    ];
+
+    /// <summary>Hysteria2 masquerade upstreams: real, stable HTTPS sites that non-proxy probes are shown.</summary>
+    internal static readonly string[] MasqueradeSites =
+    [
+        "https://www.bing.com/", "https://www.apple.com/", "https://www.cloudflare.com/", "https://www.mozilla.org/",
+        "https://www.wikipedia.org/", "https://www.nvidia.com/"
     ];
 
     private static Dictionary<string, string> RealityDefaults()

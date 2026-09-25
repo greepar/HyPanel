@@ -35,6 +35,8 @@ public sealed class SyncWorker(
     private const int CredentialRejectedRetrySeconds = 300;
     internal const string RevokedMarkerFileName = "revoked";
     private static readonly TimeSpan SyncRequestTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan PanelMoveRetryDelay = TimeSpan.FromMinutes(10);
+    private DateTimeOffset nextPanelMoveAttempt;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -112,6 +114,8 @@ public sealed class SyncWorker(
                 {
                     await updater.ApplyOfferAsync(response.AgentUpdate, credentials, stoppingToken);
                 }
+                if (response.PanelUrl is { } panelUrl)
+                    credentials = await TryMovePanelAsync(credentials, panelUrl, state.AppliedRevision, stoppingToken);
                 backoffSeconds = 0;
                 nextDelaySeconds = response.SyncIntervalSeconds is >= 1 and <= 300
                     ? response.SyncIntervalSeconds
@@ -164,6 +168,45 @@ public sealed class SyncWorker(
             await Task.Delay(TimeSpan.FromSeconds(nextDelaySeconds) + TimeSpan.FromMilliseconds(jitterMilliseconds),
                 timeProvider, stoppingToken);
         }
+    }
+
+    /// <summary>
+    /// Switches to the panel address the Panel advertises, but only after an authenticated sync at that address
+    /// succeeds; until then the current address keeps working and the move is retried every 10 minutes.
+    /// </summary>
+    internal async Task<AgentCredentials> TryMovePanelAsync(AgentCredentials credentials, string panelUrl,
+        long appliedRevision, CancellationToken cancellationToken)
+    {
+        if (PanelMoveTarget(credentials.PanelBaseUrl, panelUrl) is not { } normalized ||
+            timeProvider.GetUtcNow() < nextPanelMoveAttempt) return credentials;
+
+        var candidate = credentials with { PanelBaseUrl = normalized };
+        try
+        {
+            await SyncAsync(candidate, appliedRevision, WithPortHoppingErrors(reconciler.GetRuntimeStates()), [], [],
+                await updateStateStore.GetReportAsync(cancellationToken), cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException ||
+                                          !cancellationToken.IsCancellationRequested)
+        {
+            nextPanelMoveAttempt = timeProvider.GetUtcNow() + PanelMoveRetryDelay;
+            logger.LogWarning("The Panel moved to {PanelUrl}, but it is not reachable yet; staying on {Current}.",
+                normalized, credentials.PanelBaseUrl);
+            return credentials;
+        }
+
+        await credentialStore.SaveAsync(candidate, cancellationToken);
+        logger.LogInformation("Panel address changed from {Previous} to {PanelUrl}.", credentials.PanelBaseUrl, normalized);
+        return candidate;
+    }
+
+    /// <summary>The https origin to move to, or null when the advertised address is invalid or already in use.</summary>
+    internal static string? PanelMoveTarget(string current, string advertised)
+    {
+        if (!Uri.TryCreate(advertised, UriKind.Absolute, out var target) || target.Scheme != Uri.UriSchemeHttps ||
+            string.IsNullOrEmpty(target.Host) || !string.IsNullOrEmpty(target.UserInfo)) return null;
+        var normalized = target.GetLeftPart(UriPartial.Authority);
+        return string.Equals(normalized, current.TrimEnd('/'), StringComparison.OrdinalIgnoreCase) ? null : normalized;
     }
 
     private async Task<AgentSyncResponse> SyncAsync(AgentCredentials credentials, long appliedRevision,

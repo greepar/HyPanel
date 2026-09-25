@@ -176,6 +176,14 @@ function SettingsPage({ api, setError, account }: PageProps & { account: boolean
             ? <button className="button button-primary" type="button" disabled={updating} onClick={() => void update()}>{updating ? "正在更新…" : `立即更新到 ${server.latestVersion}`}</button>
             : <button className="button button-secondary" type="button" disabled={checking || updating} onClick={() => void check()}>{checking ? "正在检查…" : "检查更新"}</button>}</div>}
         </section>
+        <section className="card panel stack-panel">
+          <SectionTitle title="面板地址" description="节点同步、安装命令和订阅链接都使用这个地址。留空则使用当前浏览器访问的地址。" />
+          <div className="modal-form">
+            <label>面板地址<input placeholder={settings.currentUrl} value={settings.panelUrl ?? ""} onInput={event => setSettings({ ...settings, panelUrl: event.currentTarget.value || null })} /></label>
+            <p className="field-help">更换域名：先让新域名也解析到面板并配好 HTTPS，在这里填入新地址并保存。节点会在下次同步时先验证新地址，验证通过后自动切换；确认节点全部在线后再停用旧域名。已导入的订阅需要用新链接重新导入。</p>
+          </div>
+          <div className="card-actions"><button className="button button-primary" type="button" onClick={() => void save()}>保存</button></div>
+        </section>
         <section className="card panel"><SectionTitle title="自动更新" description="新建节点和服务时的默认策略；已有节点可在节点设置里单独开关。" /><div className="modal-form"><label className="switch"><input type="checkbox" checked={settings.agentUpdateDefaultPolicy === "Auto"} onChange={event => setSettings({ ...settings, agentUpdateDefaultPolicy: event.currentTarget.checked ? "Auto" : "Manual" })} /><span />新节点自动更新 Agent</label><label className="switch"><input type="checkbox" checked={settings.backendUpdateDefaultPolicy === "Auto"} onChange={event => setSettings({ ...settings, backendUpdateDefaultPolicy: event.currentTarget.checked ? "Auto" : "Manual" })} /><span />新服务自动更新代理内核</label><label>GitHub 镜像地址<input placeholder="留空使用 GitHub 官方源" value={settings.githubMirrorBaseUrl ?? ""} onInput={event => setSettings({ ...settings, githubMirrorBaseUrl: event.currentTarget.value || null })} /></label><button className="button button-primary" type="button" onClick={() => void save()}>保存设置</button></div></section>
          <section className="card panel"><SectionTitle title="Release 与数据" description="受控的官方发布来源" /><dl className="facts-list"><div><dt>Agent Release</dt><dd>{settings.agentReleaseVersion ?? "Unavailable"}</dd></div>{Object.entries(settings.backendReleases).map(([name, version]) => <div key={name}><dt>{name}</dt><dd>{version}</dd></div>)}<div><dt>数据目录</dt><dd>{settings.dataDirectory}</dd></div><div><dt>数据库</dt><dd>{formatBytes(settings.databaseSizeBytes)}</dd></div></dl></section>
           {account && <PasskeyPanel api={api} setError={setError} />}
@@ -1839,6 +1847,8 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
         <ServiceEditor
           service={editor.service}
           nodeId={nodeId}
+          nodeName={node.displayName}
+          existingNames={services.map((item) => item.name)}
           publicIpv4={node.publicIpv4 ?? null}
           api={api}
           save={save}
@@ -2091,6 +2101,8 @@ function ServiceLogPanel({
 function ServiceEditor({
   service,
   nodeId,
+  nodeName,
+  existingNames,
   publicIpv4,
   api,
   save,
@@ -2099,6 +2111,8 @@ function ServiceEditor({
 }: {
   service: Service | null;
   nodeId: string;
+  nodeName: string;
+  existingNames: string[];
   publicIpv4: string | null;
   api: ApiClient;
   save: (form: ServiceForm, service: Service | null, address: PublicEndpoint | null) => Promise<void>;
@@ -2119,6 +2133,14 @@ function ServiceEditor({
   const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [busy, setBusy] = useState(false);
   const [generating, setGenerating] = useState(false);
+  // New services are named "<node>-<protocol>" (made unique on the node) until the admin types a name.
+  const defaultName = (backendType: string) => {
+    const base = `${nodeName}-${{ hysteria2: "hy2", xray: "reality", "xray-ss": "ss" }[backendType] ?? backendType}`;
+    let name = base;
+    for (let index = 2; existingNames.includes(name); index++) name = `${base}-${index}`;
+    return name;
+  };
+  const freshForm = (definition: BackendDefinition) => ({ ...emptyService(definition), name: defaultName(definition.backendType) });
   const generate = async (definition: BackendDefinition) => {
     setGenerating(true);
     try {
@@ -2155,7 +2177,7 @@ function ServiceEditor({
         if (service) {
           setForm(formFor(service, definition));
         } else {
-          setForm(emptyService(definition));
+          setForm(freshForm(definition));
           void generate(definition);
         }
       } catch (reason) {
@@ -2168,7 +2190,17 @@ function ServiceEditor({
   }, []);
   useEffect(() => {
     if (form?.backendType !== "hysteria2") return;
-    void api.certificates().then(setCertificates).catch(reason => setError(messageFor(reason, "无法加载证书")));
+    void api.certificates().then((list) => {
+      setCertificates(list);
+      // Preselect a usable certificate (unexpired, readable) so a new service needs no extra clicks.
+      const usable = list.find((item) => !item.sourceError && (!item.expiresAtUtc || new Date(item.expiresAtUtc) > new Date())) ?? list[0];
+      if (usable)
+        setForm((current) =>
+          current && current.backendType === "hysteria2" && !current.values.certificateId
+            ? { ...current, values: { ...current.values, certificateId: usable.id } }
+            : current,
+        );
+    }).catch(reason => setError(messageFor(reason, "无法加载证书")));
   }, [form?.backendType]);
   // Stored secrets arrive as "[REDACTED]"; revealing one loads the real values of all of them into the form.
   const revealSecrets = async () => {
@@ -2199,7 +2231,11 @@ function ServiceEditor({
         : current,
     );
   const switchBackend = (definition: BackendDefinition) => {
-    setForm(emptyService(definition));
+    setForm((current) => {
+      const next = freshForm(definition);
+      // Keep a name the admin typed; replace only the generated one.
+      return current && current.name !== defaultName(current.backendType) ? { ...next, name: current.name } : next;
+    });
     void generate(definition);
   };
   const submit = async (event: Event) => {

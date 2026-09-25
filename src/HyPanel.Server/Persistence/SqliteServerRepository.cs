@@ -940,11 +940,22 @@ internal sealed partial class SqliteServerRepository(
     {
         await using var connection = await connectionFactory.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT agent_update_default_policy,backend_update_default_policy,github_mirror_base_url,updated_at_utc FROM global_settings WHERE singleton=1;";
+        command.CommandText = "SELECT agent_update_default_policy,backend_update_default_policy,github_mirror_base_url,updated_at_utc,panel_url FROM global_settings WHERE singleton=1;";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) throw new InvalidOperationException("Global settings are missing.");
         return new GlobalSettingsRecord(reader.GetString(0), reader.GetString(1),
-            reader.IsDBNull(2) ? null : reader.GetString(2), SqliteValue.ToDateTimeOffset(reader.GetString(3)));
+            reader.IsDBNull(2) ? null : reader.GetString(2), SqliteValue.ToDateTimeOffset(reader.GetString(3)),
+            reader.IsDBNull(4) ? null : reader.GetString(4));
+    }
+
+    public async Task SetPanelUrlAsync(string? panelUrl, CancellationToken cancellationToken)
+    {
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE global_settings SET panel_url=@url,updated_at_utc=@now WHERE singleton=1;";
+        command.Parameters.AddWithValue("@url", panelUrl is null ? DBNull.Value : panelUrl);
+        command.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<GlobalSettingsRecord> UpdateGlobalSettingsAsync(string agentPolicy, string backendPolicy,

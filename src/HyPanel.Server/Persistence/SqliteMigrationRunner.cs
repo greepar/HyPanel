@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 22;
+    public const long CurrentSchemaVersion = 23;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -27,6 +27,7 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
     private const long StableControlPortSchemaVersion = 20;
     private const long PasskeysSchemaVersion = 21;
     private const long CountryAndTrafficResetSchemaVersion = 22;
+    private const long PanelUrlSchemaVersion = 23;
     public const string DefaultGroupId = "00000000-0000-0000-0000-000000000001";
 
     public async Task MigrateAsync(CancellationToken cancellationToken)
@@ -581,6 +582,20 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             insertMigration.CommandText =
                 "INSERT INTO schema_migrations (version,applied_at_utc) VALUES (@version,@at);";
             insertMigration.Parameters.AddWithValue("@version", CountryAndTrafficResetSchemaVersion);
+            insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+            await insertMigration.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, PanelUrlSchemaVersion, cancellationToken))
+        {
+            // Public panel address used for install commands and subscription links, and pushed to Agents.
+            await ExecuteAsync(connection, transaction,
+                "ALTER TABLE global_settings ADD COLUMN panel_url TEXT NULL;", cancellationToken);
+            await using var insertMigration = connection.CreateCommand();
+            insertMigration.Transaction = transaction;
+            insertMigration.CommandText =
+                "INSERT INTO schema_migrations (version,applied_at_utc) VALUES (@version,@at);";
+            insertMigration.Parameters.AddWithValue("@version", PanelUrlSchemaVersion);
             insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
             await insertMigration.ExecuteNonQueryAsync(cancellationToken);
         }

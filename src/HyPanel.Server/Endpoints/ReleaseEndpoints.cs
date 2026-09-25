@@ -107,6 +107,9 @@ internal static class ReleaseEndpoints
         {
             return Results.BadRequest();
         }
+        // A configured panel address wins, so nodes enrol against the long-term domain rather than whatever
+        // address the admin happens to have open.
+        baseUrl = (await repository.GetGlobalSettingsAsync(cancellationToken)).PanelUrl ?? baseUrl;
 
         var token = await enrollmentService.IssueTokenAsync(nodeId, EnrollmentTokenLifetime, cancellationToken);
         var installUrl = baseUrl + "/i/" + installCodes.Issue(
