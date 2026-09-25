@@ -9,6 +9,15 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <PublishAot>true</PublishAot>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Size trimming for the NativeAOT binary (about -12% on linux-x64). UseSystemResourceKeys is deliberately left
+         off: it saves only ~0.5% but turns runtime error messages reported to the Panel into resource keys. -->
+    <OptimizationPreference>Size</OptimizationPreference>
+    <StackTraceSupport>false</StackTraceSupport>
+    <EventSourceSupport>false</EventSourceSupport>
+    <DebuggerSupport>false</DebuggerSupport>
+    <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
+    <HttpActivityPropagationSupport>false</HttpActivityPropagationSupport>
+    <IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies>
     <AgentBuildVersion Condition="'$(AgentBuildVersion)' == ''">$(Version)</AgentBuildVersion>
     <AgentRuntimeIdentifier Condition="'$(AgentRuntimeIdentifier)' == ''">$(RuntimeIdentifier)</AgentRuntimeIdentifier>
     <GeneratedBuildInfo>$(BaseIntermediateOutputPath)$(Configuration)/$(TargetFramework)/BuildInfo.g.cs</GeneratedBuildInfo>
