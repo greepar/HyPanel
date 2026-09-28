@@ -45,7 +45,7 @@ uninstall_agent() {
                 elif command -v rc-update >/dev/null 2>&1; then rc-update del hypanel-agent default >/dev/null 2>&1 || true
                 fi
             fi
-            rm -f /etc/systemd/system/hypanel-agent.service /etc/init.d/hypanel-agent /run/hypanel-agent.pid
+            rm -f /etc/systemd/system/hypanel-agent.service /etc/init.d/hypanel-agent /run/hypanel-agent.pid /var/log/hypanel-agent.log
             # Network tuning is reverted on the next boot; live values are left alone.
             rm -f /etc/sysctl.d/99-hypanel-network.conf /etc/modules-load.d/hypanel-bbr.conf
             command -v systemctl >/dev/null 2>&1 && { systemctl daemon-reload >/dev/null 2>&1 || true; systemctl reset-failed hypanel-agent.service >/dev/null 2>&1 || true; }
@@ -597,7 +597,7 @@ case "$OS" in
 #!/bin/sh /etc/rc.common
 START=95
 USE_PROCD=1
-start_service() { . "$BOOTSTRAP_ENV"; export HYPANEL_PANEL_URL HYPANEL_ENROLLMENT_TOKEN HYPANEL_DATA_DIR; procd_open_instance; procd_set_param command "$AGENT_PATH"; procd_set_param respawn 3600 10 0; procd_close_instance; }
+start_service() { . "$BOOTSTRAP_ENV"; export HYPANEL_PANEL_URL HYPANEL_ENROLLMENT_TOKEN HYPANEL_DATA_DIR; procd_open_instance; procd_set_param command "$AGENT_PATH"; procd_set_param respawn 3600 10 0; procd_set_param stdout 1; procd_set_param stderr 1; procd_close_instance; }
 EOF
             chmod 755 /etc/init.d/hypanel-agent
             /etc/init.d/hypanel-agent enable
@@ -631,6 +631,10 @@ Group=$AGENT_GROUP
 WantedBy=multi-user.target
 EOF
         elif command -v rc-service >/dev/null 2>&1; then
+            # OpenRC discards a supervised daemon's output unless it is sent to a log file.
+            touch /var/log/hypanel-agent.log
+            chown "$AGENT_USER:$AGENT_GROUP" /var/log/hypanel-agent.log
+            chmod 640 /var/log/hypanel-agent.log
             cat > /etc/init.d/hypanel-agent <<EOF
 #!/sbin/openrc-run
 name="HyPanel Agent"
@@ -642,6 +646,8 @@ directory="$DATA_DIR"
 pidfile=/run/hypanel-agent.pid
 command_user="$AGENT_USER:$AGENT_GROUP"
 capabilities="^cap_net_bind_service,^cap_net_admin"
+output_log=/var/log/hypanel-agent.log
+error_log=/var/log/hypanel-agent.log
 depend() { need net; after firewall; }
 set -a
 . "$BOOTSTRAP_ENV"

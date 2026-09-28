@@ -468,15 +468,26 @@ public sealed class ServiceReconciler(
                     continue;
                 }
                 var validation = await provider.ValidateAsync(service, cancellationToken);
+                string? invalid = null;
                 if (!validation.IsValid || validation.TcpPorts is null || validation.UdpPorts is null ||
-                    validation.TcpPorts.Any(port => port is < 1 or > 65535 || tcpPorts.Contains(port)) ||
-                    validation.UdpPorts.Any(port => port is < 1 or > 65535 || udpPorts.Contains(port)))
+                    validation.TcpPorts.Any(port => port is < 1 or > 65535) ||
+                    validation.UdpPorts.Any(port => port is < 1 or > 65535))
+                    invalid = validation.ErrorCode is "invalid_users" or "invalid_control_port" or "unsupported_schema"
+                        ? validation.ErrorCode
+                        : "invalid_config";
+                else if (validation.TcpPorts.Any(tcpPorts.Contains) || validation.UdpPorts.Any(udpPorts.Contains))
+                    invalid = "port_conflict";
+                if (invalid is not null)
                 {
-                    failures.Add(new ServiceFailure(service.ServiceId, "invalid_config"));
+                    logger.LogWarning(
+                        "Service {ServiceId} ({BackendType}) failed validation: {ErrorCode} {Detail} (tcp {TcpPorts}, udp {UdpPorts}).",
+                        service.ServiceId, service.BackendType, invalid, validation.ErrorMessage,
+                        string.Join(",", validation.TcpPorts ?? []), string.Join(",", validation.UdpPorts ?? []));
+                    failures.Add(new ServiceFailure(service.ServiceId, invalid));
                     continue;
                 }
-                foreach (var port in validation.TcpPorts) tcpPorts.Add(port);
-                foreach (var port in validation.UdpPorts) udpPorts.Add(port);
+                foreach (var port in validation.TcpPorts!) tcpPorts.Add(port);
+                foreach (var port in validation.UdpPorts!) udpPorts.Add(port);
                 var config = await provider.RenderConfigAsync(service, cancellationToken);
                 if (!IsValidRenderedConfig(config))
                 {
@@ -489,8 +500,10 @@ public sealed class ServiceReconciler(
             {
                 throw;
             }
-            catch (Exception)
+            catch (Exception exception)
             {
+                logger.LogWarning("Service {ServiceId} could not be prepared: {Error}: {Message}", requested.ServiceId,
+                    exception.GetType().Name, exception.Message);
                 failures.Add(new ServiceFailure(requested.ServiceId, "invalid_config"));
             }
         }
@@ -691,6 +704,10 @@ public sealed class ServiceReconciler(
         "invalid_service" => "A service definition is invalid.",
         "artifact_unavailable" => "A required backend artifact is unavailable.",
         "invalid_config" or "invalid_rendered_config" => "Service configuration validation failed.",
+        "invalid_users" => "The service's user credentials are invalid.",
+        "invalid_control_port" => "The service's control port is invalid.",
+        "unsupported_schema" => "The service configuration schema is not supported by this Agent.",
+        "port_conflict" => "Another service on this node already uses one of this service's ports.",
         "runtime_refresh_failed" => "Runtime status could not be refreshed.",
         "health_check_failed" => "Service health check failed.",
         "process_failed" => "Backend process is not running.",

@@ -152,7 +152,7 @@ public sealed class ReconciliationInfrastructureTests
             CancellationToken.None);
 
         Assert.IsFalse(result.Succeeded);
-        Assert.AreEqual("invalid_config", result.ErrorCode);
+        Assert.AreEqual("port_conflict", result.ErrorCode);
         Assert.AreEqual(ServiceRuntimeStatus.Running, fixture.Supervisor.GetStatus(first.ServiceId).Status);
         Assert.AreEqual(ServiceRuntimeStatus.Failed,
             fixture.Reconciler.GetRuntimeStates().Single(item => item.ServiceId == second.ServiceId).Status);
