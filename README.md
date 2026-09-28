@@ -54,8 +54,8 @@ ASPNETCORE_URLS=http://0.0.0.0:8080 ./hypanel-server
 
 ## 开发
 
-需要 [`global.json`](global.json) 指定的 .NET SDK、Node.js 22+，发布时还需要 NativeAOT 工具链（交叉编译由
-StuDev.AotAnywhere 自动下载 zig）。
+需要 [`global.json`](global.json) 指定的 .NET SDK、Node.js 22+，发布时还需要本机的 NativeAOT 工具链（clang 或
+Visual Studio C++）。正式发布由 GitHub Actions 在各平台原生构建，见 `.github/workflows/release.yml`。
 
 ```bash
 npm ci --prefix web/HyPanel.Web

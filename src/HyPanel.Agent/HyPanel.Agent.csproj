@@ -1,7 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk.Worker">
 
-  <Sdk Name="StuDev.AotAnywhere" />
-
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>

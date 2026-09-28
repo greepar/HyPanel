@@ -1,7 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
-  <Sdk Name="StuDev.AotAnywhere" />
-
   <ItemGroup>
     <ProjectReference Include="..\HyPanel.Shared\HyPanel.Shared.csproj" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
@@ -53,19 +51,18 @@
     <ItemGroup><Compile Include="$(GeneratedBuildInfo)" /></ItemGroup>
   </Target>
 
-  <!-- Downloads the pinned SQLite amalgamation (checksum-verified) and compiles it for the target: with AotAnywhere's
-       zig when cross-compiling, otherwise with the native AOT toolchain (the Docker build drops AotAnywhere). The
-       object is linked into the single-file Server binary. -->
+  <!-- Downloads the pinned SQLite amalgamation (checksum-verified) and compiles it with the NativeAOT toolchain for
+       the target (honouring a cross-compilation SysRoot). The object is linked into the single-file Server binary. -->
   <Target Name="CompileStaticSqlite" Condition="'$(StaticSqlite)' == 'true'"
-          AfterTargets="SetupOSSpecificProps;OverwriteTargetTriple;SetPathToZig" BeforeTargets="LinkNative">
+          AfterTargets="SetupOSSpecificProps" BeforeTargets="LinkNative">
     <PropertyGroup>
       <_SqliteZip>$(SqliteCacheDirectory)sqlite-amalgamation-$(SqliteVersion).zip</_SqliteZip>
       <_SqliteSource>$(SqliteCacheDirectory)sqlite-amalgamation-$(SqliteVersion)/sqlite3.c</_SqliteSource>
       <_SqliteObject>$(SqliteCacheDirectory)e_sqlite3-$(RuntimeIdentifier).o</_SqliteObject>
-      <_SqliteCompiler Condition="'$(_AotAnywhereZigExe)' != '' and '$(TargetTriple)' != ''">&quot;$(_AotAnywhereZigExe)&quot; cc -target $(TargetTriple)</_SqliteCompiler>
-      <_SqliteCompiler Condition="'$(_SqliteCompiler)' == '' and '$(TargetTriple)' != ''">&quot;$(CppCompilerAndLinker)&quot; --target=$(TargetTriple)</_SqliteCompiler>
-      <_SqliteCompiler Condition="'$(_SqliteCompiler)' == ''">&quot;$(CppCompilerAndLinker)&quot;</_SqliteCompiler>
-      <_SqliteCompiler Condition="'$(_SqliteCompiler)' == '&quot;&quot;'">cc</_SqliteCompiler>
+      <_SqliteCompiler>&quot;$(CppCompilerAndLinker)&quot;</_SqliteCompiler>
+      <_SqliteCompiler Condition="'$(CppCompilerAndLinker)' == ''">cc</_SqliteCompiler>
+      <_SqliteCompiler Condition="'$(TargetTriple)' != ''">$(_SqliteCompiler) --target=$(TargetTriple)</_SqliteCompiler>
+      <_SqliteCompiler Condition="'$(SysRoot)' != ''">$(_SqliteCompiler) --sysroot=&quot;$(SysRoot)&quot;</_SqliteCompiler>
     </PropertyGroup>
     <DownloadFile Condition="!Exists('$(_SqliteZip)')" SourceUrl="https://www.sqlite.org/$(SqliteYear)/sqlite-amalgamation-$(SqliteVersion).zip"
                   DestinationFolder="$(SqliteCacheDirectory)" />
@@ -87,7 +84,8 @@
   </ItemGroup>
 
   <Target Name="BuildAndEmbedWebAssets" BeforeTargets="BeforeBuild">
-    <Exec Command="npm run build" WorkingDirectory="$(WebProjectDirectory)" />
+    <!-- Release builds inside toolchain containers set SkipWebBuild and embed the dist/ the runner already built. -->
+    <Exec Command="npm run build" WorkingDirectory="$(WebProjectDirectory)" Condition="'$(SkipWebBuild)' != 'true'" />
     <ItemGroup>
       <_WebIndex Include="$(WebProjectDirectory)/dist/index.html" />
       <_WebAsset Include="$(WebProjectDirectory)/dist/assets/*" />
