@@ -2,7 +2,6 @@ namespace HyPanel.Agent;
 
 using System.Net;
 using System.Net.Http.Headers;
-using System.Runtime.Intrinsics.X86;
 using System.Text.Json;
 using HyPanel.Shared.Contracts;
 using HyPanel.Shared.Serialization;
@@ -219,7 +218,7 @@ public sealed class SyncWorker(
         var publicIpv4 = await publicIpv4Resolver.GetAsync(cancellationToken);
         var request = new AgentSyncRequest(BuildInfo.Version, BuildInfo.RuntimeIdentifier, appliedRevision,
             metricsCollector.Collect(), services, usageBatches, results, updateReport, publicIpv4,
-            publicIpv4Resolver.CountryCode, Avx.IsSupported,
+            publicIpv4Resolver.CountryCode, CpuFeatures.SupportsX86_64V3,
             (await stateStore.LoadAsync(cancellationToken)).DesiredState?.BackendArtifacts ?? []);
         using var message =
             new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(credentials.PanelBaseUrl), SyncPath));
