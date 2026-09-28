@@ -53,6 +53,9 @@ internal sealed class BackendReleaseSyncWorker(ILogger<BackendReleaseSyncWorker>
                     var asset = github.Assets.SingleOrDefault(item => item.Name == expected);
                     if (asset is null) continue;
                     assets.Add(new BackendSourceAsset(rid, expected, asset.BrowserDownloadUrl));
+                    if (source.BackendType == "hysteria2" && BackendReleaseSources.HysteriaAvxAsset(rid) is { } avxName
+                        && github.Assets.SingleOrDefault(item => item.Name == avxName) is { } avxAsset)
+                        assets.Add(new BackendSourceAsset(rid, avxName, avxAsset.BrowserDownloadUrl, true));
                 }
                 if (assets.Count == 0) throw new InvalidDataException($"Release {github.TagName} has no supported {source.BackendType} assets.");
                 var existing = catalog.GetRelease(source.BackendType, version);
@@ -67,7 +70,24 @@ internal sealed class BackendReleaseSyncWorker(ILogger<BackendReleaseSyncWorker>
             { logger.LogWarning(exception, "Could not refresh {BackendType}; retaining cached metadata.", source.BackendType); }
         }
         catalog.Reload();
+        await CacheAvxForExistingHysteriaAsync(cancellationToken);
         await ApplyAutomaticUpdatesAsync(cancellationToken);
+    }
+
+    private async Task CacheAvxForExistingHysteriaAsync(CancellationToken cancellationToken)
+    {
+        foreach (var rid in ReleaseCatalog.SupportedRids.Where(rid => BackendReleaseSources.HysteriaAvxAsset(rid) is not null))
+        foreach (var artifact in catalog.GetArtifacts(rid).Where(artifact =>
+                     artifact.BackendType == "hysteria2" && !artifact.RequiresAvx))
+        {
+            if (catalog.GetRelease("hysteria2", artifact.Version)?.SourceAssets.Any(source =>
+                    source.Rid == rid && source.RequiresAvx) != true) continue;
+            try { await EnsureVariantCachedAsync("hysteria2", artifact.Version, rid, true, cancellationToken); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception) when (exception is HttpRequestException or IOException or InvalidDataException
+                                                  or InvalidOperationException)
+            { logger.LogWarning(exception, "Could not cache Hysteria AVX binary for {Rid}.", rid); }
+        }
     }
 
     private async Task ApplyAutomaticUpdatesAsync(CancellationToken cancellationToken)
@@ -95,10 +115,21 @@ internal sealed class BackendReleaseSyncWorker(ILogger<BackendReleaseSyncWorker>
         CancellationToken cancellationToken)
     {
         backendType = BackendArtifactCatalog.BinarySource(backendType);
-        if (catalog.FindArtifact(backendType, version, rid) is { } cached) return cached;
+        var standard = await EnsureVariantCachedAsync(backendType, version, rid, false, cancellationToken);
+        if (backendType == "hysteria2" && catalog.GetRelease(backendType, version)?.SourceAssets.Any(asset =>
+                asset.Rid == rid && asset.RequiresAvx) == true)
+            await EnsureVariantCachedAsync(backendType, version, rid, true, cancellationToken);
+        return standard;
+    }
+
+    private async Task<BackendArtifact> EnsureVariantCachedAsync(string backendType, string version, string rid,
+        bool requiresAvx, CancellationToken cancellationToken)
+    {
+        if (catalog.FindArtifact(backendType, version, rid, requiresAvx) is { } cached
+            && cached.RequiresAvx == requiresAvx) return cached;
         var release = catalog.GetRelease(backendType, version)
             ?? throw new InvalidOperationException("Backend release metadata is unavailable.");
-        var sourceAsset = release.SourceAssets.SingleOrDefault(item => item.Rid == rid)
+        var sourceAsset = release.SourceAssets.SingleOrDefault(item => item.Rid == rid && item.RequiresAvx == requiresAvx)
             ?? throw new InvalidOperationException("Backend release is unavailable for this Agent RID.");
         var source = BackendReleaseSources.Get(backendType);
         var client = clients.CreateClient("backend-release-sync");
@@ -110,15 +141,15 @@ internal sealed class BackendReleaseSyncWorker(ILogger<BackendReleaseSyncWorker>
             var mirror = (await repository.GetGlobalSettingsAsync(cancellationToken)).GithubMirrorBaseUrl;
             await DownloadAsync(client, GitHubMirror.Apply(mirror, new Uri(sourceAsset.DownloadUrl)), archive,
                 mirror is null ? null : new Uri(mirror).Host, cancellationToken);
-            var fileName = $"{backendType}-{version}-{rid}{(rid.StartsWith("win-", StringComparison.Ordinal) ? ".exe" : string.Empty)}";
+            var fileName = $"{backendType}-{version}-{rid}{(requiresAvx ? "-avx" : string.Empty)}{(rid.StartsWith("win-", StringComparison.Ordinal) ? ".exe" : string.Empty)}";
             var extracted = Path.Combine(temporary, fileName);
             await ExtractAsync(archive, sourceAsset.AssetName, source.ExecutablePath(rid), extracted, cancellationToken);
             await using var stream = File.OpenRead(extracted);
             var sha = Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken)).ToLowerInvariant();
-            var artifact = new BackendArtifact(backendType, version, rid, fileName, sha, stream.Length);
+            var artifact = new BackendArtifact(backendType, version, rid, fileName, sha, stream.Length, requiresAvx);
             BackendArtifactCatalog.ValidateArtifact(artifact, backendType, version);
             File.Move(extracted, Path.Combine(catalog.ReleasesDirectory, fileName), overwrite: true);
-            var updated = release with { Artifacts = release.Artifacts.Where(item => item.Rid != rid).Append(artifact).ToArray() };
+            var updated = release with { Artifacts = release.Artifacts.Where(item => item.Rid != rid || item.RequiresAvx != requiresAvx).Append(artifact).ToArray() };
             await WriteIndexAsync(updated, cancellationToken);
             catalog.Reload();
             logger.LogInformation("Cached backend {BackendType} {Version} for {Rid}.", backendType, version, rid);

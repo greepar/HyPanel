@@ -2,6 +2,7 @@ namespace HyPanel.Agent.Backends.Infrastructure;
 
 using System.Net;
 using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics.X86;
 using System.Security.Cryptography;
 using HyPanel.Shared.Contracts;
 
@@ -94,7 +95,7 @@ public sealed class BackendBinaryManager(
 
     private void ValidateArtifact(BackendArtifact artifact)
     {
-        if (artifact.Rid != CurrentRid || artifact.Size is <= 0 or > MaximumArtifactSize || !IsSafeComponent(artifact.BackendType) || !IsSafeComponent(artifact.Version) || !IsSafeBaseName(artifact.FileName) ||
+        if (artifact.Rid != CurrentRid || artifact.RequiresAvx && !Avx.IsSupported || artifact.Size is <= 0 or > MaximumArtifactSize || !IsSafeComponent(artifact.BackendType) || !IsSafeComponent(artifact.Version) || !IsSafeBaseName(artifact.FileName) ||
             artifact.Sha256.Length != 64 || artifact.Sha256.Any(character => !(character is >= '0' and <= '9' or >= 'a' and <= 'f')))
             throw new InvalidDataException("The backend artifact is invalid for this Agent.");
     }

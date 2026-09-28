@@ -10,7 +10,9 @@ public sealed record AgentSyncRequest(
     IReadOnlyList<AgentCommandResult> CommandResults,
     AgentUpdateReport? AgentUpdate = null,
     string? PublicIpv4 = null,
-    string? CountryCode = null);
+    string? CountryCode = null,
+    bool SupportsAvx = false,
+    IReadOnlyList<BackendArtifact>? AppliedBackendArtifacts = null);
 
 public sealed record AgentSyncResponse(
     long DesiredRevision,
@@ -124,7 +126,8 @@ public sealed record BackendArtifact(
     string Rid,
     string FileName,
     string Sha256,
-    long Size);
+    long Size,
+    bool RequiresAvx = false);
 
 public enum ServiceRuntimeStatus
 {

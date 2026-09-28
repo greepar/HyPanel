@@ -404,21 +404,33 @@ fi
 mkdir -p "${INSTALL_ROOT%/*}" "$DATA_DIR"
 chmod 700 "$DATA_DIR"
 AGENT_USER=
+AGENT_GROUP=
 if [ "$STAGING_INSTALL" = 0 ] && [ "$OS" = Linux ] && { command -v systemctl >/dev/null 2>&1 || command -v rc-service >/dev/null 2>&1; }; then
     AGENT_USER=hypanel-agent
     if ! id "$AGENT_USER" >/dev/null 2>&1; then
         if command -v useradd >/dev/null 2>&1; then
             useradd --system --home "$DATA_DIR" --shell /usr/sbin/nologin "$AGENT_USER" || fail "could not create service user"
         elif command -v adduser >/dev/null 2>&1; then
-            adduser -S -H -h "$DATA_DIR" "$AGENT_USER" || fail "could not create service user"
+            # Alpine's BusyBox adduser otherwise assigns the shared nogroup group.
+            if ! grep -q "^$AGENT_USER:" /etc/group; then
+                addgroup -S "$AGENT_USER" || fail "could not create service group"
+            fi
+            adduser -S -H -h "$DATA_DIR" -G "$AGENT_USER" "$AGENT_USER" || fail "could not create service user"
         else
             fail "a service user is required but useradd/adduser is unavailable"
         fi
     fi
-    mkdir -p "$INSTALL_ROOT"
+    # BusyBox adduser may assign a different primary group instead of creating
+    # a group with the same name.  Use the account's actual primary group.
+    AGENT_GROUP=$(id -gn "$AGENT_USER") || fail "could not determine service user's primary group"
+    chown -R "$AGENT_USER:$AGENT_GROUP" "$DATA_DIR"
     # Repair ownership left behind by older installers so self-update can always write here.
-    chown -R "$AGENT_USER:$AGENT_USER" "$DATA_DIR" "$INSTALL_ROOT"
-    chmod 750 "$INSTALL_ROOT"
+    # Do not create INSTALL_ROOT here: its existence determines whether rollback is possible.
+    if [ -e "$INSTALL_ROOT" ]; then
+        [ -d "$INSTALL_ROOT" ] || fail "install path is not a directory: $INSTALL_ROOT"
+        chown -R "$AGENT_USER:$AGENT_GROUP" "$INSTALL_ROOT"
+        chmod 750 "$INSTALL_ROOT"
+    fi
 fi
 umask 077
 escape_env() { printf '%s' "$1" | sed 's/[\\`"$]/\\&/g'; }
@@ -449,7 +461,7 @@ write_proxy_env() {
     write_proxy_env
 } > "$BOOTSTRAP_ENV"
 chmod 600 "$BOOTSTRAP_ENV"
-[ -n "$AGENT_USER" ] && chown "$AGENT_USER:$AGENT_USER" "$BOOTSTRAP_ENV"
+[ -n "$AGENT_USER" ] && chown "$AGENT_USER:$AGENT_GROUP" "$BOOTSTRAP_ENV"
 
 service_stop() {
     [ "$STAGING_INSTALL" = 1 ] && return 0
@@ -504,7 +516,7 @@ if [ -e "$INSTALL_ROOT" ]; then mv "$INSTALL_ROOT" "$BACKUP_INSTALL"; HAD_OLD=1;
 mv "$STAGED_INSTALL" "$INSTALL_ROOT"
 if [ -n "$AGENT_USER" ]; then
     chmod 750 "$INSTALL_ROOT"
-    chown "$AGENT_USER:$AGENT_USER" "$INSTALL_ROOT" "$AGENT_PATH"
+    chown "$AGENT_USER:$AGENT_GROUP" "$INSTALL_ROOT" "$AGENT_PATH"
 else
     chmod 755 "$INSTALL_ROOT"
 fi
@@ -547,7 +559,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 UMask=0077
 User=$AGENT_USER
-Group=$AGENT_USER
+Group=$AGENT_GROUP
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -561,7 +573,7 @@ respawn_delay=10
 respawn_max=0
 directory="$DATA_DIR"
 pidfile=/run/hypanel-agent.pid
-command_user="$AGENT_USER:$AGENT_USER"
+command_user="$AGENT_USER:$AGENT_GROUP"
 capabilities="^cap_net_bind_service,^cap_net_admin"
 depend() { need net; after firewall; }
 set -a
@@ -588,6 +600,9 @@ EOF
 esac
 
 if ! service_start; then
+    if [ "$HAD_OLD" = 0 ]; then
+        fail "agent start failed; binary remains at $AGENT_PATH and enrollment token remains in $BOOTSTRAP_ENV"
+    fi
     note "new agent failed to start; restoring previous binary"
     rm -rf "$INSTALL_ROOT"
     rm -rf "$DATA_DIR/services"
@@ -625,6 +640,10 @@ while [ "$elapsed" -lt 30 ]; do
     elapsed=$((elapsed + 1))
 done
 
+if [ "$HAD_OLD" = 0 ]; then
+    service_stop
+    fail "agent did not create credentials.json within 30 seconds; binary remains at $AGENT_PATH and enrollment token remains in $BOOTSTRAP_ENV"
+fi
 note "agent did not create credentials.json within 30 seconds; restoring previous binary"
 service_stop
 rm -rf "$INSTALL_ROOT"

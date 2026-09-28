@@ -61,6 +61,7 @@ public sealed class ServiceReconciler(
 
             var previous = await stateStore.LoadAsync(cancellationToken);
             var failed = preflight.Failures.Count > 0;
+            var failedServiceIds = preflight.Failures.Select(failure => failure.ServiceId).ToHashSet();
             var firstErrorCode = preflight.Failures.FirstOrDefault()?.ErrorCode;
             var appliedChanges = new List<Guid>();
             Guid failedService = Guid.Empty;
@@ -105,7 +106,7 @@ public sealed class ServiceReconciler(
                     var changed = new List<Guid>();
                     try
                     {
-                        await ApplyServiceAsync(plan, changed, cancellationToken);
+                        await ApplyServiceAsync(plan, changed, previous.DesiredState, cancellationToken);
                         appliedChanges.AddRange(changed);
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -116,6 +117,7 @@ public sealed class ServiceReconciler(
                     catch (Exception exception) when (IsExpectedFailure(exception))
                     {
                         failed = true;
+                        failedServiceIds.Add(plan.Desired.ServiceId);
                         firstErrorCode ??= ErrorCode(exception);
                         failedService = plan.Desired.ServiceId;
                         if (exception is not BackendBackoffException)
@@ -124,7 +126,8 @@ public sealed class ServiceReconciler(
                         await RollbackAsync(changed, cancellationToken);
                         if (exception is BackendBackoffException)
                             continue;
-                        if (!await SetRolledBackAsync(plan.Desired.ServiceId, desiredState, cancellationToken))
+                        if (changed.Count == 0 ||
+                            !await SetRolledBackAsync(plan.Desired.ServiceId, desiredState, cancellationToken))
                             SetFailed(plan.Desired.ServiceId, ErrorCode(exception));
                     }
                 }
@@ -132,6 +135,7 @@ public sealed class ServiceReconciler(
                 if (failed)
                 {
                     var recoveryState = await BuildRecoveryStateAsync(previous.DesiredState, desiredState,
+                        failedServiceIds,
                         cancellationToken);
                     await stateStore.SaveAsync(new AgentLocalState(previous.AppliedRevision,
                             WithoutTlsMaterial(recoveryState)),
@@ -252,12 +256,15 @@ public sealed class ServiceReconciler(
         }
     }
 
-    private async Task ApplyServiceAsync(ServicePlan plan, List<Guid> changed, CancellationToken cancellationToken)
+    private async Task ApplyServiceAsync(ServicePlan plan, List<Guid> changed, NodeDesiredState? previousState,
+        CancellationToken cancellationToken)
     {
         await usageStateStore.EnsureBaselinesAsync(plan.Desired.ServiceId, plan.Desired.Users, cancellationToken);
         await instanceStore.EnsureTlsAssetAsync(plan.Desired, cancellationToken);
         var prior = await instanceStore.TryLoadAsync(plan.Desired.ServiceId, cancellationToken);
+        var priorArtifact = FindArtifact(previousState, plan.Desired);
         var isChanged = prior is null || prior.ConfigSha256 != plan.Config.Sha256 ||
+                        plan.Desired.Enabled && priorArtifact != plan.Artifact ||
                         prior.DesiredState.Enabled != plan.Desired.Enabled ||
                         !string.Equals(prior.DesiredState.BackendVersion, plan.Desired.BackendVersion,
                             StringComparison.Ordinal) ||
@@ -478,7 +485,7 @@ public sealed class ServiceReconciler(
     }
 
     private async Task<NodeDesiredState> BuildRecoveryStateAsync(NodeDesiredState? previous, NodeDesiredState attempted,
-        CancellationToken cancellationToken)
+        IReadOnlySet<Guid> failedServiceIds, CancellationToken cancellationToken)
     {
         var ids = attempted.Services.Select(service => service.ServiceId)
             .Concat(previous?.Services.Select(service => service.ServiceId) ?? [])
@@ -491,13 +498,11 @@ public sealed class ServiceReconciler(
             if (metadata is not null) services.Add(metadata.DesiredState);
         }
 
-        var availableArtifacts = attempted.BackendArtifacts
-            .Concat(previous?.BackendArtifacts ?? [])
-            .GroupBy(artifact => (artifact.BackendType, artifact.Version, artifact.Rid))
-            .Select(group => group.First())
-            .ToArray();
+        var previousArtifacts = previous?.BackendArtifacts ?? [];
         var artifacts = services.Where(service => service.Enabled)
-            .Select(service => availableArtifacts.SingleOrDefault(artifact =>
+            .Select(service => (failedServiceIds.Contains(service.ServiceId)
+                    ? previousArtifacts.Concat(attempted.BackendArtifacts)
+                    : attempted.BackendArtifacts.Concat(previousArtifacts)).FirstOrDefault(artifact =>
                 artifact.BackendType == service.BackendType && artifact.Version == service.BackendVersion &&
                 artifact.Rid == binaryManager.CurrentRid))
             .Where(artifact => artifact is not null)
@@ -603,7 +608,7 @@ public sealed class ServiceReconciler(
         if (serviceId == Guid.Empty) return false;
         var target = attempted.Services.SingleOrDefault(item => item.ServiceId == serviceId);
         var restored = await instanceStore.TryLoadAsync(serviceId, cancellationToken);
-        if (target is null || restored is null || target.BackendVersion == restored.DesiredState.BackendVersion)
+        if (target is null || restored is null)
             return false;
         var process = processSupervisor.GetStatus(serviceId);
         runtimeStates[serviceId] = State(serviceId,

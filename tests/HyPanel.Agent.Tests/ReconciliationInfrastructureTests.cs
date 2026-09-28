@@ -228,6 +228,46 @@ public sealed class ReconciliationInfrastructureTests
     }
 
     [TestMethod]
+    public async Task ApplyAsync_BackendArtifactChangesWithoutConfigChange_RestartsProcess()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("This process assertion uses /bin/sleep.");
+        await using var fixture = await ReconcilerFixture.CreateAsync(dataDirectory, new FakeProvider());
+        var service = Service("variant", "tcp");
+        Assert.IsTrue((await fixture.Reconciler.ApplyAsync(Desired(1, [service]), fixture.Credentials,
+            CancellationToken.None)).Succeeded);
+        var originalProcessId = fixture.Supervisor.GetStatus(service.ServiceId).ProcessId;
+        var replacement = Artifact(ReconcilerFixture.ArtifactPayload) with { FileName = "backend-variant.bin" };
+
+        var result = await fixture.Reconciler.ApplyAsync(new NodeDesiredState(1, [service], [replacement]),
+            fixture.Credentials, CancellationToken.None);
+
+        Assert.IsTrue(result.Succeeded);
+        Assert.AreNotEqual(originalProcessId, fixture.Supervisor.GetStatus(service.ServiceId).ProcessId);
+        Assert.AreEqual(replacement, (await fixture.StateStore.LoadAsync(CancellationToken.None))
+            .DesiredState!.BackendArtifacts.Single());
+    }
+
+    [TestMethod]
+    public async Task ApplyAsync_FailingArtifactVariant_RestoresPreviousBinary()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("This process assertion uses Unix test binaries.");
+        await using var fixture = await ReconcilerFixture.CreateAsync(dataDirectory, new FakeProvider());
+        var service = Service("variant-rollback", "tcp");
+        var original = Desired(1, [service]);
+        Assert.IsTrue((await fixture.Reconciler.ApplyAsync(original, fixture.Credentials,
+            CancellationToken.None)).Succeeded);
+        var failing = Artifact(ReconcilerFixture.ArtifactPayload) with { FileName = "backend-fail.bin" };
+
+        var result = await fixture.Reconciler.ApplyAsync(new NodeDesiredState(1, [service], [failing]),
+            fixture.Credentials, CancellationToken.None);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ServiceRuntimeStatus.Running, fixture.Supervisor.GetStatus(service.ServiceId).Status);
+        Assert.AreEqual(original.BackendArtifacts.Single(),
+            (await fixture.StateStore.LoadAsync(CancellationToken.None)).DesiredState!.BackendArtifacts.Single());
+    }
+
+    [TestMethod]
     public async Task RefreshRuntimeStatesAsync_CrashedBackend_RestartsManagedService()
     {
         if (OperatingSystem.IsWindows()) Assert.Inconclusive("This process assertion uses /bin/sleep.");
@@ -442,7 +482,8 @@ public sealed class ReconciliationInfrastructureTests
 
         public ValueTask<BackendProcessSpec> CreateProcessSpecAsync(BackendInstanceContext instance,
             CancellationToken cancellationToken) =>
-            ValueTask.FromResult(instance.DesiredState.ConfigJson == "exit"
+            ValueTask.FromResult(instance.DesiredState.ConfigJson == "exit" ||
+                                 instance.BinaryPath.EndsWith("backend-fail.bin", StringComparison.Ordinal)
                 ? new BackendProcessSpec("/usr/bin/false", [], instance.InstanceDirectory,
                     new Dictionary<string, string>())
                 : new BackendProcessSpec("/bin/sleep", ["60"], instance.InstanceDirectory,

@@ -148,6 +148,44 @@ public sealed class BackendArtifactCatalogTests
     }
 
     [TestMethod]
+    public void FindArtifact_HysteriaSelectsAvxOnlyForCapableNodes()
+    {
+        using var fixture = CatalogFixture.Create();
+        var standard = fixture.Manifest.Assets[0];
+        var avx = standard with { FileName = "hysteria2-1.0-linux-x64-avx", RequiresAvx = true };
+        fixture.WriteManifest(fixture.Manifest with { Assets = [standard, avx] });
+        var catalog = fixture.CreateCatalog();
+
+        Assert.AreEqual(standard, catalog.FindArtifact("hysteria2", "1.0", "linux-x64"));
+        Assert.AreEqual(avx, catalog.FindArtifact("hysteria2", "1.0", "linux-x64", supportsAvx: true));
+    }
+
+    [TestMethod]
+    public void ReleaseSources_MapHysteriaAvxOnlyForX64Platforms()
+    {
+        Assert.AreEqual("hysteria-linux-amd64-avx", BackendReleaseSources.HysteriaAvxAsset("linux-x64"));
+        Assert.AreEqual("hysteria-linux-amd64-avx", BackendReleaseSources.HysteriaAvxAsset("linux-musl-x64"));
+        Assert.AreEqual("hysteria-darwin-amd64-avx", BackendReleaseSources.HysteriaAvxAsset("osx-x64"));
+        Assert.AreEqual("hysteria-windows-amd64-avx.exe", BackendReleaseSources.HysteriaAvxAsset("win-x64"));
+        Assert.IsNull(BackendReleaseSources.HysteriaAvxAsset("linux-arm64"));
+    }
+
+    [TestMethod]
+    public void ValidateRelease_AllowsLinuxAndMuslToShareUpstreamAvxAsset()
+    {
+        var release = new BackendReleaseIndex(1, "hysteria2", "2.12.3",
+            DateTimeOffset.Parse("2026-09-16T00:00:00Z"),
+            [
+                new BackendSourceAsset("linux-x64", "hysteria-linux-amd64-avx",
+                    "https://github.com/HyNetworks/hysteria/releases/download/app%2Fv2.12.3/hysteria-linux-amd64-avx", true),
+                new BackendSourceAsset("linux-musl-x64", "hysteria-linux-amd64-avx",
+                    "https://github.com/HyNetworks/hysteria/releases/download/app%2Fv2.12.3/hysteria-linux-amd64-avx", true)
+            ], []);
+
+        BackendArtifactCatalog.ValidateRelease(release);
+    }
+
+    [TestMethod]
     public void ReleaseSources_MapEveryFrozenRidWithoutCallerControlledUrls()
     {
         CollectionAssert.AreEquivalent(new[] { "hysteria2", "xray" },

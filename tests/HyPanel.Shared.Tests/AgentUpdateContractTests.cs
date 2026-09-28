@@ -42,4 +42,22 @@ public sealed class AgentUpdateContractTests
         Assert.AreEqual(AgentUpdateStatus.Verifying, roundTrip.AgentUpdate.Status);
         Assert.AreEqual(0, roundTrip.CommandResults.Count);
     }
+
+    [TestMethod]
+    public void AgentSyncRequest_RoundTrip_PreservesAvxCapabilityAndAppliedArtifact()
+    {
+        var artifact = new BackendArtifact("hysteria2", "2.12.2", "linux-x64",
+            "hysteria2-2.12.2-linux-x64-avx", new string('a', 64), 123, true);
+        var request = new AgentSyncRequest("1.3.0", "linux-x64", 2,
+            new NodeMetrics(DateTimeOffset.UtcNow, 1, 2, 3, 2, 4, 3, 5, 6), [], [], [],
+            SupportsAvx: true, AppliedBackendArtifacts: [artifact]);
+
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(request,
+            HyPanelJsonSerializerContext.Default.AgentSyncRequest);
+        var roundTrip = JsonSerializer.Deserialize(bytes, HyPanelJsonSerializerContext.Default.AgentSyncRequest);
+
+        Assert.IsNotNull(roundTrip);
+        Assert.IsTrue(roundTrip.SupportsAvx);
+        Assert.AreEqual(artifact, roundTrip.AppliedBackendArtifacts!.Single());
+    }
 }

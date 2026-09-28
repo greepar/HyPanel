@@ -92,7 +92,11 @@ internal static class AgentSyncEndpoints
 
         var update = await GetAgentUpdateAsync(agent.AgentId, request, repository, releaseCatalog, cancellationToken);
         NodeDesiredState? desiredState = null;
-        if (request.AppliedRevision != desired.Value.Revision)
+        var artifacts = DistinctArtifacts(desired.Value.Services.Where(service => service.Enabled)
+            .Select(service => backendArtifactCatalog.FindArtifact(service.BackendType, service.BackendVersion,
+                request.Platform.Trim(), request.SupportsAvx)));
+        if (request.AppliedRevision != desired.Value.Revision
+            || request.AppliedBackendArtifacts is { } appliedArtifacts && !appliedArtifacts.SequenceEqual(artifacts))
         {
             var desiredServices = new List<ServiceDesiredState>(desired.Value.Services.Count);
             var controlPorts = await repository.EnsureControlPortsAsync(agent.NodeId,
@@ -123,9 +127,6 @@ internal static class AgentSyncEndpoints
                     service.BackendVersion, service.Enabled, service.ConfigSchemaVersion, service.ConfigJson, users,
                     controlPorts.TryGetValue(service.Id, out var controlPort) ? controlPort : null, tls));
             }
-            var artifacts = DistinctArtifacts(desired.Value.Services.Where(service => service.Enabled)
-                .Select(service => backendArtifactCatalog.FindArtifact(service.BackendType, service.BackendVersion,
-                    request.Platform.Trim())));
             desiredState = new NodeDesiredState(desired.Value.Revision, desiredServices, artifacts);
         }
         var response = new AgentSyncResponse(
@@ -190,6 +191,7 @@ internal static class AgentSyncEndpoints
             || request.Metrics is null
             || request.Services is null
             || request.Services.Count > 128
+            || request.AppliedBackendArtifacts is { Count: > 128 }
             || request.CommandResults is null
             || request.CommandResults.Count > MaximumCommandResults
             || request.UsageBatches is null

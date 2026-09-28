@@ -31,11 +31,13 @@ internal sealed class BackendArtifactCatalog
         Volatile.Read(ref snapshot).Releases.TryGetValue(Key(BinarySource(backendType), version), out var release) ? release : null;
 
     /// <summary>Artifact for a service's backend; <c>xray-ss</c> runs the Xray binary but is reported under its own type.</summary>
-    public BackendArtifact? FindArtifact(string backendType, string version, string rid)
+    public BackendArtifact? FindArtifact(string backendType, string version, string rid, bool supportsAvx = false)
     {
         var source = BinarySource(backendType);
-        var artifact = Volatile.Read(ref snapshot).Artifacts.SingleOrDefault(asset => asset.BackendType == source
-            && asset.Version == version && asset.Rid == rid);
+        var matches = Volatile.Read(ref snapshot).Artifacts.Where(asset => asset.BackendType == source
+            && asset.Version == version && asset.Rid == rid).ToArray();
+        var artifact = supportsAvx ? matches.SingleOrDefault(asset => asset.RequiresAvx) : null;
+        artifact ??= matches.SingleOrDefault(asset => !asset.RequiresAvx);
         return artifact is null || source == backendType ? artifact : artifact with { BackendType = backendType };
     }
 
@@ -85,7 +87,7 @@ internal sealed class BackendArtifactCatalog
             .ToDictionary(group => group.Key,
                 group => group.MaxBy(item => SemanticVersion.Parse(item.Version))!.Version, StringComparer.Ordinal);
         Volatile.Write(ref snapshot, new Snapshot(releases, latest,
-            artifacts.GroupBy(item => $"{item.BackendType}\n{item.Version}\n{item.Rid}", StringComparer.Ordinal)
+            artifacts.GroupBy(item => $"{item.BackendType}\n{item.Version}\n{item.Rid}\n{item.RequiresAvx}", StringComparer.Ordinal)
                 .Select(group => group.Last()).ToArray()));
     }
 
@@ -97,18 +99,27 @@ internal sealed class BackendArtifactCatalog
             throw new InvalidOperationException("Backend release index is invalid.");
         var sourceRids = new HashSet<string>(StringComparer.Ordinal);
         foreach (var source in release.SourceAssets)
-            if (!ReleaseCatalog.SupportedRids.Contains(source.Rid, StringComparer.Ordinal) || !sourceRids.Add(source.Rid)
-                || !ReleaseCatalog.IsBasename(source.AssetName) || !Uri.TryCreate(source.DownloadUrl, UriKind.Absolute, out var uri)
+            if (!ReleaseCatalog.SupportedRids.Contains(source.Rid, StringComparer.Ordinal) || !sourceRids.Add($"{source.Rid}\n{source.RequiresAvx}")
+                || source.RequiresAvx && (release.BackendType != "hysteria2" || BackendReleaseSources.HysteriaAvxAsset(source.Rid) != source.AssetName)
+                || !ReleaseCatalog.IsBasename(source.AssetName)
+                || !Uri.TryCreate(source.DownloadUrl, UriKind.Absolute, out var uri)
                 || uri.Scheme != Uri.UriSchemeHttps || uri.Host != "github.com" && uri.Host != "objects.githubusercontent.com")
                 throw new InvalidOperationException("Backend release source asset is invalid.");
+        var artifactKeys = new HashSet<string>(StringComparer.Ordinal);
+        var artifactNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var artifact in release.Artifacts)
+        {
             ValidateArtifact(artifact, release.BackendType, release.Version);
+            if (!artifactKeys.Add($"{artifact.Rid}\n{artifact.RequiresAvx}") || !artifactNames.Add(artifact.FileName))
+                throw new InvalidOperationException("Backend release artifact is duplicated.");
+        }
     }
 
     internal static void ValidateArtifact(BackendArtifact artifact, string backendType, string version)
     {
         if (artifact.BackendType != backendType || artifact.Version != version
             || !ReleaseCatalog.SupportedRids.Contains(artifact.Rid, StringComparer.Ordinal)
+            || artifact.RequiresAvx && (backendType != "hysteria2" || BackendReleaseSources.HysteriaAvxAsset(artifact.Rid) is null)
             || !ReleaseCatalog.IsBasename(artifact.FileName) || !ReleaseCatalog.IsSha256(artifact.Sha256)
             || artifact.Size <= 0)
             throw new InvalidOperationException("Backend artifact is invalid.");
@@ -122,7 +133,7 @@ internal sealed class BackendArtifactCatalog
         foreach (var artifact in manifest.Assets)
         {
             if (!BackendReleaseSources.IsBackendType(artifact.BackendType)
-                || !combinations.Add($"{artifact.BackendType}\n{artifact.Version}\n{artifact.Rid}")
+                || !combinations.Add($"{artifact.BackendType}\n{artifact.Version}\n{artifact.Rid}\n{artifact.RequiresAvx}")
                 || !fileNames.Add(artifact.FileName))
                 throw new InvalidOperationException("Backend artifact manifest contains a duplicate or unsupported asset.");
             ValidateArtifact(artifact, artifact.BackendType, artifact.Version);
@@ -140,7 +151,7 @@ internal sealed class BackendArtifactCatalog
 internal sealed record BackendReleaseIndex(int SchemaVersion, string BackendType, string Version,
     DateTimeOffset PublishedAt, IReadOnlyList<BackendSourceAsset> SourceAssets,
     IReadOnlyList<BackendArtifact> Artifacts);
-internal sealed record BackendSourceAsset(string Rid, string AssetName, string DownloadUrl);
+internal sealed record BackendSourceAsset(string Rid, string AssetName, string DownloadUrl, bool RequiresAvx = false);
 internal sealed record BackendArtifactManifest(int SchemaVersion, string Version, IReadOnlyList<BackendArtifact> Assets);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]

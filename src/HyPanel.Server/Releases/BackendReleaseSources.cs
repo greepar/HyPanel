@@ -25,6 +25,14 @@ internal static class BackendReleaseSources
         _ => null
     };
 
+    public static string? HysteriaAvxAsset(string rid) => rid switch
+    {
+        "linux-x64" or "linux-musl-x64" => "hysteria-linux-amd64-avx",
+        "osx-x64" => "hysteria-darwin-amd64-avx",
+        "win-x64" => "hysteria-windows-amd64-avx.exe",
+        _ => null
+    };
+
     private static string? XrayAsset(string rid, string version) => rid switch
     {
         "linux-x64" or "linux-musl-x64" => "Xray-linux-64.zip",
