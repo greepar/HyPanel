@@ -160,6 +160,36 @@ public sealed class ReconciliationInfrastructureTests
     }
 
     [TestMethod]
+    public async Task ApplyAsync_AssignedControlPortInUse_UsesAStableFreePort()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("This process assertion uses /bin/sleep and is covered on Unix runners.");
+        }
+
+        // Another Agent on the same host already holds the control port the Panel assigned.
+        using var occupant = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        occupant.Start();
+        var taken = ((System.Net.IPEndPoint)occupant.LocalEndpoint).Port;
+        await using var fixture = await ReconcilerFixture.CreateAsync(dataDirectory, new FakeProvider());
+        var service = Service("stats", "tcp") with { ControlPort = taken };
+
+        Assert.IsTrue((await fixture.Reconciler.ApplyAsync(Desired(1, [service]), fixture.Credentials,
+            CancellationToken.None)).Succeeded);
+        var first = (await fixture.InstanceStore.TryLoadAsync(service.ServiceId, CancellationToken.None))!
+            .DesiredState.ControlPort;
+        Assert.IsTrue((await fixture.Reconciler.ApplyAsync(Desired(2, [service]), fixture.Credentials,
+            CancellationToken.None)).Succeeded);
+        var second = (await fixture.InstanceStore.TryLoadAsync(service.ServiceId, CancellationToken.None))!
+            .DesiredState.ControlPort;
+
+        Assert.IsNotNull(first);
+        Assert.AreNotEqual(taken, first);
+        Assert.AreEqual(first, second);
+        Assert.AreEqual(ServiceRuntimeStatus.Running, fixture.Supervisor.GetStatus(service.ServiceId).Status);
+    }
+
+    [TestMethod]
     public async Task ApplyAsync_SameTcpAndUdpPort_IsAllowed()
     {
         if (OperatingSystem.IsWindows())

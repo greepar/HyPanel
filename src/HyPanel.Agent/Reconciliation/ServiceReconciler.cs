@@ -25,6 +25,8 @@ public sealed class ServiceReconciler(
     private readonly ConcurrentDictionary<Guid, ServiceRuntimeState> runtimeStates = new();
     private readonly ConcurrentDictionary<Guid, RecoveryState> recoveryStates = new();
     private readonly ConcurrentDictionary<Guid, string> reportedFailures = new();
+    // Panel-assigned control port each service's local port was chosen for (see WithLocalControlPortAsync).
+    private readonly ConcurrentDictionary<Guid, int> assignedControlPorts = new();
     private readonly SemaphoreSlim applyGate = new(1, 1);
 
     public IReadOnlyList<ServiceRuntimeState> GetRuntimeStates() =>
@@ -434,17 +436,18 @@ public sealed class ServiceReconciler(
         var udpPorts = new HashSet<int>();
         var plans = new List<ServicePlan>(desired.Services.Count);
         var failures = new List<ServiceFailure>();
-        foreach (var service in desired.Services)
+        foreach (var requested in desired.Services)
         {
-            if (!IsValidService(service) || !serviceIds.Add(service.ServiceId) ||
-                !providers.TryGet(service.BackendType, out var provider))
+            if (!IsValidService(requested) || !serviceIds.Add(requested.ServiceId) ||
+                !providers.TryGet(requested.BackendType, out var provider))
             {
-                failures.Add(new ServiceFailure(service.ServiceId, "invalid_service"));
+                failures.Add(new ServiceFailure(requested.ServiceId, "invalid_service"));
                 continue;
             }
 
             try
             {
+                var service = await WithLocalControlPortAsync(requested, cancellationToken);
                 var matches = desired.BackendArtifacts.Where(artifact =>
                     artifact.BackendType == service.BackendType && artifact.Version == service.BackendVersion &&
                     artifact.Rid == binaryManager.CurrentRid).ToArray();
@@ -477,11 +480,59 @@ public sealed class ServiceReconciler(
             }
             catch (Exception)
             {
-                failures.Add(new ServiceFailure(service.ServiceId, "invalid_config"));
+                failures.Add(new ServiceFailure(requested.ServiceId, "invalid_config"));
             }
         }
 
         return PreflightResult.Complete(plans, failures);
+    }
+
+    /// <summary>
+    /// The Panel numbers control ports per node, so another Agent on the same host (for example a native one next to
+    /// a Docker one) or any other local program may already hold the assigned loopback port. Keeps the port the
+    /// running instance already uses, else the assigned port when it is free, else the previously used one, else any
+    /// free port. The choice is stable, so an unchanged service is not restarted on every sync.
+    /// </summary>
+    private async Task<ServiceDesiredState> WithLocalControlPortAsync(ServiceDesiredState service,
+        CancellationToken cancellationToken)
+    {
+        if (service.ControlPort is not { } assigned || !service.Enabled) return service;
+        var current = (await instanceStore.TryLoadAsync(service.ServiceId, cancellationToken))?.DesiredState.ControlPort;
+        int port;
+        if (current is { } running && assignedControlPorts.TryGetValue(service.ServiceId, out var chosenFor) &&
+            chosenFor == assigned && processSupervisor.GetStatus(service.ServiceId).Status == ServiceRuntimeStatus.Running)
+            port = running;
+        else if (IsLoopbackPortFree(assigned)) port = assigned;
+        else if (current is { } previous && previous != assigned && IsLoopbackPortFree(previous)) port = previous;
+        else port = FreeLoopbackPort();
+        if (port != assigned && current != port)
+            logger.LogInformation("Control port {Assigned} of service {ServiceId} is in use on this host; using {Port}.",
+                assigned, service.ServiceId, port);
+        assignedControlPorts[service.ServiceId] = assigned;
+        return port == assigned ? service : service with { ControlPort = port };
+    }
+
+    private static bool IsLoopbackPortFree(int port)
+    {
+        try
+        {
+            using var probe = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork,
+                System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+            probe.Bind(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, port));
+            return true;
+        }
+        catch (System.Net.Sockets.SocketException)
+        {
+            return false;
+        }
+    }
+
+    private static int FreeLoopbackPort()
+    {
+        using var probe = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork,
+            System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+        probe.Bind(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 0));
+        return ((System.Net.IPEndPoint)probe.LocalEndPoint!).Port;
     }
 
     private async Task<NodeDesiredState> BuildRecoveryStateAsync(NodeDesiredState? previous, NodeDesiredState attempted,
