@@ -27,6 +27,8 @@ internal sealed class BackendArtifactCatalog
     public string? GetLatestVersion(string backendType) =>
         Volatile.Read(ref snapshot).LatestVersions.TryGetValue(BinarySource(backendType), out var version) ? version : null;
 
+    public IReadOnlyList<BackendReleaseIndex> GetReleases() => Volatile.Read(ref snapshot).Releases.Values.ToArray();
+
     public BackendReleaseIndex? GetRelease(string backendType, string version) =>
         Volatile.Read(ref snapshot).Releases.TryGetValue(Key(BinarySource(backendType), version), out var release) ? release : null;
 

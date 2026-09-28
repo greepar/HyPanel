@@ -77,6 +77,39 @@ internal sealed class BackendReleaseSyncWorker(ILogger<BackendReleaseSyncWorker>
         catalog.Reload();
         await CacheAvxForExistingHysteriaAsync(cancellationToken);
         await ApplyAutomaticUpdatesAsync(cancellationToken);
+        await PruneUnusedReleasesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Deletes cached binaries and release metadata for versions no service runs, keeping each backend's latest
+    /// version for new services. Nodes keep their own copies, so this never affects a rollback on a node.
+    /// </summary>
+    internal async Task PruneUnusedReleasesAsync(CancellationToken cancellationToken)
+    {
+        var inUse = (await repository.GetBackendVersionsInUseAsync(cancellationToken))
+            .Select(item => (BackendArtifactCatalog.BinarySource(item.BackendType), item.Version))
+            .ToHashSet();
+        var pruned = false;
+        foreach (var release in catalog.GetReleases())
+        {
+            if (inUse.Contains((release.BackendType, release.Version))
+                || catalog.GetLatestVersion(release.BackendType) == release.Version) continue;
+            try
+            {
+                foreach (var artifact in release.Artifacts)
+                    File.Delete(Path.Combine(catalog.ReleasesDirectory, artifact.FileName));
+                File.Delete(Path.Combine(catalog.ReleasesDirectory, $"release-{release.BackendType}-{release.Version}.json"));
+                pruned = true;
+                logger.LogInformation("Removed cached backend {BackendType} {Version}; no service uses it.",
+                    release.BackendType, release.Version);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                logger.LogWarning(exception, "Could not remove cached backend {BackendType} {Version}.",
+                    release.BackendType, release.Version);
+            }
+        }
+        if (pruned) catalog.Reload();
     }
 
     private async Task CacheAvxForExistingHysteriaAsync(CancellationToken cancellationToken)

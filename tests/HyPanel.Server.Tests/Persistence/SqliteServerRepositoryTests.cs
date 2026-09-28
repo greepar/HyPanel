@@ -64,6 +64,57 @@ public sealed class SqliteServerRepositoryTests
     }
 
     [TestMethod]
+    public async Task PruneUnusedReleases_KeepsVersionsInUseAndTheLatest()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var releases = Directory.CreateTempSubdirectory("hypanel-releases-").FullName;
+        try
+        {
+            string Release(string version)
+            {
+                var artifact = new BackendArtifact("xray", version, "linux-x64", $"xray-{version}-linux-x64",
+                    new string('a', 64), 3);
+                File.WriteAllBytes(Path.Combine(releases, artifact.FileName), [1, 2, 3]);
+                File.WriteAllText(Path.Combine(releases, $"release-xray-{version}.json"), JsonSerializer.Serialize(
+                    new HyPanel.Server.Releases.BackendReleaseIndex(1, "xray", version,
+                        DateTimeOffset.Parse("2026-09-16T00:00:00Z"),
+                        [new HyPanel.Server.Releases.BackendSourceAsset("linux-x64", "Xray-linux-64.zip",
+                            $"https://github.com/XTLS/Xray-core/releases/download/v{version}/Xray-linux-64.zip")],
+                        [artifact]),
+                    HyPanel.Server.Releases.BackendArtifactManifestJsonContext.Default.BackendReleaseIndex));
+                return artifact.FileName;
+            }
+            var unused = Release("1.0.0");
+            var used = Release("2.0.0");
+            var latest = Release("3.0.0");
+            var node = Guid.NewGuid();
+            await fixture.Repository.CreateNodeAsync(node, "node", CancellationToken.None);
+            var now = fixture.Time.GetUtcNow();
+            // xray-ss runs the xray binary, so its version keeps the xray release.
+            await fixture.Repository.CreateServiceAsync(new ServiceInstanceRecord(Guid.NewGuid(), node, "ss", "xray-ss",
+                "2.0.0", true, 1, "{}", now, now), CancellationToken.None);
+            var catalog = new HyPanel.Server.Releases.BackendArtifactCatalog(new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?> { ["HyPanel:BackendReleasesDirectory"] = releases })
+                .Build());
+            var worker = new HyPanel.Server.Releases.BackendReleaseSyncWorker(
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<HyPanel.Server.Releases.BackendReleaseSyncWorker>.Instance,
+                null!, catalog, fixture.Repository);
+
+            await worker.PruneUnusedReleasesAsync(CancellationToken.None);
+
+            Assert.IsFalse(File.Exists(Path.Combine(releases, unused)));
+            Assert.IsFalse(File.Exists(Path.Combine(releases, "release-xray-1.0.0.json")));
+            Assert.IsTrue(File.Exists(Path.Combine(releases, used)));
+            Assert.IsTrue(File.Exists(Path.Combine(releases, latest)));
+            Assert.IsNull(catalog.GetRelease("xray", "1.0.0"));
+        }
+        finally
+        {
+            Directory.Delete(releases, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public async Task Certificates_PrivateKeyIsEncryptedAndReplacementIncrementsReferencingNode()
     {
         await using var fixture = await TestDatabase.CreateAsync();

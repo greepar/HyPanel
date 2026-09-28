@@ -825,6 +825,19 @@ internal sealed partial class SqliteServerRepository(
         }
     }
 
+    /// <summary>Distinct (backend type, version) pairs that any service is set to run.</summary>
+    public async Task<IReadOnlyList<(string BackendType, string Version)>> GetBackendVersionsInUseAsync(
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT DISTINCT backend_type, backend_version FROM service_instances;";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var versions = new List<(string, string)>();
+        while (await reader.ReadAsync(cancellationToken)) versions.Add((reader.GetString(0), reader.GetString(1)));
+        return versions;
+    }
+
     public async Task<BackendUpdateTargetRecord?> GetBackendUpdateTargetAsync(Guid nodeId, Guid serviceId,
         CancellationToken cancellationToken)
     {
