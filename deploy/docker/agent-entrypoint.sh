@@ -88,5 +88,13 @@ download_agent() {
 }
 
 [ -x "$AGENT_PATH" ] || download_agent
+
+# Docker Desktop (macOS: linuxkit, Windows: WSL2) and OrbStack run containers in a Linux VM that only forwards
+# ports something listens on, so nftables redirects never see hop-port traffic there: relay it in user space.
+if [ -z "${HYPANEL_PORT_HOPPING:-}" ] && grep -qiE 'orbstack|linuxkit|microsoft' /proc/version 2>/dev/null; then
+    HYPANEL_PORT_HOPPING=relay
+    export HYPANEL_PORT_HOPPING
+    log "running inside a Docker Desktop / OrbStack VM; port hopping uses the user-space relay"
+fi
 cd "$DATA_DIR"
 exec "$AGENT_PATH"

@@ -9,11 +9,15 @@ using HyPanel.Shared.Contracts;
 /// Hysteria2 port hopping: UDP traffic to the configured ports is redirected to the service's listen port with an
 /// nftables table owned by HyPanel (<c>inet hypanel_hop</c>). The whole table is replaced atomically on every apply,
 /// so removed services and disabled hopping leave no rules behind. Requires Linux, nft and CAP_NET_ADMIN.
+/// With <c>HYPANEL_PORT_HOPPING=relay</c> (set by the container entrypoint inside the Docker Desktop / OrbStack VM)
+/// the ports are relayed in user space by <see cref="UdpPortRelay"/> instead.
 /// </summary>
-public sealed class PortHoppingManager(ILogger<PortHoppingManager> logger)
+public sealed class PortHoppingManager(ILogger<PortHoppingManager> logger, IConfiguration configuration, UdpPortRelay relay)
 {
     public const string TableName = "hypanel_hop";
     private string? appliedScript;
+    private readonly bool useRelay =
+        string.Equals(configuration["HYPANEL_PORT_HOPPING"], "relay", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Last failure, reported on affected services; null when rules are in place or none are needed.</summary>
     public string? LastError { get; private set; }
@@ -29,6 +33,11 @@ public sealed class PortHoppingManager(ILogger<PortHoppingManager> logger)
                 Hysteria2Provider.PortHopping(service.ConfigJson) is { } hopping)
                 rules.Add((service.ServiceId, hopping.ListenPort, hopping.Ports.ToString()));
         HoppingServices = rules.Select(rule => rule.ServiceId).ToHashSet();
+        if (useRelay)
+        {
+            ApplyRelay(rules);
+            return;
+        }
 
         var script = BuildScript(rules.Select(rule => (rule.ListenPort, rule.Ports)).ToArray());
         if (script == appliedScript) return;
@@ -59,6 +68,49 @@ public sealed class PortHoppingManager(ILogger<PortHoppingManager> logger)
                 ? "Agent 缺少 CAP_NET_ADMIN 权限：请在节点上重新运行一次安装命令后再启用端口跳跃。"
                 : $"端口跳跃规则设置失败：{error.Trim()}";
         logger.LogWarning("Could not apply port hopping rules (exit {ExitCode}): {Error}", exitCode, error.Trim());
+    }
+
+    private void ApplyRelay(IReadOnlyList<(Guid ServiceId, int ListenPort, string Ports)> rules)
+    {
+        if (!TryBuildRelayRules(rules.Select(rule => (rule.ListenPort, rule.Ports)).ToArray(), out var relayRules, out var error))
+        {
+            relay.Apply(new Dictionary<int, int>());
+            LastError = error;
+            return;
+        }
+        var failed = relay.Apply(relayRules);
+        LastError = failed.Count == 0
+            ? null
+            : $"端口跳跃有 {failed.Count} 个端口被占用，无法转发：{string.Join(", ", failed.Order().Take(10))}";
+        if (rules.Count > 0 && failed.Count == 0)
+            logger.LogInformation("Port hopping relayed in user space: {Rules}.",
+                string.Join("; ", rules.Select(rule => $"udp {rule.Ports} -> {rule.ListenPort}")));
+    }
+
+    /// <summary>Hop port -> listen port map for the user-space relay, within <see cref="UdpPortRelay.MaximumPorts"/>.</summary>
+    internal static bool TryBuildRelayRules(IReadOnlyList<(int ListenPort, string Ports)> rules,
+        out Dictionary<int, int> relayRules, out string? error)
+    {
+        relayRules = new Dictionary<int, int>();
+        error = null;
+        foreach (var (listenPort, ports) in rules)
+        {
+            if (!HyPanel.Shared.Networking.PortSpec.TryParse(ports, out var spec)) continue;
+            foreach (var range in spec.Ranges)
+            for (var port = range.From; port <= range.To; port++)
+            {
+                // The service's own port is already served directly.
+                if (port == listenPort) continue;
+                if (relayRules.Count >= UdpPortRelay.MaximumPorts)
+                {
+                    error = $"Docker 虚拟机中的端口跳跃最多支持 {UdpPortRelay.MaximumPorts} 个端口，请缩小端口范围。";
+                    relayRules.Clear();
+                    return false;
+                }
+                relayRules[port] = listenPort;
+            }
+        }
+        return true;
     }
 
     /// <summary>nftables script that atomically replaces the HyPanel table.</summary>
