@@ -606,6 +606,8 @@ function NodesPage({ api, setError }: PageProps) {
     node: NodeIdentity;
     platform: "unix" | "powershell";
     command: string;
+    /** The node's Agent when the command was issued; a different Agent coming online means the install finished. */
+    previousAgentId: string | null;
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState<"all" | "online" | "offline">("all");
@@ -627,7 +629,15 @@ function NodesPage({ api, setError }: PageProps) {
   useEffect(() => {
     void load();
   }, []);
-  useAutoRefresh(() => load(true));
+  useAutoRefresh(() => load(true), [!!install], install ? 3000 : 5000);
+  useEffect(() => {
+    if (!install) return;
+    const node = nodes.find((item) => item.id === install.node.id);
+    if (node?.online && node.agentId && node.agentId !== install.previousAgentId) {
+      setInstall(null);
+      setError(`${node.displayName} 已安装并上线。`);
+    }
+  }, [nodes, install]);
   const create = async (event: Event) => {
     event.preventDefault();
     setBusy(true);
@@ -650,7 +660,12 @@ function NodesPage({ api, setError }: PageProps) {
     setBusy(true);
     try {
       const result = await api.installCommand(node.id, platform);
-      setInstall({ node, platform, command: result.command });
+      setInstall({
+        node,
+        platform,
+        command: result.command,
+        previousAgentId: nodes.find((item) => item.id === node.id)?.agentId ?? null,
+      });
     } catch (reason) {
       setError(reason instanceof ApiError && reason.status === 400
         ? "无法生成安装命令。请使用 HTTPS 访问 Panel，并确认反向代理传递了 X-Forwarded-Proto。"
@@ -1106,6 +1121,25 @@ function NodeResources({ node }: { node: Node }) {
   );
 }
 
+type InstallOptions = { nftables: boolean; tuneNetwork: boolean };
+const installOptionsKey = "hypanel.installOptions";
+const loadInstallOptions = (): InstallOptions => {
+  const defaults = { nftables: true, tuneNetwork: true };
+  try {
+    return { ...defaults, ...JSON.parse(localStorage.getItem(installOptionsKey) ?? "{}") };
+  } catch {
+    return defaults;
+  }
+};
+/** Passes the host-preparation switches to install.sh as environment variables of the piped shell. */
+const withInstallOptions = (command: string, options: InstallOptions) => {
+  const env = [
+    options.nftables && "HYPANEL_INSTALL_NFT=1",
+    options.tuneNetwork && "HYPANEL_TUNE_NETWORK=1",
+  ].filter(Boolean);
+  return env.length ? command.replace(/\| bash$/, `| ${env.join(" ")} bash`) : command;
+};
+
 function InstallModal({
   value,
   busy,
@@ -1123,9 +1157,20 @@ function InstallModal({
   change: (platform: "unix" | "powershell") => void;
   setError: (value: string) => void;
 }) {
+  const [options, setOptions] = useState(loadInstallOptions);
+  const toggle = (key: keyof InstallOptions, enabled: boolean) => {
+    const next = { ...options, [key]: enabled };
+    setOptions(next);
+    try {
+      localStorage.setItem(installOptionsKey, JSON.stringify(next));
+    } catch {
+      // Remembering the choice is only a convenience.
+    }
+  };
+  const command = value.platform === "unix" ? withInstallOptions(value.command, options) : value.command;
   const copy = async () => {
     try {
-      await copyText(value.command);
+      await copyText(command);
       setError("安装命令已复制。它包含 15 分钟有效的一次性令牌，请勿分享。");
     } catch (reason) {
       setError(messageFor(reason, "无法复制命令"));
@@ -1153,8 +1198,23 @@ function InstallModal({
           Windows
         </button>
       </div>
-      <pre className="command-box">{busy ? "正在生成…" : value.command}</pre>
-      <Notice>命令只显示在这里；重新生成会签发新的 15 分钟一次性令牌。</Notice>
+      {value.platform === "unix" && (
+        <div className="modal-form">
+          <label className="switch">
+            <input type="checkbox" checked={options.nftables} onChange={(event) => toggle("nftables", event.currentTarget.checked)} />
+            <span />
+            安装 nftables（Hysteria2 端口跳跃需要）
+          </label>
+          <label className="switch">
+            <input type="checkbox" checked={options.tuneNetwork} onChange={(event) => toggle("tuneNetwork", event.currentTarget.checked)} />
+            <span />
+            优化网络参数（BBR、fq、加大 TCP/UDP 缓冲区）
+          </label>
+          <p className="field-help">仅对 Linux 生效。失败只会提示，不影响 Agent 安装。</p>
+        </div>
+      )}
+      <pre className="command-box">{busy ? "正在生成…" : command}</pre>
+      <Notice>命令只显示在这里；重新生成会签发新的 15 分钟一次性令牌。主机上线后此窗口会自动关闭。</Notice>
       <footer className="modal-actions">
         <button
           className="button button-secondary"

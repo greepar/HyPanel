@@ -46,6 +46,8 @@ uninstall_agent() {
                 fi
             fi
             rm -f /etc/systemd/system/hypanel-agent.service /etc/init.d/hypanel-agent /run/hypanel-agent.pid
+            # Network tuning is reverted on the next boot; live values are left alone.
+            rm -f /etc/sysctl.d/99-hypanel-network.conf /etc/modules-load.d/hypanel-bbr.conf
             command -v systemctl >/dev/null 2>&1 && { systemctl daemon-reload >/dev/null 2>&1 || true; systemctl reset-failed hypanel-agent.service >/dev/null 2>&1 || true; }
             ;;
         Darwin)
@@ -217,6 +219,71 @@ if [ "$OS" = Darwin ]; then
         MACOS_SERVICE_DOMAIN=system
         MACOS_PLIST=/Library/LaunchDaemons/com.hypanel.agent.plist
     fi
+fi
+
+# Optional host preparation (Linux only).  Failures are reported but never abort the Agent installation.
+install_nftables() {
+    if command -v nft >/dev/null 2>&1; then note "nftables already installed"; return 0; fi
+    note "installing nftables"
+    if command -v apt-get >/dev/null 2>&1; then
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables >/dev/null 2>&1 ||
+            { apt-get update -q >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables >/dev/null 2>&1; } || true
+    elif command -v dnf >/dev/null 2>&1; then dnf install -y -q nftables >/dev/null 2>&1 || true
+    elif command -v yum >/dev/null 2>&1; then yum install -y -q nftables >/dev/null 2>&1 || true
+    elif command -v apk >/dev/null 2>&1; then apk add --no-cache nftables >/dev/null 2>&1 || true
+    elif command -v pacman >/dev/null 2>&1; then pacman -S --noconfirm --needed nftables >/dev/null 2>&1 || true
+    elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install nftables >/dev/null 2>&1 || true
+    elif command -v opkg >/dev/null 2>&1; then { opkg update >/dev/null 2>&1; opkg install nftables >/dev/null 2>&1; } || true
+    else note "no supported package manager found; install nftables manually for port hopping"; return 0
+    fi
+    if command -v nft >/dev/null 2>&1; then note "nftables installed"
+    else note "could not install nftables; port hopping stays unavailable until it is installed"
+    fi
+}
+
+NETWORK_SYSCTL_FILE=/etc/sysctl.d/99-hypanel-network.conf
+tune_network() {
+    note "tuning kernel network parameters (BBR, fq, larger TCP/UDP buffers)"
+    congestion=
+    if command -v modprobe >/dev/null 2>&1; then modprobe tcp_bbr >/dev/null 2>&1 || true; fi
+    if grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
+        congestion=bbr
+        if [ -d /etc/modules-load.d ]; then printf 'tcp_bbr\n' > /etc/modules-load.d/hypanel-bbr.conf; fi
+    else
+        note "the kernel does not offer BBR; keeping the current congestion control"
+    fi
+    mkdir -p /etc/sysctl.d
+    {
+        printf '# Written by the HyPanel Agent installer; delete this file to revert after a reboot.\n'
+        printf 'net.core.default_qdisc = fq\n'
+        if [ -n "$congestion" ]; then printf 'net.ipv4.tcp_congestion_control = %s\n' "$congestion"; fi
+        # QUIC (Hysteria2/TUIC) relies on large UDP socket buffers.
+        printf 'net.core.rmem_max = 16777216\n'
+        printf 'net.core.wmem_max = 16777216\n'
+        printf 'net.ipv4.tcp_rmem = 4096 87380 16777216\n'
+        printf 'net.ipv4.tcp_wmem = 4096 65536 16777216\n'
+        printf 'net.core.netdev_max_backlog = 16384\n'
+        printf 'net.core.somaxconn = 4096\n'
+        printf 'net.ipv4.tcp_fastopen = 3\n'
+        printf 'net.ipv4.tcp_mtu_probing = 1\n'
+        printf 'net.ipv4.tcp_slow_start_after_idle = 0\n'
+        printf 'net.ipv4.tcp_notsent_lowat = 16384\n'
+    } > "$NETWORK_SYSCTL_FILE"
+    chmod 644 "$NETWORK_SYSCTL_FILE"
+    command -v sysctl >/dev/null 2>&1 || { note "sysctl not found; settings apply after a reboot"; return 0; }
+    # Apply key by key so one setting a container or old kernel rejects does not block the rest.
+    applied=0; skipped=
+    while IFS= read -r line; do
+        case "$line" in ''|'#'*) continue ;; esac
+        key=${line%% =*}; value=${line#*= }
+        if sysctl -w "$key=$value" >/dev/null 2>&1; then applied=$((applied + 1)); else skipped="$skipped $key"; fi
+    done < "$NETWORK_SYSCTL_FILE"
+    note "network tuning applied ($applied settings)${skipped:+; not supported here:$skipped}"
+}
+
+if [ "$STAGING_INSTALL" = 0 ] && [ "$OS" = Linux ]; then
+    if [ "${HYPANEL_INSTALL_NFT:-}" = 1 ]; then install_nftables; fi
+    if [ "${HYPANEL_TUNE_NETWORK:-}" = 1 ]; then tune_network; fi
 fi
 
 command -v curl >/dev/null 2>&1 || fail "curl is required"
