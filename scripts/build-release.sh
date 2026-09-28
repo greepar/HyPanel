@@ -24,8 +24,8 @@ sha256_of() {
 }
 # Extra `dotnet publish` arguments, e.g. a cross-compilation SysRoot for the old-glibc Linux builds.
 EXTRA_PUBLISH_ARGS=${EXTRA_PUBLISH_ARGS:-}
-# Highest GLIBC symbol version a glibc binary may require (Debian 11 / Ubuntu 20.04 ship 2.31).
-MAX_GLIBC=${MAX_GLIBC:-2.31}
+# Highest GLIBC symbol version a glibc binary may require (Ubuntu 22.04 ships 2.35, Debian 12 2.36).
+MAX_GLIBC=${MAX_GLIBC:-2.35}
 "$PYTHON" - "$VERSION" <<'PY'
 import re, sys
 if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?', sys.argv[1]):

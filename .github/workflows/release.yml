@@ -29,18 +29,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # glibc: Microsoft's cross-build images link against an old-glibc sysroot, so the binaries run on
-          # Debian 11 / Ubuntu 20.04 and newer.  The .NET SDK itself is installed into the container.
-          - rid: linux-x64
-            runner: ubuntu-latest
-            image: mcr.microsoft.com/dotnet-buildtools/prereqs:azurelinux-3.0-net10.0-cross-amd64
-            publish-args: -p:SysRoot=/crossrootfs/x64 -p:LinkerFlavor=lld
-            server: linux-x64
-          - rid: linux-arm64
-            runner: ubuntu-latest
-            image: mcr.microsoft.com/dotnet-buildtools/prereqs:azurelinux-3.0-net10.0-cross-arm64
-            publish-args: -p:SysRoot=/crossrootfs/arm64 -p:LinkerFlavor=lld
-            server: linux-arm64
+          # glibc: built natively on Ubuntu 22.04, so the binaries need at most glibc 2.35 (Ubuntu 22.04, Debian 12).
+          - { rid: linux-x64, runner: ubuntu-22.04, server: linux-x64 }
+          - { rid: linux-arm64, runner: ubuntu-22.04-arm, server: linux-arm64 }
           # musl: the official Alpine NativeAOT SDK image, built natively on each architecture.
           - rid: linux-musl-x64
             runner: ubuntu-latest
@@ -96,10 +87,11 @@ jobs:
         shell: bash
         env:
           AGENT_RIDS: ${{ matrix.rid }}
-          SERVER_RIDS: ''
+          SERVER_RIDS: ${{ matrix.server }}
           RELEASE_VERSION: ${{ steps.release-version.outputs.version }}
           SOURCE_DATE_EPOCH: ${{ steps.release-version.outputs.source-date-epoch }}
           PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
+          MAX_GLIBC: '2.35'
           REQUIRE_ALL_AGENT_RIDS: 'false'
         run: sh scripts/build-release.sh "$RELEASE_VERSION" release-output
       - name: Build release artifacts in ${{ matrix.image }}
@@ -109,7 +101,7 @@ jobs:
           IMAGE: ${{ matrix.image }}
           AGENT_RIDS: ${{ matrix.rid }}
           SERVER_RIDS: ${{ matrix.server }}
-          EXTRA_PUBLISH_ARGS: ${{ matrix.publish-args }} -p:SkipWebBuild=true
+          EXTRA_PUBLISH_ARGS: -p:SkipWebBuild=true
           RELEASE_VERSION: ${{ steps.release-version.outputs.version }}
           SOURCE_DATE_EPOCH: ${{ steps.release-version.outputs.source-date-epoch }}
         run: |
@@ -117,16 +109,7 @@ jobs:
             -e AGENT_RIDS -e SERVER_RIDS -e EXTRA_PUBLISH_ARGS -e RELEASE_VERSION -e SOURCE_DATE_EPOCH \
             -e REQUIRE_ALL_AGENT_RIDS=false -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 \
             "$IMAGE" sh -euc '
-              if command -v apk >/dev/null 2>&1; then
-                apk add --no-cache python3 >/dev/null
-              fi
-              # The cross-build images ship a dotnet host but no SDK.
-              if ! dotnet --list-sdks 2>/dev/null | grep -q "^10\.0\."; then
-                curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
-                bash /tmp/dotnet-install.sh --channel 10.0 --install-dir /opt/dotnet-sdk >/dev/null
-                export DOTNET_ROOT=/opt/dotnet-sdk PATH="/opt/dotnet-sdk:$PATH"
-              fi
-              dotnet --version
+              apk add --no-cache python3 >/dev/null
               sh scripts/build-release.sh "$RELEASE_VERSION" release-output
             '
       - uses: actions/upload-artifact@v4
