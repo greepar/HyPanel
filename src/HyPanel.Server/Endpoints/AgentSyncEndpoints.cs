@@ -31,6 +31,7 @@ internal static class AgentSyncEndpoints
         AgentAuthentication authentication,
         SqliteServerRepository repository,
         BackendArtifactCatalog backendArtifactCatalog,
+        BackendReleaseSyncWorker backendReleaseSync,
         ReleaseCatalog releaseCatalog,
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
@@ -92,9 +93,16 @@ internal static class AgentSyncEndpoints
 
         var update = await GetAgentUpdateAsync(agent.AgentId, request, repository, releaseCatalog, cancellationToken);
         NodeDesiredState? desiredState = null;
-        var artifacts = DistinctArtifacts(desired.Value.Services.Where(service => service.Enabled)
-            .Select(service => backendArtifactCatalog.FindArtifact(service.BackendType, service.BackendVersion,
-                request.Platform.Trim(), request.SupportsAvx)));
+        var rid = request.Platform.Trim();
+        var resolved = desired.Value.Services.Where(service => service.Enabled)
+            .Select(service => (Service: service, Artifact: backendArtifactCatalog.FindArtifact(service.BackendType,
+                service.BackendVersion, rid, request.SupportsAvx)))
+            .ToArray();
+        // A binary not cached for this platform yet is fetched in the background; once it is, the artifact set
+        // differs from what the Agent applied and the next sync re-sends the desired state.
+        foreach (var (service, artifact) in resolved)
+            if (artifact is null) backendReleaseSync.RequestCache(service.BackendType, service.BackendVersion, rid);
+        var artifacts = DistinctArtifacts(resolved.Select(item => item.Artifact));
         if (request.AppliedRevision != desired.Value.Revision
             || request.AppliedBackendArtifacts is { } appliedArtifacts && !appliedArtifacts.SequenceEqual(artifacts))
         {

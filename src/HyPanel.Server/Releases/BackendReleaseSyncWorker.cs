@@ -1,5 +1,6 @@
 namespace HyPanel.Server.Releases;
 
+using System.Collections.Concurrent;
 using System.Formats.Tar;
 using System.IO.Compression;
 using System.Security.Cryptography;
@@ -14,6 +15,10 @@ internal sealed class BackendReleaseSyncWorker(ILogger<BackendReleaseSyncWorker>
 {
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(15);
     private const long MaximumDownloadBytes = 256L * 1024 * 1024;
+    private static readonly TimeSpan OnDemandRetryDelay = TimeSpan.FromMinutes(5);
+    // Key -> time before which the binary is not requested again (MaxValue while a download is running).
+    private readonly ConcurrentDictionary<string, DateTimeOffset> onDemand = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim onDemandGate = new(1, 1);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -109,6 +114,43 @@ internal sealed class BackendReleaseSyncWorker(ILogger<BackendReleaseSyncWorker>
                     target.ServiceId);
             }
         }
+    }
+
+    /// <summary>
+    /// Downloads, in the background, a backend binary that a syncing Agent needs but the Panel has not cached yet
+    /// (for example the first node on a new platform). The next sync then delivers it. Returns immediately.
+    /// </summary>
+    public void RequestCache(string backendType, string version, string rid)
+    {
+        var key = $"{BackendArtifactCatalog.BinarySource(backendType)}\n{version}\n{rid}";
+        while (!onDemand.TryAdd(key, DateTimeOffset.MaxValue))
+        {
+            if (!onDemand.TryGetValue(key, out var retryAfter)) continue;
+            if (retryAfter > DateTimeOffset.UtcNow) return;
+            if (onDemand.TryUpdate(key, DateTimeOffset.MaxValue, retryAfter)) break;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            await onDemandGate.WaitAsync();
+            try
+            {
+                logger.LogInformation("Caching backend {BackendType} {Version} for {Rid} requested by an Agent.",
+                    backendType, version, rid);
+                await EnsureCachedAsync(backendType, version, rid, CancellationToken.None);
+                onDemand.TryRemove(key, out _);
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(exception, "Could not cache backend {BackendType} {Version} for {Rid}.",
+                    backendType, version, rid);
+                onDemand[key] = DateTimeOffset.UtcNow + OnDemandRetryDelay;
+            }
+            finally
+            {
+                onDemandGate.Release();
+            }
+        });
     }
 
     public async Task<BackendArtifact> EnsureCachedAsync(string backendType, string version, string rid,
