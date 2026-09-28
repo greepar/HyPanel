@@ -144,8 +144,19 @@ public sealed class ServiceReconciler(
                         cancellationToken);
                 }
                 else
+                {
                     await stateStore.SaveAsync(new AgentLocalState(desiredState.Revision,
                         WithoutTlsMaterial(desiredState)), cancellationToken);
+                    // Only after a fully applied state: a failed apply may still roll back to an older binary.
+                    try
+                    {
+                        await binaryManager.PruneUnusedAsync(desiredState.BackendArtifacts, cancellationToken);
+                    }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                    {
+                        logger.LogWarning("Could not remove unused backend binaries: {Error}", exception.Message);
+                    }
+                }
                 return failed
                     ? new ApplyResult(false, firstErrorCode ?? "apply_failed",
                         SafeMessage(firstErrorCode ?? "apply_failed"))

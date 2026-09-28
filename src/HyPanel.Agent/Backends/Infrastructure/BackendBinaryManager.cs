@@ -18,6 +18,50 @@ public sealed class BackendBinaryManager(
 
     public string CurrentRid => RuntimeInformation.RuntimeIdentifier;
 
+    /// <summary>
+    /// Deletes backend binaries the applied desired state no longer references (older versions after an update, the
+    /// standard Hysteria build once the AVX one is in use) and the directories they leave empty. Binaries that cannot
+    /// be deleted, such as a running executable on Windows, are left for the next pass.
+    /// </summary>
+    public async Task PruneUnusedAsync(IReadOnlyList<BackendArtifact> keep, CancellationToken cancellationToken)
+    {
+        var root = Path.Combine(options.DataDirectory, "backends");
+        if (!Directory.Exists(root)) return;
+        var kept = keep.Select(artifact => Path.GetFullPath(Path.Combine(root, artifact.BackendType, artifact.Version,
+            artifact.Rid, artifact.FileName))).ToHashSet(StringComparer.Ordinal);
+        await DownloadLock.WaitAsync(cancellationToken);
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).ToArray())
+            {
+                if (kept.Contains(Path.GetFullPath(file))) continue;
+                try
+                {
+                    File.Delete(file);
+                    logger.LogInformation("Removed unused backend binary {File}.", Path.GetRelativePath(root, file));
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                }
+            }
+            foreach (var directory in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories)
+                         .OrderByDescending(path => path.Length).ToArray())
+            {
+                try
+                {
+                    if (!Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                }
+            }
+        }
+        finally
+        {
+            DownloadLock.Release();
+        }
+    }
+
     public async Task<string> EnsureAsync(BackendArtifact artifact, CancellationToken cancellationToken)
     {
         ValidateArtifact(artifact);

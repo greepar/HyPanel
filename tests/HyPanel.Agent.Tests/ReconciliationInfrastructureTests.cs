@@ -448,6 +448,34 @@ public sealed class ReconciliationInfrastructureTests
         Assert.IsFalse(Directory.Exists(directory));
     }
 
+    [TestMethod]
+    public async Task PruneUnusedAsync_KeepsOnlyReferencedBinaries()
+    {
+        using var client = new HttpClient();
+        var manager = await CreateBinaryManagerAsync(client);
+        var root = Path.Combine(dataDirectory, "backends", "hysteria2");
+        string Binary(string version, string name)
+        {
+            var directory = Path.Combine(root, version, "linux-x64");
+            Directory.CreateDirectory(directory);
+            var path = Path.Combine(directory, name);
+            File.WriteAllText(path, name);
+            return path;
+        }
+        var standard = Binary("2.12.3", "hysteria2-2.12.3-linux-x64");
+        var avx = Binary("2.12.3", "hysteria2-2.12.3-linux-x64-avx");
+        var older = Binary("2.12.2", "hysteria2-2.12.2-linux-x64");
+
+        await manager.PruneUnusedAsync(
+            [new BackendArtifact("hysteria2", "2.12.3", "linux-x64", "hysteria2-2.12.3-linux-x64-avx", new string('0', 64), 1, true)],
+            CancellationToken.None);
+
+        Assert.IsTrue(File.Exists(avx));
+        Assert.IsFalse(File.Exists(standard));
+        Assert.IsFalse(File.Exists(older));
+        Assert.IsFalse(Directory.Exists(Path.Combine(root, "2.12.2")));
+    }
+
     private async Task<BackendBinaryManager> CreateBinaryManagerAsync(HttpClient client, Guid? agentId = null)
     {
         var options = new AgentEnrollmentOptions(null, null, dataDirectory);
