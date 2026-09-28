@@ -66,7 +66,17 @@ check_linux_binary() {
     binary=$2
     case "$rid" in
         linux-musl-*)
-            grep -q '/lib/ld-musl-' "$binary" || {
+            "$PYTHON" - "$binary" <<'PY' || {
+import struct, sys
+# A dynamically linked executable has a PT_INTERP program header naming the musl loader.
+with open(sys.argv[1], "rb") as elf:
+    header = elf.read(64)
+    phoff, = struct.unpack_from("<Q", header, 0x20)
+    phentsize, phnum = struct.unpack_from("<HH", header, 0x36)
+    elf.seek(phoff)
+    types = [struct.unpack("<I", elf.read(phentsize)[:4])[0] for _ in range(phnum)]
+sys.exit(0 if 3 in types else 1)
+PY
                 printf '%s\n' "$binary must be dynamically linked against musl (a static binary cannot load libssl)" >&2
                 exit 1
             } ;;

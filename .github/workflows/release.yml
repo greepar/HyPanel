@@ -25,7 +25,8 @@ jobs:
     name: Build ${{ matrix.rid }}
     runs-on: ${{ matrix.runner }}
     strategy:
-      fail-fast: true
+      # Let every platform finish so one failure does not hide the others.
+      fail-fast: false
       matrix:
         include:
           # glibc: Microsoft's cross-build images link against an old-glibc sysroot, so the binaries run on
