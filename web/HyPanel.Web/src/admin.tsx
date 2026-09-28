@@ -1223,7 +1223,9 @@ function InstallModal({
       )}
       {value.platform === "docker" && (
         <p className="field-help">
-          仅支持 Linux 主机。容器使用主机网络运行，镜像自带 nftables；Agent 保存在 hypanel-agent 数据卷里，会照常自动更新。网络参数优化需在主机上单独运行。
+          容器使用主机网络，Agent 保存在 hypanel-agent 数据卷里，会照常自动更新。推荐 Linux 主机；macOS（OrbStack）和
+          Windows（Docker Desktop，需在设置里开启 host networking）也能运行，但端口跳跃不可用，资源监控显示的是 Docker
+          虚拟机，这两个平台更推荐原生安装。网络参数优化需在主机上单独处理。
         </p>
       )}
       <pre className="command-box">{busy ? "正在生成…" : command}</pre>

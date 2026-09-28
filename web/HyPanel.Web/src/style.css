@@ -401,6 +401,7 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 .modal-form, .service-editor { display: grid; gap: 16px; padding: 4px 20px 20px }
 .modal-form footer, .service-editor footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px }
 .modal > .notice, .modal > .segmented { margin-right: 20px; margin-left: 20px }
+.modal > .field-help { margin: 0 20px 14px; font-size: 13px; line-height: 1.6 }
 .service-editor fieldset { margin: 0; padding: 0 0 16px; border: 0; border-bottom: 1px solid var(--border) }
 .service-editor legend { margin-bottom: 12px; font-weight: 600 }
 .service-editor-actions { display: flex; justify-content: flex-end; margin-bottom: 12px }
