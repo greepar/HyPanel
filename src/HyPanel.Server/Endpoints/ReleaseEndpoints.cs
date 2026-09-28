@@ -93,7 +93,7 @@ internal static class ReleaseEndpoints
         var access = await authorization.AuthorizeAsync(httpRequest, cancellationToken);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
 
-        if (request.Platform is not ("unix" or "powershell"))
+        if (request.Platform is not ("unix" or "powershell" or "docker"))
         {
             return Results.BadRequest();
         }
@@ -112,6 +112,13 @@ internal static class ReleaseEndpoints
         baseUrl = (await repository.GetGlobalSettingsAsync(cancellationToken)).PanelUrl ?? baseUrl;
 
         var token = await enrollmentService.IssueTokenAsync(nodeId, EnrollmentTokenLifetime, cancellationToken);
+        if (request.Platform == "docker")
+        {
+            // The container enrols on first start, so the token goes straight into its environment.
+            return Results.Json(new InstallCommandResponse(BuildDockerCommand(baseUrl, token.PlaintextToken)),
+                ServerJsonSerializerContext.Default.InstallCommandResponse);
+        }
+
         var installUrl = baseUrl + "/i/" + installCodes.Issue(
             request.Platform, token.PlaintextToken, baseUrl, EnrollmentTokenLifetime);
         var command = request.Platform == "unix"
@@ -156,6 +163,19 @@ internal static class ReleaseEndpoints
         $"export HYPANEL_PANEL_URL={ShellQuote(baseUrl)}\n" +
         $"export HYPANEL_ENROLLMENT_TOKEN={ShellQuote(token)}\n" +
         $"curl -fsSL {ShellQuote(baseUrl + "/install.sh")} | sh\n";
+
+    internal const string AgentImage = "ghcr.io/greepar/hypanel-agent:latest";
+
+    /// <summary>
+    /// Host networking lets the services the Panel deploys listen on any port; NET_ADMIN covers Hysteria2 port
+    /// hopping.  <c>docker rm -f</c> first makes the same command work as a reinstall.
+    /// </summary>
+    internal static string BuildDockerCommand(string baseUrl, string token) =>
+        "docker rm -f hypanel-agent >/dev/null 2>&1; " +
+        "docker run -d --name hypanel-agent --restart unless-stopped --network host --cap-add NET_ADMIN " +
+        "-v hypanel-agent:/data " +
+        $"-e HYPANEL_PANEL_URL={ShellQuote(baseUrl)} -e HYPANEL_ENROLLMENT_TOKEN={ShellQuote(token)} " +
+        AgentImage;
 
     internal static string BuildPowerShellBootstrap(string baseUrl, string token) =>
         $"$env:HYPANEL_PANEL_URL = {PowerShellQuote(baseUrl)}\n" +

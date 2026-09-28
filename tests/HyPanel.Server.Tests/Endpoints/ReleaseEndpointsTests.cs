@@ -51,6 +51,17 @@ public sealed class ReleaseEndpointsTests
         StringAssert.Contains(script, $"$env:HYPANEL_ENROLLMENT_TOKEN = '{Token}'");
     }
 
+    [TestMethod]
+    public void BuildDockerCommand_RunsHostNetworkedAgentWithEnrollmentEnvironment()
+    {
+        var command = ReleaseEndpoints.BuildDockerCommand("https://panel.example", Token);
+        StringAssert.StartsWith(command, "docker rm -f hypanel-agent");
+        StringAssert.Contains(command, "--network host --cap-add NET_ADMIN -v hypanel-agent:/data");
+        StringAssert.Contains(command, "-e HYPANEL_PANEL_URL='https://panel.example'");
+        StringAssert.Contains(command, $"-e HYPANEL_ENROLLMENT_TOKEN='{Token}'");
+        StringAssert.EndsWith(command, ReleaseEndpoints.AgentImage);
+    }
+
     private sealed class TestTimeProvider(DateTimeOffset utcNow) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => utcNow;

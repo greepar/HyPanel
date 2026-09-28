@@ -1,5 +1,7 @@
 import type { BackendDefinition, Backup, BackupValidation, Certificate, CertificateRequest, GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Usage, User, UserGroup } from './domain'
 
+
+export type InstallPlatform = 'unix' | 'powershell' | 'docker'
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message) }
 }
@@ -40,7 +42,7 @@ export class ApiClient {
   health = () => this.request<HealthSummary>('/api/admin/v1/health-summary')
   deleteNode = (nodeId: string) => this.request<void>(`/api/admin/v1/nodes/${nodeId}`, { method: 'DELETE' })
   createNode = (displayName: string) => this.request<NodeIdentity>('/api/admin/v1/nodes', { method: 'POST', body: JSON.stringify({ displayName }) })
-  installCommand = (nodeId: string, platform: 'unix' | 'powershell') => this.request<{ command: string }>(`/api/admin/v1/nodes/${nodeId}/install-command`, { method: 'POST', body: JSON.stringify({ platform }) })
+  installCommand = (nodeId: string, platform: InstallPlatform) => this.request<{ command: string }>(`/api/admin/v1/nodes/${nodeId}/install-command`, { method: 'POST', body: JSON.stringify({ platform }) })
   healthCheck = (agentId: string) => this.request<{ commandId: string }>(`/api/admin/v1/agents/${agentId}/commands/health-check`, { method: 'POST' })
   updateAgent = (nodeId: string) => this.request<{ updateId: string; version: string }>(`/api/admin/v1/nodes/${nodeId}/agent-update`, { method: 'POST' })
   updateAgents = (nodeIds: string[]) => this.request<{ version: string; updatedNodes: number }>('/api/admin/v1/nodes/agent-update', { method: 'POST', body: JSON.stringify({ nodeIds }) })

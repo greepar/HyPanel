@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import { ApiError, type ApiClient } from "./api";
+import { ApiError, type ApiClient, type InstallPlatform } from "./api";
 import { OwnSubscription } from "./subscription";
 import { PasskeyPanel } from "./passkey";
 import {
@@ -604,7 +604,7 @@ function NodesPage({ api, setError }: PageProps) {
   const [name, setName] = useState("");
   const [install, setInstall] = useState<{
     node: NodeIdentity;
-    platform: "unix" | "powershell";
+    platform: InstallPlatform;
     command: string;
     /** The node's Agent when the command was issued; a different Agent coming online means the install finished. */
     previousAgentId: string | null;
@@ -655,7 +655,7 @@ function NodesPage({ api, setError }: PageProps) {
   };
   const generate = async (
     node: NodeIdentity,
-    platform: "unix" | "powershell",
+    platform: InstallPlatform,
   ) => {
     setBusy(true);
     try {
@@ -989,6 +989,7 @@ function visibleNodes(nodes: Node[], filter: "all" | "online" | "offline", query
 const uninstallCommands = () => ({
   unix: `curl -fsSL ${location.origin}/install.sh | sh -s -- --uninstall`,
   powershell: `$env:HYPANEL_UNINSTALL='1'; irm ${location.origin}/install.ps1 | iex`,
+  docker: "docker rm -f hypanel-agent; docker volume rm hypanel-agent; nft delete table inet hypanel_hop 2>/dev/null",
 });
 
 function UninstallCommands({ setError }: { setError: (value: string) => void }) {
@@ -1003,7 +1004,7 @@ function UninstallCommands({ setError }: { setError: (value: string) => void }) 
   };
   return (
     <div className="command-list">
-      {([["Linux / macOS", commands.unix], ["Windows (管理员 PowerShell)", commands.powershell]] as const).map(([label, command]) => (
+      {([["Linux / macOS", commands.unix], ["Windows (管理员 PowerShell)", commands.powershell], ["Docker", commands.docker]] as const).map(([label, command]) => (
         <div key={label}>
           <span>{label}</span>
           <code>{command}</code>
@@ -1149,12 +1150,12 @@ function InstallModal({
 }: {
   value: {
     node: NodeIdentity;
-    platform: "unix" | "powershell";
+    platform: InstallPlatform;
     command: string;
   };
   busy: boolean;
   close: () => void;
-  change: (platform: "unix" | "powershell") => void;
+  change: (platform: InstallPlatform) => void;
   setError: (value: string) => void;
 }) {
   const [options, setOptions] = useState(loadInstallOptions);
@@ -1197,6 +1198,13 @@ function InstallModal({
         >
           Windows
         </button>
+        <button
+          type="button"
+          className={value.platform === "docker" ? "active" : ""}
+          onClick={() => change("docker")}
+        >
+          Docker
+        </button>
       </div>
       {value.platform === "unix" && (
         <div className="modal-form">
@@ -1212,6 +1220,11 @@ function InstallModal({
           </label>
           <p className="field-help">仅对 Linux 生效。失败只会提示，不影响 Agent 安装。</p>
         </div>
+      )}
+      {value.platform === "docker" && (
+        <p className="field-help">
+          仅支持 Linux 主机。容器使用主机网络运行，镜像自带 nftables；Agent 保存在 hypanel-agent 数据卷里，会照常自动更新。网络参数优化需在主机上单独运行。
+        </p>
       )}
       <pre className="command-box">{busy ? "正在生成…" : command}</pre>
       <Notice>命令只显示在这里；重新生成会签发新的 15 分钟一次性令牌。主机上线后此窗口会自动关闭。</Notice>

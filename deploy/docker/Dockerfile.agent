@@ -1,0 +1,24 @@
+# HyPanel Agent container.  The image carries only the runtime tools; the Agent itself is downloaded from the
+# Panel on first start and self-updates inside the /data volume.  Run it with the host network so the services
+# the Panel deploys can listen on any port, and with NET_ADMIN for Hysteria2 port hopping:
+#
+#   docker run -d --name hypanel-agent --restart unless-stopped --network host --cap-add NET_ADMIN \
+#     -v hypanel-agent:/data -e HYPANEL_PANEL_URL=... -e HYPANEL_ENROLLMENT_TOKEN=... ghcr.io/greepar/hypanel-agent
+FROM alpine:3.22
+
+LABEL org.opencontainers.image.source="https://github.com/greepar/HyPanel" \
+      org.opencontainers.image.description="HyPanel Agent" \
+      org.opencontainers.image.licenses="GPL-3.0-only"
+
+RUN apk add --no-cache ca-certificates curl jq nftables tini
+
+COPY deploy/docker/agent-entrypoint.sh /usr/local/bin/hypanel-agent-entrypoint
+RUN chmod 0755 /usr/local/bin/hypanel-agent-entrypoint
+
+ENV HYPANEL_DATA_DIR=/data
+WORKDIR /data
+VOLUME ["/data"]
+STOPSIGNAL SIGTERM
+
+# tini reaps any process the proxy backends leave behind; the Agent itself re-executes in place when it updates.
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/hypanel-agent-entrypoint"]

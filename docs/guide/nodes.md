@@ -14,6 +14,21 @@ curl -fsSL https://panel.example.com/i/123456 | sh
 - 节点只需要能访问面板，不需要开放任何管理端口。只需放行代理服务本身用到的端口。
 - 程序安装在 `/opt/hypanel/agent/hypanel-agent`，数据在 `/var/lib/hypanel-agent`，以专用的非特权用户运行。
 
+## 用 Docker 运行
+
+在安装弹窗里选择“Docker”，复制生成的 `docker run` 命令到 Linux 主机上运行即可。容器使用主机网络（面板下发的服务可以监听任意端口），
+带 `NET_ADMIN` 权限（Hysteria2 端口跳跃），镜像基于 Alpine 并自带 nftables。
+
+- Agent 程序和数据都保存在 `hypanel-agent` 数据卷里：首次启动时从面板下载，之后照常自动更新，重启或重建容器都不会丢。
+- 用新的安装命令重新运行，就是重新安装：会替换掉旧容器，并以新的令牌重新注册。
+- 网络参数优化需要改主机内核参数，容器里做不了，请在主机上单独处理。
+
+卸载：
+
+```bash
+docker rm -f hypanel-agent; docker volume rm hypanel-agent; nft delete table inet hypanel_hop
+```
+
 ## 重新安装与卸载
 
 在节点上重新运行面板生成的安装命令，即可修复安装或迁移到新版本的安装方式，原有服务会保留。

@@ -14,3 +14,4 @@
 !web/HyPanel.Web/tsconfig*.json
 !web/HyPanel.Web/vite.config.ts
 !deploy/docker/Dockerfile
+!deploy/docker/agent-entrypoint.sh
