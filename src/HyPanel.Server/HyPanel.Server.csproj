@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" />
     <ProjectReference Include="..\HyPanel.Shared\HyPanel.Shared.csproj" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <!-- Linux AOT publishes link SQLite statically (see CompileStaticSqlite), so the prebuilt libe_sqlite3.so is

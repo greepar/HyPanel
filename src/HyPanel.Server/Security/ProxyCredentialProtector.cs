@@ -30,6 +30,15 @@ internal sealed class ProxyCredentialProtector
 
     public bool IsConfigured => key is not null;
 
+    public byte[] DeriveWireGuardPrivateKey(Guid nodeId, Guid? exitNodeId = null)
+    {
+        var label = Encoding.UTF8.GetBytes($"hypanel:wireguard:egress:v1:{nodeId:D}:{exitNodeId?.ToString("D") ?? "exit"}");
+        var derived = HMACSHA256.HashData(RequireKey(), label);
+        var clamped = X25519.ClampScalar(derived);
+        CryptographicOperations.ZeroMemory(derived);
+        return clamped;
+    }
+
     public string? MasterKeyFingerprint
     {
         get

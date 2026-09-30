@@ -4,7 +4,7 @@ namespace HyPanel.Shared.Contracts;
 public sealed record EgressNetworkState(bool Enabled, IReadOnlyList<EgressTunnel> Tunnels,
     string Transport = EgressTransports.Gre, string? TransportOptionsJson = null);
 public sealed record EgressNetworkReport(bool Enabled, bool Ready, string? Error,
-    IReadOnlyList<string>? SupportedTransports = null, string AppliedTransport = EgressTransports.Gre);
+    IReadOnlyList<string>? SupportedTransports = null, string AppliedTransport = EgressTransports.Gre, int AppliedUdpPort = 0);
 public sealed record EgressTunnel(Guid ServiceId, int Slot, bool IsExit, string RemoteIpv4,
     string Transport = EgressTransports.Gre, string? TransportOptionsJson = null);
 public sealed record ServiceEgressRoute(int Slot);
@@ -35,9 +35,11 @@ public static class EgressTransports
     public const string GretapOverUdp = "gretap-udp";
     public static EgressTransportDefinition GreDefinition { get; } = new(Gre, "GRE", false, "ip", 47, 1400);
     public const int GreUdpPort = 47541;
-    public static EgressTransportDefinition GreUdpDefinition { get; } = new(GreUdp, "GRE over UDP / FOU（UDP 47541）", false, "udp", null, 1392);
+    public static EgressTransportDefinition GreUdpDefinition { get; } = new(GreUdp, "GRE over UDP / FOU", false, "udp", null, 1392);
+    public const int WireGuardPort = 51820;
+    public static EgressTransportDefinition WireGuardDefinition { get; } = new(WireGuard, "WireGuard", true, "udp", null, 1360);
     // Extend this catalog when a transport is implemented; the frontend does not hardcode its options.
-    public static IReadOnlyList<EgressTransportDefinition> Available { get; } = [GreDefinition, GreUdpDefinition];
+    public static IReadOnlyList<EgressTransportDefinition> Available { get; } = [GreDefinition, GreUdpDefinition, WireGuardDefinition];
 }
 
 public sealed record EgressTransportDefinition(string Id, string Name, bool Encrypted,

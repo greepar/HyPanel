@@ -1573,6 +1573,7 @@ function EgressSettings({ api, node, setError }: { api: ApiClient; node: Node; s
   const [egress, setEgress] = useState<import('./domain').EgressNode | null>(null);
   const [backends, setBackends] = useState<import('./domain').EgressTransportDefinition[]>([]);
   const [transport, setTransport] = useState('gre');
+  const [udpPort, setUdpPort] = useState('47541');
   useEffect(() => { void api.egressBackends().then(setBackends).catch(reason => setError(messageFor(reason, "无法加载出口后端"))); }, []);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -1581,7 +1582,7 @@ function EgressSettings({ api, node, setError }: { api: ApiClient; node: Node; s
       if (!cancelled) {
         const value = list.find(item => item.id === node.id) ?? null;
         setEgress(value);
-        if (value?.enabled) setTransport(value.transport);
+        if (value?.enabled) { setTransport(value.transport); setUdpPort(String(value.udpPort || (value.transport === 'wireguard' ? 51820 : 47541))); }
       }
     }).catch(reason => { if (!cancelled) setError(messageFor(reason, "无法读取出口状态")); });
     load();
@@ -1591,7 +1592,7 @@ function EgressSettings({ api, node, setError }: { api: ApiClient; node: Node; s
   const toggle = async () => {
     setBusy(true);
     try {
-      await api.setEgressEnabled(node.id, !egress?.enabled, transport);
+      await api.setEgressEnabled(node.id, !egress?.enabled, transport, transport === 'gre' ? undefined : Number(udpPort));
       const list = await api.egressNodes();
       setEgress(list.find(item => item.id === node.id) ?? null);
     } catch (reason) { setError(messageFor(reason, "无法配置出口转发")); }
@@ -1609,12 +1610,20 @@ function EgressSettings({ api, node, setError }: { api: ApiClient; node: Node; s
     {!supported && <p className="field-help">需要已更新 Agent 的 Linux 节点和公网 IPv4。</p>}
     <div className="egress-backend-field">
       <span>出口后端</span>
-      <Select value={transport} disabled={busy || !!egress?.enabled} onChange={setTransport}
+      <Select value={transport} disabled={busy || !!egress?.enabled} onChange={value => { setTransport(value); setUdpPort(value === 'wireguard' ? '51820' : '47541'); }}
         options={backends.filter(backend => egress?.supportedTransports?.includes(backend.id) || backend.id === transport)
           .map(backend => ({ value: backend.id, label: `${backend.name} · ${backend.encrypted ? '加密' : '不加密'}` }))} />
       <p className="field-help">配置成功后，此节点会出现在服务的出口列表中。当前提供 IPv4 出口；后端类型由面板和两端 Agent 的能力共同决定。</p>
     </div>
-    <button className="button button-secondary" type="button" disabled={busy || !egress || !supported || !node.online || (!!egress.enabled && egress.usedBy > 0)} onClick={() => void toggle()}>
+    {transport !== 'gre' && <label className="field">
+      <span>UDP 端口</span>
+      <input type="number" min="1" max="65535" value={udpPort} disabled={busy || !!egress?.enabled}
+        onInput={event => setUdpPort(event.currentTarget.value)} />
+      <p className="field-help">{transport === 'wireguard'
+        ? '在此出口节点放行这个入站 UDP 端口。入口节点主动连接，需允许 UDP 出站及会话回包。'
+        : '两端需要接收 FOU UDP 数据包，面板会下发同一端口；请在两端放行此 UDP 端口。'}</p>
+    </label>}
+    <button className="button button-secondary" type="button" disabled={busy || !egress || !supported || !node.online || (transport !== 'gre' && (!Number.isInteger(Number(udpPort)) || Number(udpPort) < 1 || Number(udpPort) > 65535)) || (!!egress.enabled && egress.usedBy > 0)} onClick={() => void toggle()}>
       {busy ? '提交中…' : egress?.enabled ? '停用出口转发' : '启用出口转发'}
     </button>
     {!!egress?.usedBy && <p className="field-help">先切换使用此出口的服务，才能停用或删除该出口。</p>}

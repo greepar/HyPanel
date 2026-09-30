@@ -4,7 +4,7 @@ using HyPanel.Shared.Contracts;
 
 internal sealed record EgressErrorResponse(string Error);
 
-internal sealed record SetEgressRequest(bool Enabled, string Transport = EgressTransports.Gre);
+internal sealed record SetEgressRequest(bool Enabled, string Transport = EgressTransports.Gre, int? UdpPort = null);
 
 internal sealed record CreateNodeRequest(string DisplayName);
 

@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 24;
+    public const long CurrentSchemaVersion = 25;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -616,6 +616,14 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
                     service_id TEXT NOT NULL UNIQUE REFERENCES service_instances(id) ON DELETE CASCADE,
                     exit_node_id TEXT NOT NULL REFERENCES nodes(id));
                 INSERT INTO schema_migrations (version, applied_at_utc) VALUES (24, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                """, cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, 25, cancellationToken))
+        {
+            await ExecuteAsync(connection, transaction, """
+                ALTER TABLE node_egress ADD COLUMN udp_port INTEGER NOT NULL DEFAULT 0;
+                INSERT INTO schema_migrations (version, applied_at_utc) VALUES (25, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
                 """, cancellationToken);
         }
 

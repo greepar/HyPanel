@@ -15,6 +15,37 @@ namespace HyPanel.Server.Tests.Persistence;
 public sealed class SqliteServerRepositoryTests
 {
     [TestMethod]
+    public async Task WireGuard_CustomPortAndKeysAreConsistentAcrossSourceAndExit()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var source = Guid.NewGuid(); var exit = Guid.NewGuid();
+        await CreateAgentAsync(fixture, source, "wg-source-token", "wg-source-secret");
+        await CreateAgentAsync(fixture, exit, "wg-exit-token", "wg-exit-secret");
+        Assert.IsTrue(await fixture.Repository.SetEgressEnabledAsync(exit, true, CancellationToken.None, EgressTransports.WireGuard, 4433));
+        foreach (var backend in new[] { "xray", "xray-ss" })
+            await fixture.Repository.CreateServiceAsync(CreateService(source, Guid.NewGuid(), backend) with
+            { BackendType = backend, ConfigJson = $"{{\"exitNodeId\":\"{exit}\"}}" }, CancellationToken.None);
+        var a = await fixture.Repository.GetEgressNetworkAsync(source, CancellationToken.None);
+        var b = await fixture.Repository.GetEgressNetworkAsync(exit, CancellationToken.None);
+        var context = HyPanel.Shared.Serialization.HyPanelJsonSerializerContext.Default.WireGuardEgressOptions;
+        var ownA = JsonSerializer.Deserialize(a.Tunnels[0].TransportOptionsJson!, context)!;
+        var ownB = JsonSerializer.Deserialize(b.Tunnels[0].TransportOptionsJson!, context)!;
+        Assert.AreEqual(4433, ownA.Port); Assert.AreEqual(4433, ownB.Port);
+        Assert.AreEqual("hpwx", ownB.InterfaceName);
+        Assert.AreEqual(a.Tunnels[0].TransportOptionsJson, a.Tunnels[1].TransportOptionsJson);
+        Assert.AreNotEqual(ownA.PrivateKey, ownB.PrivateKey);
+        var pubA = new byte[32]; var pubB = new byte[32];
+        Org.BouncyCastle.Math.EC.Rfc7748.X25519.GeneratePublicKey(Convert.FromBase64String(ownA.PrivateKey), 0, pubA, 0);
+        Org.BouncyCastle.Math.EC.Rfc7748.X25519.GeneratePublicKey(Convert.FromBase64String(ownB.PrivateKey), 0, pubB, 0);
+        Assert.AreEqual(Convert.ToBase64String(pubA), ownB.PeerPublicKey);
+        Assert.AreEqual(Convert.ToBase64String(pubB), ownA.PeerPublicKey);
+        Assert.IsFalse(await fixture.Repository.SetEgressEnabledAsync(exit, true, CancellationToken.None, EgressTransports.WireGuard, 4434));
+        await fixture.Repository.RecordEgressReportAsync(exit, new(true, true, null,
+            [EgressTransports.WireGuard], EgressTransports.WireGuard, 4434), CancellationToken.None);
+        Assert.IsFalse((await fixture.Repository.GetEgressNodesAsync(CancellationToken.None)).Single(n => n.Id == exit).Ready);
+    }
+
+    [TestMethod]
     public async Task Egress_AllocatesTunnelsForXrayAndShadowsocks()
     {
         await using var fixture = await TestDatabase.CreateAsync();
@@ -96,7 +127,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L), (22L, 1L), (23L, 1L), (24L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L), (22L, 1L), (23L, 1L), (24L, 1L), (25L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();

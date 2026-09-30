@@ -25,7 +25,7 @@ export class ApiClient {
   }
   egressNodes() { return this.request<EgressNode[]>('/api/admin/v1/egress-nodes') }
   egressBackends() { return this.request<EgressTransportDefinition[]>('/api/admin/v1/egress-backends') }
-  setEgressEnabled(nodeId: string, enabled: boolean, transport: string = 'gre') { return this.request<void>(`/api/admin/v1/nodes/${nodeId}/egress`, { method: 'PUT', body: JSON.stringify({ enabled, transport }) }) }
+  setEgressEnabled(nodeId: string, enabled: boolean, transport: string = 'gre', udpPort?: number) { return this.request<void>(`/api/admin/v1/nodes/${nodeId}/egress`, { method: 'PUT', body: JSON.stringify({ enabled, transport, udpPort }) }) }
   private async authenticatedFetch(path: string, init: RequestInit = {}) {
     const bearer = this.token()
     const response = await fetch(path, { ...init, headers: { ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}), ...init.headers } })

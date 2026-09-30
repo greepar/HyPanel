@@ -100,6 +100,7 @@ internal static class AdminBackendEndpoints
             {
             }
         }
+        used.UnionWith(await repository.GetEgressUdpPortsAsync(nodeId, ct));
         return used;
     }
 
@@ -109,12 +110,12 @@ internal static class AdminBackendEndpoints
         {
             var port = RandomNumberGenerator.GetInt32(MinimumSuggestedPort, MaximumSuggestedPort);
             if (port is >= ReservedControlPortStart and <= ReservedControlPortEnd
-                || port == HyPanel.Shared.Contracts.EgressTransports.GreUdpPort || used.Contains(port)) continue;
+                || port == HyPanel.Shared.Contracts.EgressTransports.GreUdpPort || port == HyPanel.Shared.Contracts.EgressTransports.WireGuardPort || used.Contains(port)) continue;
             return port;
         }
         for (var port = MinimumSuggestedPort; port < MaximumSuggestedPort; port++)
             if (port is not (>= ReservedControlPortStart and <= ReservedControlPortEnd)
-                && port != HyPanel.Shared.Contracts.EgressTransports.GreUdpPort && !used.Contains(port))
+                && port != HyPanel.Shared.Contracts.EgressTransports.GreUdpPort && port != HyPanel.Shared.Contracts.EgressTransports.WireGuardPort && !used.Contains(port))
                 return port;
         return 443;
     }

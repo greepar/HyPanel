@@ -43,12 +43,22 @@ internal static class AdminNodesEndpoints
     }
 
     private static async Task<IResult> SetEgressAsync(Guid nodeId, SetEgressRequest body, HttpRequest request,
-        AdminAuthorization authorization, SqliteServerRepository repository, CancellationToken ct)
+        AdminAuthorization authorization, SqliteServerRepository repository, HyPanel.Server.Security.ProxyCredentialProtector protector, CancellationToken ct)
     {
         var access = await authorization.AuthorizeAsync(request, ct);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
         if (!HyPanel.Shared.Contracts.EgressTransports.Available.Any(b => b.Id == body.Transport))
             return EgressError(400, "该出口后端尚未实现。");
+        if (body.Enabled && body.Transport == HyPanel.Shared.Contracts.EgressTransports.WireGuard && !protector.IsConfigured)
+            return EgressError(400, "请先为面板配置持久的 HYPANEL_MASTER_KEY，再启用 WireGuard 出口。");
+        var port = body.Transport switch
+        {
+            HyPanel.Shared.Contracts.EgressTransports.GreUdp => body.UdpPort ?? HyPanel.Shared.Contracts.EgressTransports.GreUdpPort,
+            HyPanel.Shared.Contracts.EgressTransports.WireGuard => body.UdpPort ?? HyPanel.Shared.Contracts.EgressTransports.WireGuardPort,
+            _ => 0
+        };
+        if (body.Transport != HyPanel.Shared.Contracts.EgressTransports.Gre && port is < 1 or > 65535)
+            return EgressError(400, "UDP 端口必须在 1 到 65535 之间。");
         var node = (await repository.GetNodeObservationsAsync(ct)).FirstOrDefault(n => n.Id == nodeId);
         if (node is null) return Results.NotFound();
         if (body.Enabled && !(await repository.GetEgressNodesAsync(ct)).Any(n => n.Id == nodeId && n.Supported && n.SupportedTransports.Contains(body.Transport)))
@@ -56,7 +66,7 @@ internal static class AdminNodesEndpoints
         if (body.Enabled && (node.ReportedPlatform?.StartsWith("linux-", StringComparison.Ordinal) != true
             || node.PublicIpv4 is null))
             return EgressError(400, "出口转发需要已接入的 Linux 节点和公网 IPv4。");
-        return await repository.SetEgressEnabledAsync(nodeId, body.Enabled, ct, body.Transport)
+        return await repository.SetEgressEnabledAsync(nodeId, body.Enabled, ct, body.Transport, port)
             ? Results.NoContent() : EgressError(409, "该出口仍被服务使用，请先切换这些服务的出口。");
     }
 

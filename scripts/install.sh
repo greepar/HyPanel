@@ -72,9 +72,10 @@ uninstall_agent() {
     command -v nft >/dev/null 2>&1 && nft delete table inet hypanel_egress >/dev/null 2>&1 || true
     # Reserved HyPanel GRE interfaces and source routing rules, including orphan rules.
     if command -v ip >/dev/null 2>&1; then
-        for path in /sys/class/net/hpe*; do
+        for path in /sys/class/net/hpe* /sys/class/net/hpw*; do
             [ -e "$path" ] || continue
             name=${path##*/}; slot=${name#hpe}
+            case "$name" in hpw*) ip link delete "$name" >/dev/null 2>&1 || true; continue ;; esac
             case "$slot" in ''|*[!0-9]*) continue ;; esac
             [ "$slot" -ge 1 ] && [ "$slot" -le 16000 ] || continue
             ip link delete "$name" >/dev/null 2>&1 || true
@@ -83,7 +84,10 @@ uninstall_agent() {
             ip rule del pref "$((10000 + slot))" >/dev/null 2>&1 || true
             ip route flush table "$((100000 + slot))" >/dev/null 2>&1 || true
         done
-        ip fou show 2>/dev/null | grep -Eq '^port 47541 ipproto 47($| )' && ip fou del port 47541 >/dev/null 2>&1 || true
+        for port in 47541 $(cat "$data_dir/egress-fou-ports" 2>/dev/null || true); do
+            case "$port" in ''|*[!0-9]*) continue ;; esac
+            ip fou show 2>/dev/null | grep -Eq "^port $port ipproto 47($| )" && ip fou del port "$port" >/dev/null 2>&1 || true
+        done
     fi
     # Backend processes (xray, hysteria, ...) run from the data directory; make sure none survive.
     if command -v pkill >/dev/null 2>&1; then
@@ -239,21 +243,21 @@ fi
 
 # Optional host preparation (Linux only).  Failures are reported but never abort the Agent installation.
 install_nftables() {
-    if command -v nft >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 && command -v ping >/dev/null 2>&1; then note "nftables already installed"; return 0; fi
-    note "installing nftables and GRE network tools"
+    if command -v nft >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 && command -v ping >/dev/null 2>&1 && command -v wg >/dev/null 2>&1; then note "network tools already installed"; return 0; fi
+    note "installing nftables, GRE and WireGuard network tools"
     if command -v apt-get >/dev/null 2>&1; then
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables iproute2 iputils-ping >/dev/null 2>&1 ||
-            { apt-get update -q >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables iproute2 iputils-ping >/dev/null 2>&1; } || true
-    elif command -v dnf >/dev/null 2>&1; then dnf install -y -q nftables iproute iputils >/dev/null 2>&1 || true
-    elif command -v yum >/dev/null 2>&1; then yum install -y -q nftables iproute iputils >/dev/null 2>&1 || true
-    elif command -v apk >/dev/null 2>&1; then apk add --no-cache nftables iproute2 iputils >/dev/null 2>&1 || true
-    elif command -v pacman >/dev/null 2>&1; then pacman -S --noconfirm --needed nftables iproute2 iputils >/dev/null 2>&1 || true
-    elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install nftables iproute2 iputils >/dev/null 2>&1 || true
-    elif command -v opkg >/dev/null 2>&1; then { opkg update >/dev/null 2>&1; opkg install nftables ip-full iputils-ping >/dev/null 2>&1; } || true
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables iproute2 iputils-ping wireguard-tools >/dev/null 2>&1 ||
+            { apt-get update -q >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables iproute2 iputils-ping wireguard-tools >/dev/null 2>&1; } || true
+    elif command -v dnf >/dev/null 2>&1; then dnf install -y -q nftables iproute iputils wireguard-tools >/dev/null 2>&1 || true
+    elif command -v yum >/dev/null 2>&1; then yum install -y -q nftables iproute iputils wireguard-tools >/dev/null 2>&1 || true
+    elif command -v apk >/dev/null 2>&1; then apk add --no-cache nftables iproute2 iputils wireguard-tools >/dev/null 2>&1 || true
+    elif command -v pacman >/dev/null 2>&1; then pacman -S --noconfirm --needed nftables iproute2 iputils wireguard-tools >/dev/null 2>&1 || true
+    elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install nftables iproute2 iputils wireguard-tools >/dev/null 2>&1 || true
+    elif command -v opkg >/dev/null 2>&1; then { opkg update >/dev/null 2>&1; opkg install nftables ip-full iputils-ping wireguard-tools kmod-wireguard >/dev/null 2>&1; } || true
     else note "no supported package manager found; install nftables manually for port hopping"; return 0
     fi
-    if command -v nft >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 && command -v ping >/dev/null 2>&1; then note "nftables installed"
-    else note "could not install nftables; port hopping stays unavailable until it is installed"
+    if command -v nft >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 && command -v ping >/dev/null 2>&1 && command -v wg >/dev/null 2>&1; then note "network tools installed"
+    else note "some network tools are missing; install iproute2, nftables, ping and wireguard-tools before enabling exit forwarding"
     fi
 }
 

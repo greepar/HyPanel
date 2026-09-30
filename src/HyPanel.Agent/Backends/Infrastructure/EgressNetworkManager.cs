@@ -7,8 +7,8 @@ using System.Text;
 using HyPanel.Agent.Networking;
 using HyPanel.Shared.Contracts;
 
-/// <summary>Owns hpe* exit interfaces, routing tables 100001..116000 and inet hypanel_egress.</summary>
-public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, EgressTransportRegistry? transports = null)
+/// <summary>Owns hpe*/hpw* exit interfaces, routing tables 100001..116000 and inet hypanel_egress.</summary>
+public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, EgressTransportRegistry? transports = null, AgentEnrollmentOptions? options = null)
 {
     private EgressNetworkReport report = new(false, false, null);
     public EgressNetworkReport Report
@@ -33,15 +33,15 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
         try
         {
             if (!OperatingSystem.IsLinux()) throw new InvalidOperationException("出口转发仅支持 Linux 节点。");
-            var script = BuildScriptCore(state, Transports);
+            var script = BuildScriptCore(state, Transports, Path.Combine(options?.DataDirectory ?? Path.GetTempPath(), "egress-fou-ports"));
             hasManagedNetwork = true;
             await RunAsync(script, ct);
-            Report = new(state.Enabled, state.Enabled, null, Transports.SupportedTransports, state.Transport);
+            Report = new(state.Enabled, state.Enabled, null, Transports.SupportedTransports, state.Transport, AppliedPort(state));
             foreach (var tunnel in state.Tunnels.Where(t => !t.IsExit))
             {
                 try
                 {
-                    await RunAsync($"ping -n -c 1 -W 1 -I {EgressAddressing.Source(tunnel.Slot)} {EgressAddressing.Exit(tunnel.Slot)} >/dev/null\n", ct);
+                    await RunAsync($"ping -n -c 1 -W 3 -I {EgressAddressing.Source(tunnel.Slot)} {EgressAddressing.Exit(tunnel.Slot)} >/dev/null\n", ct);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -53,7 +53,7 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
         {
             var error = ex.Message.Length > 1024 ? ex.Message[..1024] : ex.Message;
             if (Report.Error != error) logger.LogWarning("Egress network failed: {Error}", error);
-            Report = new(state.Enabled, false, error, Transports.SupportedTransports, state.Transport);
+            Report = new(state.Enabled, false, error, Transports.SupportedTransports, state.Transport, AppliedPort(state));
             foreach (var tunnel in state.Tunnels.Where(t => !t.IsExit)) failures[tunnel.ServiceId] = error;
         }
         Failures = failures;
@@ -61,7 +61,20 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
 
     internal static string BuildScript(EgressNetworkState state) => BuildScriptCore(state, EgressTransportRegistry.Default);
 
-    internal static string BuildScriptCore(EgressNetworkState state, EgressTransportRegistry registry)
+    private static int AppliedPort(EgressNetworkState state)
+    {
+        try
+        {
+            if (state.Transport == EgressTransports.GreUdp) return GreUdpEgressTransportBackend.Port(state.TransportOptionsJson);
+            if (state.Transport == EgressTransports.WireGuard && state.TransportOptionsJson is { } json)
+                return System.Text.Json.JsonSerializer.Deserialize(json,
+                    HyPanel.Shared.Serialization.HyPanelJsonSerializerContext.Default.WireGuardEgressOptions)?.Port ?? 0;
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException) { }
+        return 0;
+    }
+
+    internal static string BuildScriptCore(EgressNetworkState state, EgressTransportRegistry registry, string portStatePath = "/tmp/hypanel-egress-fou-ports")
     {
         if (state.Tunnels.Count > 16000 || state.Tunnels.Select(t => t.Slot).Distinct().Count() != state.Tunnels.Count)
             throw new InvalidOperationException("Invalid exit tunnel allocation.");
@@ -72,7 +85,14 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
                 || ip.ToString() != t.RemoteIpv4 || IPAddress.IsLoopback(ip) || ip.Equals(IPAddress.Any)
                 || t.IsExit && !state.Enabled)
                 throw new InvalidOperationException("隧道对端公网 IPv4 或出口配置无效。");
+        var fouPorts = state.Tunnels.Where(t => t.Transport == EgressTransports.GreUdp)
+            .Select(t => GreUdpEgressTransportBackend.Port(t.TransportOptionsJson))
+            .Concat(state.Enabled && state.Transport == EgressTransports.GreUdp
+                ? new[] { GreUdpEgressTransportBackend.Port(state.TransportOptionsJson) } : Array.Empty<int>()).Distinct().ToArray();
+        var portFile = "'" + portStatePath.Replace("'", "'\"'\"'") + "'";
         var script = new StringBuilder("set -eu\nexport PATH=/usr/sbin:/usr/bin:/sbin:/bin\n");
+        if (fouPorts.Length > 0)
+            script.AppendLine($"grep -Fxq '{string.Join(" ", fouPorts)}' {portFile} 2>/dev/null || printf '%s\\n' '{string.Join(" ", fouPorts)}' >> {portFile}");
         var active = state.Enabled || state.Tunnels.Count > 0;
         if (active)
         {
@@ -85,11 +105,20 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
             script.AppendLine("sysctl -q -w net.ipv4.ip_forward=1");
             script.AppendLine("sysctl -q -w net.ipv4.conf.all.rp_filter=2");
             // Check the selected backend before advertising this node as an exit.
-            script.Append(registry.Resolve(state.Transport).PrepareExit(state.TransportOptionsJson));
+            if (state.Transport != EgressTransports.WireGuard || !state.Tunnels.Any(t => t.IsExit && t.Transport == EgressTransports.WireGuard))
+                script.Append(registry.Resolve(state.Transport).PrepareExit(state.TransportOptionsJson));
+        }
+        foreach (var group in state.Tunnels.GroupBy(t => t.Transport))
+            script.Append(registry.Resolve(group.Key).PrepareTunnels(group.ToArray()));
+        foreach (var group in state.Tunnels.Where(t => t.Transport == EgressTransports.WireGuard).GroupBy(t => registry.Resolve(t.Transport).Interface(t)))
+        {
+            var addresses = string.Join("|", group.Select(t => $"{(t.IsExit ? EgressAddressing.Exit(t.Slot) : EgressAddressing.Source(t.Slot))}/30"));
+            script.AppendLine($"for address in $(ip -o -4 address show dev {group.Key} | awk '{{print $4}}'); do");
+            script.AppendLine($"  case \"$address\" in {addresses}) continue;; 169.254.*) ip address del \"$address\" dev {group.Key};; esac\ndone");
         }
         foreach (var t in state.Tunnels.OrderBy(t => t.Slot))
         {
-            var name = EgressAddressing.Interface(t.Slot);
+            var name = registry.Resolve(t.Transport).Interface(t);
             var local = t.IsExit ? EgressAddressing.Exit(t.Slot) : EgressAddressing.Source(t.Slot);
             var peer = t.IsExit ? EgressAddressing.Source(t.Slot) : EgressAddressing.Exit(t.Slot);
             var table = EgressAddressing.Table(t.Slot);
@@ -112,20 +141,26 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
         script.AppendLine("if command -v nft >/dev/null; then nft -f - <<'HYPANEL_NFT'");
         script.Append(BuildNftCore(state, registry));
         script.AppendLine("HYPANEL_NFT\nfi");
-        var keep = string.Join("|", state.Tunnels.Select(t => EgressAddressing.Interface(t.Slot)));
-        script.AppendLine("for path in /sys/class/net/hpe*; do");
+        var keep = string.Join("|", state.Tunnels.Select(t => registry.Resolve(t.Transport).Interface(t)).Distinct().Concat(state.Enabled && state.Transport == EgressTransports.WireGuard ? new[] { "hpwx" } : Array.Empty<string>()));
+        var keepSlots = string.Join("|", state.Tunnels.Where(t => !t.IsExit).Select(t => t.Slot));
+        script.AppendLine("for path in /sys/class/net/hpe* /sys/class/net/hpw*; do");
         script.AppendLine("  [ -e \"$path\" ] || continue; name=${path##*/}; slot=${name#hpe}");
+        if (keep.Length > 0) script.AppendLine($"  case \"$name\" in {keep}) continue;; esac");
+        script.AppendLine("  case \"$name\" in hpw*) ip link delete \"$name\"; continue;; esac");
         script.AppendLine("  case \"$slot\" in ''|*[!0-9]*) continue;; esac");
         script.AppendLine("  [ \"$slot\" -ge 1 ] && [ \"$slot\" -le 16000 ] || continue");
-        if (keep.Length > 0) script.AppendLine($"  case \"$name\" in {keep}) continue;; esac");
         script.AppendLine("  ip link delete \"$name\"\n  ip rule del pref \"$((10000 + slot))\" 2>/dev/null || true\n  ip route flush table \"$((100000 + slot))\"\ndone");
         // Also remove orphan source rules if an interface was deleted outside the Agent.
         script.AppendLine("if command -v ip >/dev/null; then");
         script.AppendLine("for slot in $(ip -4 rule show | awk '$1 ~ /^[0-9]+:$/ {p=$1+0; if(p>10000 && p<=26000) for(i=1;i<=NF;i++) if($i==\"lookup\" && $(i+1)==p+90000) print p-10000}'); do");
-        if (keep.Length > 0) script.AppendLine($"  case \"hpe$slot\" in {keep}) continue;; esac");
+        if (keepSlots.Length > 0) script.AppendLine($"  case \"$slot\" in {keepSlots}) continue;; esac");
         script.AppendLine("  ip rule del pref \"$((10000 + slot))\" 2>/dev/null || true\n  ip route flush table \"$((100000 + slot))\"\ndone\nfi");
-        if (state.Transport != EgressTransports.GreUdp && state.Tunnels.All(t => t.Transport != EgressTransports.GreUdp))
-            script.AppendLine($"ip fou show | grep -Eq '^port {EgressTransports.GreUdpPort} ipproto 47($| )' && ip fou del port {EgressTransports.GreUdpPort} || true");
+        var keepPorts = string.Join("|", fouPorts);
+        script.AppendLine($"for port in {EgressTransports.GreUdpPort} $(cat {portFile} 2>/dev/null || true); do");
+        script.AppendLine("  case \"$port\" in ''|*[!0-9]*) continue;; esac");
+        if (keepPorts.Length > 0) script.AppendLine($"  case \"$port\" in {keepPorts}) continue;; esac");
+        script.AppendLine("  ip fou show 2>/dev/null | grep -Eq \"^port $port ipproto 47($| )\" && ip fou del port \"$port\" || true\ndone");
+        script.AppendLine($"printf '%s\\n' '{string.Join(" ", fouPorts)}' > {portFile}");
         return script.ToString();
     }
 
@@ -138,37 +173,39 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
         s.AppendLine("table inet hypanel_egress {");
         s.AppendLine(" chain input { type filter hook input priority -10; policy accept;");
         foreach (var t in state.Tunnels)
-        {
-            var name = EgressAddressing.Interface(t.Slot);
-            var peer = t.IsExit ? EgressAddressing.Source(t.Slot) : EgressAddressing.Exit(t.Slot);
             s.Append("  ").AppendLine(registry.Resolve(t.Transport).InputFirewallRule(t));
-            // Only the assigned peer may inject payloads through this tunnel.
-            if (t.IsExit) s.AppendLine($"  iifname \"{name}\" ip saddr != {peer} drop");
+        if (state.Tunnels.Any(t => !t.IsExit && t.Transport == EgressTransports.WireGuard))
+            s.AppendLine("  ct state established,related ip protocol udp accept");
+        foreach (var group in state.Tunnels.GroupBy(t => registry.Resolve(t.Transport).Interface(t)))
+        {
+            var name = group.Key;
+            var allowed = string.Join(", ", group.Select(t => t.IsExit ? EgressAddressing.Source(t.Slot) : EgressAddressing.Exit(t.Slot)));
+            if (group.First().IsExit) s.AppendLine($"  iifname \"{name}\" ip saddr != {{ {allowed} }} drop");
             s.AppendLine($"  iifname \"{name}\" ip protocol icmp accept");
         }
         s.AppendLine(" }");
         // Enforce the requested exit even if another administrator's earlier policy rule catches this source.
         s.AppendLine(" chain output { type filter hook output priority 0; policy accept;");
         foreach (var t in state.Tunnels.Where(t => !t.IsExit))
-            s.AppendLine($"  ip saddr {EgressAddressing.Source(t.Slot)} oifname != \"{EgressAddressing.Interface(t.Slot)}\" drop");
+            s.AppendLine($"  ip saddr {EgressAddressing.Source(t.Slot)} oifname != \"{registry.Resolve(t.Transport).Interface(t)}\" drop");
         s.AppendLine(" }");
         s.AppendLine(" chain forward { type filter hook forward priority -10; policy accept;");
-        foreach (var t in state.Tunnels.Where(t => t.IsExit))
+        foreach (var group in state.Tunnels.Where(t => t.IsExit).GroupBy(t => registry.Resolve(t.Transport).Interface(t)))
         {
-            var name = EgressAddressing.Interface(t.Slot);
-            var source = EgressAddressing.Source(t.Slot);
-            var mss = registry.Resolve(t.Transport).Definition.Mtu - 40;
-            s.AppendLine($"  iifname \"{name}\" ip saddr != {source} drop");
+            var name = group.Key;
+            var allowed = string.Join(", ", group.Select(t => EgressAddressing.Source(t.Slot)));
+            var mss = registry.Resolve(group.First().Transport).Definition.Mtu - 40;
+            s.AppendLine($"  iifname \"{name}\" ip saddr != {{ {allowed} }} drop");
             s.AppendLine($"  iifname \"{name}\" tcp flags & syn == syn tcp option maxseg size > {mss} tcp option maxseg size set {mss}");
             s.AppendLine($"  oifname \"{name}\" tcp flags & syn == syn tcp option maxseg size > {mss} tcp option maxseg size set {mss}");
-            s.AppendLine($"  iifname \"{name}\" ip saddr {source} accept");
-            s.AppendLine($"  oifname \"{name}\" ip daddr {source} ct state established,related accept");
+            s.AppendLine($"  iifname \"{name}\" ip saddr {{ {allowed} }} accept");
+            s.AppendLine($"  oifname \"{name}\" ip daddr {{ {allowed} }} ct state established,related accept");
             s.AppendLine($"  oifname \"{name}\" drop");
         }
         s.AppendLine(" }");
         s.AppendLine(" chain postrouting { type nat hook postrouting priority srcnat; policy accept;");
         foreach (var t in state.Tunnels.Where(t => t.IsExit))
-            s.AppendLine($"  iifname \"{EgressAddressing.Interface(t.Slot)}\" ip saddr {EgressAddressing.Source(t.Slot)} masquerade");
+            s.AppendLine($"  iifname \"{registry.Resolve(t.Transport).Interface(t)}\" ip saddr {EgressAddressing.Source(t.Slot)} masquerade");
         s.AppendLine(" }\n}");
         return s.ToString();
     }
