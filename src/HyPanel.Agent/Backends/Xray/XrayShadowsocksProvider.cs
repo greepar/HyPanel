@@ -29,6 +29,9 @@ public sealed class XrayShadowsocksProvider(TimeProvider timeProvider) : IBacken
         cancellationToken.ThrowIfCancellationRequested();
         if (desiredState.ConfigSchemaVersion != 1 || !TryParseConfig(desiredState.ConfigJson, out var config))
             return ValueTask.FromResult(Invalid("invalid_config", "Invalid Xray Shadowsocks configuration."));
+        if (config.ExitNodeId is not null && (desiredState.EgressRoute is null
+            || !EgressAddressing.IsValidSlot(desiredState.EgressRoute.Slot)))
+            return ValueTask.FromResult(Invalid("egress_unavailable", "出口网络配置缺失。"));
         if (!TryGetUsers(desiredState, out _))
             return ValueTask.FromResult(Invalid("invalid_users", "Invalid Xray Shadowsocks users."));
         if (desiredState.ControlPort is not (>= 1024 and <= 65_535) || desiredState.ControlPort == config.ListenPort)
@@ -44,6 +47,9 @@ public sealed class XrayShadowsocksProvider(TimeProvider timeProvider) : IBacken
         if (desiredState.ConfigSchemaVersion != 1 || !TryParseConfig(desiredState.ConfigJson, out var config) ||
             !TryGetUsers(desiredState, out var users) || desiredState.ControlPort is not { } controlPort)
             throw new InvalidOperationException("Xray Shadowsocks configuration is invalid.");
+        if (config.ExitNodeId is not null && (desiredState.EgressRoute is null
+            || !EgressAddressing.IsValidSlot(desiredState.EgressRoute.Slot)))
+            throw new InvalidOperationException("出口网络配置缺失。");
         var runtime = new XrayShadowsocksRuntimeConfig
         {
             Log = new XrayLog { LogLevel = "warning" },
@@ -79,7 +85,9 @@ public sealed class XrayShadowsocksProvider(TimeProvider timeProvider) : IBacken
             ],
             Outbounds =
             [
-                new XrayOutbound { Protocol = "freedom", Tag = "direct" },
+                new XrayOutbound { Protocol = "freedom", Tag = "direct",
+                    SendThrough = config.ExitNodeId is not null ? EgressAddressing.Source(desiredState.EgressRoute!.Slot) : null,
+                    Settings = config.ExitNodeId is not null ? new XrayFreedomSettings { DomainStrategy = "UseIPv4" } : null },
                 new XrayOutbound { Protocol = "blackhole", Tag = "blocked" }
             ]
         };

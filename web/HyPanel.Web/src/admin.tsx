@@ -1599,7 +1599,7 @@ function EgressSettings({ api, node, setError }: { api: ApiClient; node: Node; s
   };
   const supported = node.platform?.startsWith('linux-') && !!node.publicIpv4 && !!egress?.supported && !!egress.supportedTransports?.includes(transport);
   return <section className="card panel">
-    <SectionTitle title="出口转发" description="让其他节点上的 Hysteria2 使用这台服务器的出口 IP。" />
+    <SectionTitle title="出口转发" description="让其他节点上的服务使用这台服务器的出口 IP。" />
     <dl className="facts-list">
       <div><dt>状态</dt><dd>{!egress ? '读取中…' : !egress.enabled ? '未启用' : egress.error ? '配置失败' : egress.ready ? '已就绪' : node.online ? '等待 Agent 配置或上报' : '节点离线'}</dd></div>
       <div><dt>出口 IP</dt><dd>{node.publicIpv4 || '未检测到 IPv4'}</dd></div>
@@ -1607,12 +1607,13 @@ function EgressSettings({ api, node, setError }: { api: ApiClient; node: Node; s
     </dl>
     {egress?.error && <p className="field-help">{egress.error}</p>}
     {!supported && <p className="field-help">需要已更新 Agent 的 Linux 节点和公网 IPv4。</p>}
-    <label>出口后端
-      <select value={transport} disabled={busy || !!egress?.enabled} onChange={event => setTransport(event.currentTarget.value)}>
-        {backends.map(backend => <option key={backend.id} value={backend.id} disabled={!egress?.supportedTransports?.includes(backend.id)}>{backend.name} · {backend.encrypted ? '加密' : '不加密'}</option>)}
-      </select>
-    </label>
-    <p className="field-help">配置成功后，此节点会出现在服务的出口列表中。当前提供 IPv4 出口；后端类型由面板和两端 Agent 的能力共同决定。</p>
+    <div className="egress-backend-field">
+      <span>出口后端</span>
+      <Select value={transport} disabled={busy || !!egress?.enabled} onChange={setTransport}
+        options={backends.filter(backend => egress?.supportedTransports?.includes(backend.id) || backend.id === transport)
+          .map(backend => ({ value: backend.id, label: `${backend.name} · ${backend.encrypted ? '加密' : '不加密'}` }))} />
+      <p className="field-help">配置成功后，此节点会出现在服务的出口列表中。当前提供 IPv4 出口；后端类型由面板和两端 Agent 的能力共同决定。</p>
+    </div>
     <button className="button button-secondary" type="button" disabled={busy || !egress || !supported || !node.online || (!!egress.enabled && egress.usedBy > 0)} onClick={() => void toggle()}>
       {busy ? '提交中…' : egress?.enabled ? '停用出口转发' : '启用出口转发'}
     </button>
@@ -2600,17 +2601,18 @@ function ServiceEditor({
             </div>
           )}
           <div className="form-grid">{protocolFields.map(renderField)}</div>
-          {form.backendType === "hysteria2" && <label>
-            出口节点
-            <select value={form.values.exitNodeId ?? ""} onChange={event => setForm({ ...form, values: { ...form.values, exitNodeId: event.currentTarget.value } })}>
-              <option value="">本机直连</option>
-              {form.values.exitNodeId && !egressNodes.some(item => item.id === form.values.exitNodeId) && <option value={form.values.exitNodeId} disabled>原出口不可用</option>}
-              {egressNodes.filter(item => (item.enabled && item.ready) || item.id === form.values.exitNodeId).map(item => <option key={item.id} value={item.id} disabled={!item.enabled || !item.ready}>
-                {item.displayName} · {item.publicIpv4 ?? '未知 IP'} · {item.transport}{!item.ready ? ' · 未就绪' : ''}
-              </option>)}
-            </select>
-            <span className="field-help">先在目标节点的“设置 → 出口转发”启用出口，配置成功后即可选择。出口断开时停止出网，不自动切回本机。</span>
-          </label>}
+          {definition.supportsEgress && <div className="egress-backend-field">
+            <span>出口节点</span>
+            <Select value={form.values.exitNodeId ?? ""} onChange={value => setForm({ ...form, values: { ...form.values, exitNodeId: value } })}
+              options={[
+                { value: "", label: "本机直连" },
+                ...(form.values.exitNodeId && !egressNodes.some(item => item.id === form.values.exitNodeId)
+                  ? [{ value: form.values.exitNodeId, label: "原出口不可用" }] : []),
+                ...egressNodes.filter(item => (item.enabled && item.ready) || item.id === form.values.exitNodeId)
+                  .map(item => ({ value: item.id, label: `${item.displayName} · ${item.publicIpv4 ?? '未知 IP'} · ${item.transport}${!item.ready ? ' · 未就绪' : ''}` }))
+              ]} />
+            <p className="field-help">先在目标节点的“设置 → 出口转发”启用出口，配置成功后即可选择。出口断开时停止出网，不自动切回本机。</p>
+          </div>}
         </fieldset>
         <fieldset>
           <legend>连接地址（可选）</legend>

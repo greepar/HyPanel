@@ -119,6 +119,15 @@ internal sealed class XrayOutbound
 {
     public required string Protocol { get; init; }
     public required string Tag { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SendThrough { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public XrayFreedomSettings? Settings { get; init; }
+}
+
+internal sealed class XrayFreedomSettings
+{
+    public required string DomainStrategy { get; init; }
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]

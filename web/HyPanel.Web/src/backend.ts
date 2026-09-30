@@ -19,6 +19,7 @@ export function backendFor(value: string): BackendDefinition {
   const fallback = displayFallback[value]
   return {
     backendType: value,
+    supportsEgress: false,
     name: fallback?.name ?? value,
     core: fallback?.core ?? value,
     protocol: fallback?.protocol ?? '未知协议',
@@ -47,7 +48,7 @@ export function formFor(service: Service, definition: BackendDefinition): Servic
     const raw = config[field.configKey]
     values[field.key] = raw == null ? '' : String(raw)
   }
-  if (service.backendType === 'hysteria2') values.exitNodeId = typeof config.exitNodeId === 'string' ? config.exitNodeId : ''
+  if (definition.supportsEgress) values.exitNodeId = typeof config.exitNodeId === 'string' ? config.exitNodeId : ''
   return { backendType: service.backendType, name: service.name, version: service.backendVersion, values }
 }
 
@@ -74,7 +75,7 @@ export function payloadFor(form: ServiceForm, definition: BackendDefinition): Se
     }
     config[field.configKey] = raw
   }
-  if (form.backendType === 'hysteria2' && form.values.exitNodeId) config.exitNodeId = form.values.exitNodeId
+  if (definition.supportsEgress && form.values.exitNodeId) config.exitNodeId = form.values.exitNodeId
   return { name: form.name.trim(), backendType: form.backendType, backendVersion: form.version.trim(), configSchemaVersion: 1, configJson: JSON.stringify(config) }
 }
 

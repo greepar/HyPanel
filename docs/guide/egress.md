@@ -1,8 +1,8 @@
 # 跨节点出口
 
-Hysteria2 服务可以运行在入口节点 A，同时使用出口节点 B 的 IPv4 访问网站。
+Hysteria2、Xray REALITY 和 Xray Shadowsocks 服务可以运行在入口节点 A，同时使用出口节点 B 的 IPv4 访问网站。
 例如 A 有 CN2 线路，B 有更合适的出口 IP：客户端连接 A，A 解密代理流量后通过不加密的 GRE 内核隧道送到 B，
-B 做 NAT 后访问目标网站。网站看到 B 的 IP，用户认证和流量统计仍由 A 的 Hysteria2 服务处理。
+B 做 NAT 后访问目标网站。网站看到 B 的 IP，用户认证和流量统计仍由 A 的服务处理。
 
 ## 配置
 
@@ -10,7 +10,7 @@ B 做 NAT 后访问目标网站。网站看到 B 的 IP，用户认证和流量�
 2. 两端必须是支持 GRE 的 Linux 节点，有固定、可互通的公网 IPv4。
 3. 使用新版节点安装命令，勾选安装网络工具，安装 `iproute2`、`nftables`、`ping` 并配置 Agent 权限。
 4. 在 B 的“设置 → 出口转发”选择出口后端（当前为 GRE），点击“启用出口转发”。Agent 检查工具、权限和 GRE 内核支持，成功后显示“已就绪”。
-5. 在 A 创建或编辑 Hysteria2 服务，在“出口节点”中选择 B，然后保存。
+5. 在 A 创建或编辑服务，在“出口节点”中选择 B，然后保存。
 6. 两端 Agent 自动配置隧道、源地址策略路由和 B 的 NAT。A 会通过隧道检查 B 的连通性。
 
 没有额外的用户态转发程序需要常驻；“启用出口转发”配置的是 Linux 内核网络。
@@ -44,7 +44,7 @@ Agent 后续同步会重新配置和检查，连通后恢复服务。隧道接�
 
 ## 当前范围
 
-目前只支持 Hysteria2 的 IPv4 出站连接；IPv6 目标不会通过 A 的本机 IPv6 回退。
+目前支持 Hysteria2、Xray REALITY 和 Xray Shadowsocks 的 IPv4 出站连接；IPv6 目标不会通过 A 的本机 IPv6 回退。
 域名解析继续使用 A 的系统 DNS。GRE 不提供加密或身份认证，适用于已经接受两台服务器间明文传输的场景。
 链路性能仍取决于 A 与 B 的互联、两端 VPS 的带宽和 CPU，需要在实际服务器上测量。
 
@@ -53,7 +53,7 @@ Agent 后续同步会重新配置和检查，连通后恢复服务。隧道接�
 出口配置使用独立的后端标识，当前实现 `gre`，预留 `wireguard` 和 `gretap-udp`。
 预留标识不会出现在可用后端列表里，也不会被自动替换成 GRE。
 面板提供 `/api/admin/v1/egress-backends` 返回已经实现的后端，Agent 上报 `supportedTransports`，
-只有目标后端被入口和出口两端支持时，才能保存新的服务绑定。
+只有目标后端被入口和出口两端支持时，才能保存新的服务绑定。新增服务后端可通过后端定义的 `SupportsEgress` 能力声明接入。
 
 Agent 的 `Networking/IEgressTransportBackend.cs` 定义后端接口：
 

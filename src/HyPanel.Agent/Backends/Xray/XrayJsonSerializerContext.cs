@@ -35,6 +35,8 @@ internal sealed class XrayConfig
     public string? Destination { get; init; }
 
     public string? Fingerprint { get; init; }
+
+    public Guid? ExitNodeId { get; init; }
 }
 
 internal sealed class XrayShadowsocksConfig
@@ -49,4 +51,6 @@ internal sealed class XrayShadowsocksConfig
     public string? Method { get; init; }
 
     public bool? Udp { get; init; }
+
+    public Guid? ExitNodeId { get; init; }
 }

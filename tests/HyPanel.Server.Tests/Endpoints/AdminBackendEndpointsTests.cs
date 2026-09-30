@@ -13,7 +13,7 @@ public sealed class AdminBackendEndpointsTests
     {
         var definitions = BackendDefinitionCatalog.All.Select(item => new BackendDefinitionResponse(
             item.BackendType, item.DisplayName, item.Core, item.Protocol, item.Description, item.Badge,
-            item.FallbackVersion, item.Fields)).ToArray();
+            item.FallbackVersion, item.Fields, item.SupportsEgress)).ToArray();
 
         var json = JsonSerializer.Serialize(definitions,
             ServerJsonSerializerContext.Default.BackendDefinitionResponseArray);
@@ -22,6 +22,7 @@ public sealed class AdminBackendEndpointsTests
         StringAssert.Contains(json, "\"listenPort\"");
         StringAssert.Contains(json, "\"generate\":true");
         StringAssert.Contains(json, "\"fixed\":\"2022-blake3-aes-128-gcm\"");
+        Assert.IsTrue(BackendDefinitionCatalog.All.All(item => item.SupportsEgress));
     }
 
     [TestMethod]

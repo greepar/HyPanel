@@ -27,7 +27,8 @@ internal sealed record BackendDefinition(
     string Description,
     string Badge,
     string FallbackVersion,
-    BackendFieldDefinition[] Fields);
+    BackendFieldDefinition[] Fields,
+    bool SupportsEgress = false);
 
 /// <summary>
 /// Compile-time source of truth for the service editor. The frontend renders these definitions, so adding or changing a
@@ -52,7 +53,7 @@ internal static class BackendDefinitionCatalog
                 Field("downMbps", "下行 Mbps", "number", required: true, defaultValue: "1000", min: 1),
                 Field("portHopping", "端口跳跃（可选）", "text",
                     placeholder: "如 20000-30000 或 20000,20005,21000-21100")
-            ]),
+            ], SupportsEgress: true),
         new("xray", "Xray REALITY", "Xray-core", "VLESS + TCP + REALITY", "VLESS Vision 与 REALITY 握手。", "XR",
             "26.3.27",
             [
@@ -67,7 +68,7 @@ internal static class BackendDefinitionCatalog
                 Field("fingerprint", "浏览器指纹", "select", required: true, defaultValue: "chrome",
                     options: Fingerprints),
                 FixedField("flow", "流控", "xtls-rprx-vision", "string")
-            ]),
+            ], SupportsEgress: true),
         new("xray-ss", "Xray Shadowsocks", "Xray-core", "Shadowsocks 2022 多用户",
             "每个用户独立密钥与流量统计，支持 UDP。", "SS", "26.3.27",
             [
@@ -75,7 +76,7 @@ internal static class BackendDefinitionCatalog
                 Field("password", "服务端密钥", "password", required: true, secret: true, generate: true),
                 FixedField("method", "加密方法", "2022-blake3-aes-128-gcm", "string"),
                 FixedField("udp", "UDP", "true", "boolean")
-            ])
+            ], SupportsEgress: true)
     ];
 
     public static bool TryGet(string backendType, out BackendDefinition? definition)

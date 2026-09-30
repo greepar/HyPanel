@@ -4,6 +4,7 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using HyPanel.Server.Persistence;
+using HyPanel.Server.Backends;
 using HyPanel.Server.Releases;
 using HyPanel.Shared.Versioning;
 
@@ -37,7 +38,8 @@ internal static class AdminServicesEndpoints
         using var json = JsonDocument.Parse(config);
         if (!json.RootElement.TryGetProperty("exitNodeId", out var field) || field.ValueKind == JsonValueKind.Null)
             return true;
-        if (backend != "hysteria2" || field.ValueKind != JsonValueKind.String
+        if (!BackendDefinitionCatalog.TryGet(backend, out var definition) || !definition!.SupportsEgress
+            || field.ValueKind != JsonValueKind.String
             || !field.TryGetGuid(out var exit) || exit == Guid.Empty || exit == nodeId) return false;
         var exits = await repository.GetEgressNodesAsync(ct);
         var target = exits.FirstOrDefault(n => n.Id == exit);

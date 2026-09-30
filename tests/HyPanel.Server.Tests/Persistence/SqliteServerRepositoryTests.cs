@@ -15,6 +15,29 @@ namespace HyPanel.Server.Tests.Persistence;
 public sealed class SqliteServerRepositoryTests
 {
     [TestMethod]
+    public async Task Egress_AllocatesTunnelsForXrayAndShadowsocks()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var source = Guid.NewGuid(); var exit = Guid.NewGuid();
+        await CreateAgentAsync(fixture, source, "source-token", "source-secret");
+        await CreateAgentAsync(fixture, exit, "exit-token", "exit-secret");
+        Assert.IsTrue(await fixture.Repository.SetEgressEnabledAsync(exit, true, CancellationToken.None));
+
+        foreach (var backend in new[] { "xray", "xray-ss" })
+        {
+            var service = CreateService(source, Guid.NewGuid(), backend) with
+            {
+                BackendType = backend,
+                ConfigJson = $"{{\"exitNodeId\":\"{exit}\"}}"
+            };
+            await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
+        }
+
+        Assert.AreEqual(2, (await fixture.Repository.GetEgressNetworkAsync(source, CancellationToken.None)).Tunnels.Count);
+        Assert.AreEqual(2, (await fixture.Repository.GetEgressNetworkAsync(exit, CancellationToken.None)).Tunnels.Count);
+    }
+
+    [TestMethod]
     public async Task EgressLifecycle_RequiresAgentAckAndProtectsReferencedExit()
     {
         await using var fixture = await TestDatabase.CreateAsync();

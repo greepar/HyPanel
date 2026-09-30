@@ -12,6 +12,27 @@ public sealed class XrayShadowsocksProviderTests
     private const string ServerKey = "AAECAwQFBgcICQoLDA0ODw==";
     private readonly XrayShadowsocksProvider provider = new(TimeProvider.System);
 
+    [TestMethod]
+    public async Task Egress_BindsTcpAndUdpOutbound_AndRequiresRoute()
+    {
+        var desired = Desired([]);
+        var config = desired.ConfigJson;
+        desired = desired with { ConfigJson = config[..^1] + $",\"exitNodeId\":\"{Guid.NewGuid():D}\"}}" };
+        var missing = await provider.ValidateAsync(desired, CancellationToken.None);
+        Assert.IsFalse(missing.IsValid);
+        Assert.AreEqual("egress_unavailable", missing.ErrorCode);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await provider.RenderConfigAsync(desired, CancellationToken.None));
+
+        desired = desired with { EgressRoute = new ServiceEgressRoute(9) };
+        Assert.IsTrue((await provider.ValidateAsync(desired, CancellationToken.None)).IsValid);
+        using var document = JsonDocument.Parse((await provider.RenderConfigAsync(desired, CancellationToken.None)).Content);
+        var outbound = document.RootElement.GetProperty("outbounds")[0];
+        Assert.AreEqual(EgressAddressing.Source(9), outbound.GetProperty("sendThrough").GetString());
+        Assert.AreEqual("UseIPv4", outbound.GetProperty("settings").GetProperty("domainStrategy").GetString());
+        Assert.AreEqual("tcp,udp", document.RootElement.GetProperty("inbounds")[0].GetProperty("settings").GetProperty("network").GetString());
+    }
+
     private static ServiceDesiredState Desired(IReadOnlyList<BackendUser> users, string password = ServerKey) =>
         new(Guid.NewGuid(), "ss", "xray-ss", "26.3.27", true, 1,
             $$"""{"listenHost":"0.0.0.0","listenPort":8388,"password":"{{password}}","method":"2022-blake3-aes-128-gcm","udp":true}""",

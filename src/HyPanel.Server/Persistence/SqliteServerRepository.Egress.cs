@@ -3,6 +3,7 @@ namespace HyPanel.Server.Persistence;
 using System.Text.Json;
 using HyPanel.Shared.Contracts;
 using HyPanel.Shared.Serialization;
+using HyPanel.Server.Backends;
 using Microsoft.Data.Sqlite;
 
 internal sealed record EgressNodeRecord(Guid Id, string DisplayName, string? PublicIpv4,
@@ -145,7 +146,8 @@ internal sealed partial class SqliteServerRepository
             command.CommandText = "DELETE FROM service_egress WHERE service_id=@service;";
         else
         {
-            if (service.BackendType != "hysteria2" || exit == service.NodeId)
+            if (!BackendDefinitionCatalog.TryGet(service.BackendType, out var definition)
+                || !definition!.SupportsEgress || exit == service.NodeId)
                 throw new InvalidOperationException("Invalid exit node.");
             command.Parameters.AddWithValue("@exit", exit.Value.ToString("D"));
             // Recheck within the transaction so disabling an exit cannot race a service save.

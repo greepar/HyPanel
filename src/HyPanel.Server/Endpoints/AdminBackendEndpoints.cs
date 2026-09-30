@@ -15,7 +15,8 @@ internal sealed record BackendDefinitionResponse(
     string Description,
     string Badge,
     string? DefaultVersion,
-    BackendFieldDefinition[] Fields);
+    BackendFieldDefinition[] Fields,
+    bool SupportsEgress);
 
 internal sealed record BackendDefaultsResponse(string BackendType, Dictionary<string, string> Values);
 
@@ -40,7 +41,8 @@ internal static class AdminBackendEndpoints
             item.Description,
             item.Badge,
             catalog.GetLatestVersion(item.BackendType) ?? item.FallbackVersion,
-            item.Fields)).ToArray();
+            item.Fields,
+            item.SupportsEgress)).ToArray();
         return Results.Json(response, ServerJsonSerializerContext.Default.BackendDefinitionResponseArray);
     }
 

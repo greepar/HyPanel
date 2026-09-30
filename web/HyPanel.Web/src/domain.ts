@@ -143,6 +143,7 @@ export type BackendField = {
 }
 export type BackendDefinition = {
   backendType: string
+  supportsEgress: boolean
   name: string
   core: string
   protocol: string

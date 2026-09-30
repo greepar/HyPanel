@@ -344,6 +344,9 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 .endpoint-form { display: grid; grid-template-columns: 1.3fr .5fr 1.3fr auto; gap: 10px; align-items: end; padding: 16px; border-top: 1px solid var(--border); background: var(--surface-2) }
 .endpoint-form .state { min-height: 80px; grid-column: 1 / -1 }
 .field-help { margin: -4px 0 12px; color: var(--muted); font-size: 12px }
+.egress-backend-field { display: grid; gap: 8px; margin: 16px 0; font-size: 13px; font-weight: 500 }
+.egress-backend-field > .field-help { margin: 0; line-height: 1.6; font-weight: 400 }
+.egress-backend-field .select-menu { position: static; margin-top: 4px }
 .connection-address { color: var(--muted); font-size: 12px }
 .connection-address b { margin-left: 4px; color: var(--text); font-weight: 500 }
 .endpoint-help { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 12px }

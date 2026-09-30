@@ -17,6 +17,26 @@ public sealed class XrayProviderTests
     private readonly XrayProvider provider = new(TimeProvider.System);
 
     [TestMethod]
+    public async Task Egress_BindsFreedomOutbound_AndRequiresRoute()
+    {
+        var config = CreateConfigJson();
+        config = config[..^1] + $",\"exitNodeId\":\"{Guid.NewGuid():D}\"}}";
+        var desired = CreateDesiredState(configJson: config);
+        var missing = await provider.ValidateAsync(desired, CancellationToken.None);
+        Assert.IsFalse(missing.IsValid);
+        Assert.AreEqual("egress_unavailable", missing.ErrorCode);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await provider.RenderConfigAsync(desired, CancellationToken.None));
+
+        desired = desired with { EgressRoute = new ServiceEgressRoute(7) };
+        Assert.IsTrue((await provider.ValidateAsync(desired, CancellationToken.None)).IsValid);
+        using var document = JsonDocument.Parse((await provider.RenderConfigAsync(desired, CancellationToken.None)).Content);
+        var outbound = document.RootElement.GetProperty("outbounds")[0];
+        Assert.AreEqual(EgressAddressing.Source(7), outbound.GetProperty("sendThrough").GetString());
+        Assert.AreEqual("UseIPv4", outbound.GetProperty("settings").GetProperty("domainStrategy").GetString());
+    }
+
+    [TestMethod]
     public async Task ValidateAsync_ValidConfig_ReturnsTcpPortOnly()
     {
         var result = await provider.ValidateAsync(CreateDesiredState(), CancellationToken.None);

@@ -77,6 +77,7 @@ export class ApiClient {
       badge: string
       defaultVersion: string | null
       fields: BackendDefinition['fields']
+      supportsEgress: boolean
     }[]>('/api/admin/v1/backends')
     return raw.map(item => ({
       backendType: item.backendType,
@@ -87,6 +88,7 @@ export class ApiClient {
       badge: item.badge,
       defaultVersion: item.defaultVersion,
       fields: item.fields,
+      supportsEgress: item.supportsEgress,
     }))
   }
   generateBackendDefaults = (backendType: string, nodeId?: string) => this.request<{ backendType: string; values: Record<string, string> }>(`/api/admin/v1/backends/${encodeURIComponent(backendType)}/defaults${nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`, { method: 'POST' })

@@ -42,6 +42,10 @@ public sealed class XrayProvider : IBackendProvider
             return ValueTask.FromResult(Invalid("invalid_config", "Invalid Xray configuration."));
         }
 
+        if (config.ExitNodeId is not null && (desiredState.EgressRoute is null
+            || !EgressAddressing.IsValidSlot(desiredState.EgressRoute.Slot)))
+            return ValueTask.FromResult(Invalid("egress_unavailable", "出口网络配置缺失。"));
+
         if (!TryGetUsers(desiredState, out _))
             return ValueTask.FromResult(Invalid("invalid_users", "Invalid Xray users."));
 
@@ -64,7 +68,11 @@ public sealed class XrayProvider : IBackendProvider
 
         if (!TryGetUsers(desiredState, out var users))
             throw new InvalidOperationException("Xray users are invalid.");
-        var content = JsonSerializer.SerializeToUtf8Bytes(CreateRuntimeConfig(desiredState.ControlPort!.Value, config, users),
+        if (config.ExitNodeId is not null && (desiredState.EgressRoute is null
+            || !EgressAddressing.IsValidSlot(desiredState.EgressRoute.Slot)))
+            throw new InvalidOperationException("出口网络配置缺失。");
+        var content = JsonSerializer.SerializeToUtf8Bytes(CreateRuntimeConfig(desiredState.ControlPort!.Value, config, users,
+                desiredState.EgressRoute),
             XrayRuntimeJsonSerializerContext.Default.XrayRuntimeConfig);
         var sha256 = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
         return ValueTask.FromResult(new RenderedBackendConfig("config.json", content, sha256));
@@ -265,7 +273,7 @@ public sealed class XrayProvider : IBackendProvider
     }
 
     private static XrayRuntimeConfig CreateRuntimeConfig(int controlPort, XrayConfig config,
-        IReadOnlyList<BackendUser> users) => new()
+        IReadOnlyList<BackendUser> users, ServiceEgressRoute? egressRoute) => new()
     {
         Log = new XrayLog { LogLevel = "warning" },
         Api = new XrayApi { Tag = "api", Listen = $"127.0.0.1:{controlPort}", Services = ["StatsService"] },
@@ -313,7 +321,9 @@ public sealed class XrayProvider : IBackendProvider
         ],
         Outbounds =
         [
-            new XrayOutbound { Protocol = "freedom", Tag = "direct" },
+            new XrayOutbound { Protocol = "freedom", Tag = "direct",
+                SendThrough = config.ExitNodeId is not null ? EgressAddressing.Source(egressRoute!.Slot) : null,
+                Settings = config.ExitNodeId is not null ? new XrayFreedomSettings { DomainStrategy = "UseIPv4" } : null },
             new XrayOutbound { Protocol = "blackhole", Tag = "blocked" }
         ]
     };
