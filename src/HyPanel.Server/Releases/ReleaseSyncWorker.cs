@@ -16,6 +16,43 @@ internal sealed class ReleaseSyncWorker(
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(5);
     private const int MaximumInstallerSize = 1024 * 1024;
     private static readonly string[] InstallerFileNames = ["install.sh", "install.ps1"];
+    private readonly SemaphoreSlim toolDownloadGate = new(1, 1);
+
+    internal async Task<string> EnsureToolCachedAsync(BackendArtifact tool, CancellationToken ct)
+    {
+        await toolDownloadGate.WaitAsync(ct);
+        try
+        {
+            var directory = Path.Combine(catalog.ReleasesDirectory, "tools", tool.Sha256);
+            var path = Path.Combine(directory, tool.FileName);
+            if (File.Exists(path) && new FileInfo(path).Length == tool.Size)
+            {
+                await using var cached = File.OpenRead(path);
+                if (Convert.ToHexString(await SHA256.HashDataAsync(cached, ct)).Equals(tool.Sha256, StringComparison.OrdinalIgnoreCase))
+                    return path;
+            }
+            var source = configuration["HyPanel:ReleaseManifestUrl"]
+                ?? "https://github.com/greepar/HyPanel/releases/latest/download/manifest.json";
+            var manifestUri = new Uri(source, UriKind.Absolute);
+            if (manifestUri.Scheme != Uri.UriSchemeHttps) throw new InvalidOperationException("Tool release source must be HTTPS.");
+            var baseUri = new Uri(manifestUri, ".");
+            if (baseUri.Host == "github.com" && catalog.Manifest is { } manifest)
+                baseUri = new Uri(baseUri.AbsoluteUri.Replace("/releases/latest/download/", $"/releases/download/v{manifest.Version}/", StringComparison.Ordinal));
+            var mirror = repository is null ? null : (await repository.GetGlobalSettingsAsync(ct)).GithubMirrorBaseUrl;
+            var uri = GitHubMirror.Apply(mirror, new Uri(baseUri, tool.FileName));
+            Directory.CreateDirectory(directory);
+            var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                await DownloadVerifiedAsync(clients.CreateClient("release-sync"), uri, temporary,
+                    new AgentReleaseAsset(tool.Rid, tool.FileName, tool.Sha256, tool.Size), ct);
+                File.Move(temporary, path, overwrite: true);
+                return path;
+            }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        }
+        finally { toolDownloadGate.Release(); }
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

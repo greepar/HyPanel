@@ -62,10 +62,21 @@ public sealed class BackendBinaryManager(
         }
     }
 
-    public async Task<string> EnsureAsync(BackendArtifact artifact, CancellationToken cancellationToken)
+    public Task<string> EnsureAsync(BackendArtifact artifact, CancellationToken cancellationToken) =>
+        EnsureArtifactAsync(artifact, "backends", "/api/backend-releases/v1/assets/", cancellationToken);
+
+    public Task<string> EnsureToolAsync(BackendArtifact artifact, CancellationToken cancellationToken)
+    {
+        if (artifact.BackendType != "wireguard-tools" || artifact.RequiresAvx || artifact.Size > 4 * 1024 * 1024)
+            throw new InvalidDataException("WireGuard 工具发布信息无效。");
+        return EnsureArtifactAsync(artifact, "tools", "/api/releases/v1/tools/", cancellationToken);
+    }
+
+    private async Task<string> EnsureArtifactAsync(BackendArtifact artifact, string directoryName, string assetPath,
+        CancellationToken cancellationToken)
     {
         ValidateArtifact(artifact);
-        var destinationDirectory = Path.Combine(options.DataDirectory, "backends", artifact.BackendType, artifact.Version, artifact.Rid);
+        var destinationDirectory = Path.Combine(options.DataDirectory, directoryName, artifact.BackendType, artifact.Version, artifact.Rid);
         var destination = EnsureChildPath(destinationDirectory, artifact.FileName);
         Directory.CreateDirectory(destinationDirectory);
 
@@ -74,6 +85,7 @@ public sealed class BackendBinaryManager(
         {
             if (await IsExpectedFileAsync(destination, artifact, cancellationToken))
             {
+                SetExecutable(destination);
                 return destination;
             }
 
@@ -82,7 +94,7 @@ public sealed class BackendBinaryManager(
             var credentials = await credentialStore.TryLoadAsync(cancellationToken)
                 ?? throw new InvalidOperationException("Agent credentials are required to download a backend binary.");
             var panelUri = ValidatePanelUri(credentials.PanelBaseUrl);
-            var assetUri = new Uri(panelUri, $"/api/backend-releases/v1/assets/{Uri.EscapeDataString(artifact.FileName)}");
+            var assetUri = new Uri(panelUri, assetPath + Uri.EscapeDataString(artifact.FileName));
             var temporary = EnsureChildPath(destinationDirectory, $".{artifact.FileName}.{Guid.NewGuid():N}.tmp");
             try
             {

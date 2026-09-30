@@ -733,6 +733,11 @@ public sealed class SqliteServerRepositoryTests
             assets.Select(pair => new AgentReleaseAsset(RidOf(pair.Key),
                 pair.Key, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(pair.Value)).ToLowerInvariant(),
                 pair.Value.Length)).ToArray());
+        var tools = assets.Where(pair => RidOf(pair.Key).StartsWith("linux-", StringComparison.Ordinal))
+            .Select(pair => new BackendArtifact("wireguard-tools", "1.0.20260223", RidOf(pair.Key),
+                $"wg-1.0.20260223-{RidOf(pair.Key)}", Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(pair.Value)).ToLowerInvariant(), pair.Value.Length, false)).ToArray();
+        manifest = manifest with { Tools = tools };
+        foreach (var tool in tools) assets[tool.FileName] = Encoding.UTF8.GetBytes(tool.Rid);
         var installSh = "sh"u8.ToArray();
         var installPs1 = "ps1"u8.ToArray();
         var handler = new RecordingReleaseHandler(new Dictionary<string, byte[]>(assets)
@@ -752,16 +757,26 @@ public sealed class SqliteServerRepositoryTests
         var catalog = new HyPanel.Server.Releases.ReleaseCatalog(configuration);
         try
         {
-            await new HyPanel.Server.Releases.ReleaseSyncWorker(
+            var worker = new HyPanel.Server.Releases.ReleaseSyncWorker(
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<HyPanel.Server.Releases.ReleaseSyncWorker>.Instance,
-                configuration, new SingleClientFactory(handler), catalog, fixture.Repository).RefreshAsync(CancellationToken.None);
+                configuration, new SingleClientFactory(handler), catalog, fixture.Repository);
+            await worker.RefreshAsync(CancellationToken.None);
 
             Assert.AreEqual("2.0.0", catalog.Manifest!.Version);
             var direct = handler.Requests.Where(uri => uri.Host == "github.com").Select(uri => uri.Segments[^1]).ToArray();
             CollectionAssert.AreEquivalent(new[] { "manifest.json", "SHA256SUMS" }, direct, "trust anchors bypass the mirror");
             var mirrored = handler.Requests.Where(uri => uri.Host == "mirror.example").ToArray();
-            Assert.AreEqual(2 + assets.Count, mirrored.Length, "installers and Agent binaries go through the mirror");
+            Assert.AreEqual(2 + manifest.Assets.Count, mirrored.Length, "installers and Agent binaries go through the mirror");
             Assert.IsTrue(mirrored.All(uri => Uri.UnescapeDataString(uri.AbsolutePath).Contains("https://github.com/o/r/releases/latest/download/")));
+            Assert.IsFalse(handler.Requests.Any(uri => uri.AbsoluteUri.Contains("wg-")));
+            var cachedTool = await worker.EnsureToolCachedAsync(tools[0], CancellationToken.None);
+            Assert.AreEqual(cachedTool, await worker.EnsureToolCachedAsync(tools[0], CancellationToken.None));
+            Assert.AreEqual(1, handler.Requests.Count(uri => uri.AbsoluteUri.Contains("wg-")));
+            Assert.IsTrue(Uri.UnescapeDataString(handler.Requests[^1].AbsolutePath).Contains("/releases/download/v2.0.0/"));
+            await File.WriteAllTextAsync(cachedTool, "corrupt");
+            await worker.EnsureToolCachedAsync(tools[0], CancellationToken.None);
+            Assert.AreEqual(2, handler.Requests.Count(uri => uri.AbsoluteUri.Contains("wg-")));
+
         }
         finally
         {

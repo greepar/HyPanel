@@ -10,7 +10,7 @@ LABEL org.opencontainers.image.source="https://github.com/greepar/HyPanel" \
       org.opencontainers.image.description="HyPanel Agent" \
       org.opencontainers.image.licenses="GPL-3.0-only"
 
-RUN apk add --no-cache ca-certificates curl jq nftables iproute2 iputils wireguard-tools tini
+RUN apk add --no-cache ca-certificates curl jq nftables iproute2 iputils tini
 
 COPY deploy/docker/agent-entrypoint.sh /usr/local/bin/hypanel-agent-entrypoint
 RUN chmod 0755 /usr/local/bin/hypanel-agent-entrypoint

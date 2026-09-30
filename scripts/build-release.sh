@@ -107,6 +107,17 @@ publish_and_package() {
 
     rm -rf "$publish_dir" "$package_dir"
     mkdir -p "$package_dir"
+    if [ "$kind" = agent ]; then
+        case "$rid" in linux-*)
+            wg_bundle_dir="$REPO_ROOT/.wireguard-build/$rid"
+            sh scripts/build-wireguard-tool.sh "$rid" "$wg_bundle_dir"
+            wg_tool_name="wg-1.0.20260223-$rid"
+            cp "$wg_bundle_dir/wg" "$OUTPUT_DIR/$wg_tool_name"
+            cp "$wg_bundle_dir/wireguard-tools-1.0.20260223.tar.xz" "$OUTPUT_DIR/"
+            printf '%s\t%s\t%s\t%s\n' "$rid" "$wg_tool_name" "$(sha256_of "$OUTPUT_DIR/$wg_tool_name")" "$(wc -c < "$OUTPUT_DIR/$wg_tool_name" | tr -d ' ')" >> "$TOOLS_TSV"
+            ;;
+        esac
+    fi
     # shellcheck disable=SC2086 # EXTRA_PUBLISH_ARGS is a list of arguments.
     dotnet publish "$project" -c Release -r "$rid" --self-contained true -o "$publish_dir" $EXTRA_PUBLISH_ARGS \
         -p:Version="$VERSION" -p:VersionPrefix="$ASSEMBLY_VERSION" \
@@ -140,6 +151,8 @@ PY
 rm -rf "$REPO_ROOT/.release-publish" "$REPO_ROOT/.release-package"
 RELEASE_TSV="$REPO_ROOT/.release-assets.tsv"
 : > "$RELEASE_TSV"
+TOOLS_TSV="$REPO_ROOT/.release-tool-assets.tsv"
+: > "$TOOLS_TSV"
 
 record_asset() {
     rid=$1
@@ -173,9 +186,9 @@ else
     exit 1
 fi
 
-"$PYTHON" - "$OUTPUT_DIR" "$VERSION" "$PUBLISHED_AT" "$RELEASE_TSV" "${REQUIRE_ALL_AGENT_RIDS:-true}" <<'PY'
+"$PYTHON" - "$OUTPUT_DIR" "$VERSION" "$PUBLISHED_AT" "$RELEASE_TSV" "${REQUIRE_ALL_AGENT_RIDS:-true}" "$TOOLS_TSV" <<'PY'
 import json, os, sys
-out, version, published_at, tsv, require_all = sys.argv[1:]
+out, version, published_at, tsv, require_all, tools_tsv = sys.argv[1:]
 frozen = {"win-x64", "win-arm64", "osx-x64", "osx-arm64", "linux-x64", "linux-arm64", "linux-musl-x64", "linux-musl-arm64"}
 assets = []
 seen = set()
@@ -191,14 +204,20 @@ with open(tsv, encoding="utf-8") as source:
 if not assets or (require_all == "true" and seen != frozen):
     raise SystemExit("Agent manifest must contain all 8 frozen RIDs")
 assets.sort(key=lambda item: item["rid"])
+tools = []
+with open(tools_tsv, encoding="utf-8") as source:
+    for line in source:
+        rid, name, sha256, size = line.rstrip("\n").split("\t")
+        tools.append({"backendType":"wireguard-tools", "version":"1.0.20260223", "rid":rid,
+            "fileName":name, "sha256":sha256, "size":int(size), "requiresAvx":False})
 with open(os.path.join(out, "manifest.json"), "w", encoding="utf-8") as target:
-    json.dump({"schemaVersion": 1, "version": version, "publishedAt": published_at, "assets": assets}, target, separators=(",", ":"))
+    json.dump({"schemaVersion": 1, "version": version, "publishedAt": published_at, "assets": assets, "tools":tools}, target, separators=(",", ":"))
 PY
 
 (
     cd "$OUTPUT_DIR"
-    find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name 'manifest.json' -o -name 'install.sh' -o -name 'install.ps1' \) -print \
+    find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.tar.xz' -o -name '*.zip' -o -name 'wg-*' -o -name 'manifest.json' -o -name 'install.sh' -o -name 'install.ps1' \) -print \
         | sort | while IFS= read -r file; do printf '%s  %s\n' "$(sha256_of "${file#./}")" "${file#./}"; done
 ) > "$OUTPUT_DIR/SHA256SUMS"
 
-rm -rf "$REPO_ROOT/.release-publish" "$REPO_ROOT/.release-package" "$RELEASE_TSV"
+rm -rf "$REPO_ROOT/.release-publish" "$REPO_ROOT/.release-package" "$RELEASE_TSV" "$TOOLS_TSV"

@@ -100,6 +100,9 @@ internal static class AgentSyncEndpoints
         var network = await repository.GetEgressNetworkAsync(agent.NodeId, cancellationToken);
         NodeDesiredState? desiredState = null;
         var rid = request.Platform.Trim();
+        if (network.Enabled && network.Transport == HyPanel.Shared.Contracts.EgressTransports.WireGuard
+            || network.Tunnels.Any(t => t.Transport == HyPanel.Shared.Contracts.EgressTransports.WireGuard))
+            network = network with { WireGuardTool = releaseCatalog.Manifest?.Tools?.SingleOrDefault(t => t.Rid == rid) };
         var resolved = desired.Value.Services.Where(service => service.Enabled)
             .Select(service => (Service: service, Artifact: backendArtifactCatalog.FindArtifact(service.BackendType,
                 service.BackendVersion, rid, request.SupportsAvx)))

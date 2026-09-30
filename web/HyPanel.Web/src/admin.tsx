@@ -1623,8 +1623,9 @@ function EgressSettings({ api, node, setError }: { api: ApiClient; node: Node; s
         ? '在此出口节点放行这个入站 UDP 端口。入口节点主动连接，需允许 UDP 出站及会话回包。'
         : '两端需要接收 FOU UDP 数据包，面板会下发同一端口；请在两端放行此 UDP 端口。'}</p>
     </label>}
+    {transport === 'wireguard' && <p className="field-help">点击启用后自动下载并校验 WireGuard 工具，入口节点使用此出口时也会自动下载；无需手动安装系统包，仍需内核支持 WireGuard。</p>}
     <button className="button button-secondary" type="button" disabled={busy || !egress || !supported || !node.online || (transport !== 'gre' && (!Number.isInteger(Number(udpPort)) || Number(udpPort) < 1 || Number(udpPort) > 65535)) || (!!egress.enabled && egress.usedBy > 0)} onClick={() => void toggle()}>
-      {busy ? '提交中…' : egress?.enabled ? '停用出口转发' : '启用出口转发'}
+      {busy ? '提交中…' : egress?.enabled ? '停用出口转发' : transport === 'wireguard' ? '安装并启用出口转发' : '启用出口转发'}
     </button>
     {!!egress?.usedBy && <p className="field-help">先切换使用此出口的服务，才能停用或删除该出口。</p>}
   </section>;

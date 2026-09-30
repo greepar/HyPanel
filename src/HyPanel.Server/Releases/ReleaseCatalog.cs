@@ -52,6 +52,8 @@ internal sealed class ReleaseCatalog
             ? manifest.Assets.SingleOrDefault(asset => asset.Rid == rid) : null;
     }
 
+    public BackendArtifact? FindTool(string fileName) => Manifest?.Tools?.SingleOrDefault(t => t.FileName == fileName);
+
     public bool TryGetAssetPath(string fileName, out string path)
     {
         path = string.Empty;
@@ -79,6 +81,18 @@ internal sealed class ReleaseCatalog
                 throw new InvalidOperationException("Release manifest contains an invalid asset.");
         }
         if (!rids.SetEquals(SupportedRids)) throw new InvalidOperationException("Release manifest is missing a supported RID.");
+        if (manifest.Tools is { Count: > 0 } tools)
+        {
+            var toolRids = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var tool in tools)
+                if (tool is null || tool.BackendType != "wireguard-tools" || tool.RequiresAvx
+                    || !SupportedRids.Where(r => r.StartsWith("linux-", StringComparison.Ordinal)).Contains(tool.Rid)
+                    || !toolRids.Add(tool.Rid) || !SemanticVersion.TryParse(tool.Version, out _)
+                    || tool.FileName != $"wg-{tool.Version}-{tool.Rid}" || !IsSha256(tool.Sha256)
+                    || tool.Size is <= 0 or > 4 * 1024 * 1024)
+                    throw new InvalidOperationException("Release manifest contains an invalid WireGuard tool.");
+            if (toolRids.Count != 4) throw new InvalidOperationException("WireGuard tools must cover all four Linux RIDs.");
+        }
     }
 
     internal static bool IsBasename(string? fileName) => !string.IsNullOrWhiteSpace(fileName)

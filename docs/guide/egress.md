@@ -8,8 +8,8 @@ B 做 NAT 后访问目标网站。网站看到 B 的 IP，用户认证和流量�
 
 1. 更新面板和两端 Agent。旧 Agent 不支持出口配置。
 2. 两端必须是支持所选隧道后端的 Linux 节点，有固定、可互通的公网 IPv4。
-3. 使用新版节点安装命令，勾选安装网络工具，安装 `iproute2`、`nftables`、`ping`、`wireguard-tools` 并配置 Agent 权限。
-4. 在 B 的“设置 → 出口转发”选择 GRE、GRE over UDP（FOU）或 WireGuard。FOU / WireGuard 可以设置 UDP 端口（1–65535），默认分别为 47541 / 51820。点击“启用出口转发”，Agent 检查工具、权限和内核支持，成功后显示“已就绪”。
+3. 使用新版节点安装命令，勾选安装网络工具，安装 `iproute2`、`nftables`、`ping` 并配置 Agent 权限。
+4. 在 B 的“设置 → 出口转发”选择 GRE、GRE over UDP（FOU）或 WireGuard。FOU / WireGuard 可以设置 UDP 端口（1–65535），默认分别为 47541 / 51820。WireGuard 点击“安装并启用出口转发”后，面板和 Agent 按需下载对应平台的独立 `wg` 工具并校验 SHA-256；其他后端点击“启用出口转发”。Agent 检查权限和内核支持，成功后显示“已就绪”。
 5. 在 A 创建或编辑服务，在“出口节点”中选择 B，然后保存。
 6. 两端 Agent 自动配置隧道、源地址策略路由和 B 的 NAT。A 会通过隧道检查 B 的连通性。
 
@@ -23,8 +23,8 @@ B 做 NAT 后访问目标网站。网站看到 B 的 IP，用户认证和流量�
 
 - 选择原生 GRE 时，两端安全组和已有防火墙需要允许对端发来的 **IP 协议 47（GRE）**，它不是 TCP/UDP 的端口 47。
 - 选择 GRE over UDP（FOU）时，两端 Agent 都要配置所选 UDP 接收端口，默认 `47541`。两端内核都必须支持 FOU。通常有状态防火墙能允许 A 主动发包后的匹配回包；无状态规则需要在两端允许对端发来的该端口 UDP。FOU 不加密，也不提供身份认证。
-- 选择 WireGuard 时，B 监听你填写的 UDP 端口，默认 `51820`。A 使用系统分配的本地 UDP 端口主动连接 B，并发送 keepalive；B 使用认证后的对端地址回包。通常只需在 B 放行来自 A 的该入站 UDP 端口，A 要允许 UDP 出站和已建立会话的回包。两端都需要 WireGuard 内核支持和 `wireguard-tools`，无需手工生成密钥或写配置。WireGuard 提供加密和对端认证。
-- 更新 Agent 二进制不会安装系统工具。已有 Debian / Ubuntu 节点若缺少 `wg`，在两端运行 `sudo apt-get update && sudo apt-get install -y wireguard-tools`；也可重新运行新版节点安装命令并勾选安装网络工具。
+- 选择 WireGuard 时，B 监听你填写的 UDP 端口，默认 `51820`。A 使用系统分配的本地 UDP 端口主动连接 B，并发送 keepalive；B 使用认证后的对端地址回包。通常只需在 B 放行来自 A 的该入站 UDP 端口，A 要允许 UDP 出站和已建立会话的回包。两端都需要 WireGuard 内核支持；`wg` 工具由 Agent 自动下载，无需手工生成密钥或写配置。WireGuard 提供加密和对端认证。
+- `wg` 不随 Agent 安装包下载，不需要手动安装系统包。启用 WireGuard 出口时 B 下载工具，A 上的服务选择此出口时 A 自动下载；后续复用校验通过的本地缓存。下载使用 Agent 认证和面板配置的 GitHub 镜像。内核模块仍由操作系统提供。
 - 隧道需要允许 ICMP，以便 Agent 检查连通性和获得网络错误。
 - B 的已有防火墙需允许从 `hpe*` / `hpw*` 隧道接口到公网的转发，以及已建立连接的回程。
   HyPanel 只管理自己的 `inet hypanel_egress` 表，不清空其他防火墙规则。

@@ -51,7 +51,10 @@ jobs:
         run: dotnet publish src/HyPanel.Server/HyPanel.Server.csproj --configuration Release --runtime linux-x64 --self-contained true
 
       - name: Publish Agent NativeAOT binary
-        run: dotnet publish src/HyPanel.Agent/HyPanel.Agent.csproj --configuration Release --runtime linux-x64 --self-contained true
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y musl-tools build-essential curl xz-utils
+          sh scripts/build-wireguard-tool.sh linux-x64 .wireguard-build/linux-x64
+          dotnet publish src/HyPanel.Agent/HyPanel.Agent.csproj --configuration Release --runtime linux-x64 --self-contained true
 
       - name: Build web application
         working-directory: web/HyPanel.Web

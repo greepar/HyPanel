@@ -59,7 +59,7 @@ public sealed class EgressNetworkManagerTests
         var source = EgressNetworkManager.BuildScript(new(false,
             [new(ids[0], 1, false, "203.0.113.2", EgressTransports.WireGuard, sourceOptions),
              new(ids[1], 2, false, "203.0.113.2", EgressTransports.WireGuard, sourceOptions)]));
-        Assert.AreEqual(1, exit.Split("wg syncconf hpwx").Length - 1);
+        Assert.AreEqual(1, exit.Split("\"$HYPANEL_WG\" syncconf hpwx").Length - 1);
         StringAssert.Contains(exit, "ListenPort = 4433");
         StringAssert.Contains(exit, "AllowedIPs = 169.254.1.1/32, 169.254.1.5/32");
         StringAssert.Contains(exit, "ip saddr != { 169.254.1.1, 169.254.1.5 } drop");

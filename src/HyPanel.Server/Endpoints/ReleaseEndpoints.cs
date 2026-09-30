@@ -11,6 +11,7 @@ internal static class ReleaseEndpoints
     {
         endpoints.MapGet("/api/releases/v1/manifest", GetManifest);
         endpoints.MapGet("/api/releases/v1/assets/{fileName}", GetAsset);
+        endpoints.MapGet("/api/releases/v1/tools/{fileName}", GetToolAsync);
         endpoints.MapGet("/api/backend-releases/v1/assets/{fileName}", GetBackendAssetAsync);
         endpoints.MapGet("/install.sh", GetUnixInstaller);
         endpoints.MapGet("/install.ps1", GetPowerShellInstaller);
@@ -29,6 +30,15 @@ internal static class ReleaseEndpoints
         return catalog.TryGetAssetPath(fileName, out var path)
             ? Results.File(path, enableRangeProcessing: true)
             : Results.NotFound();
+    }
+
+    private static async Task<IResult> GetToolAsync(string fileName, HttpRequest request,
+        AgentAuthentication authentication, ReleaseCatalog catalog, ReleaseSyncWorker releases, CancellationToken ct)
+    {
+        if (await authentication.AuthenticateAsync(request, ct) is null) return Results.Unauthorized();
+        var tool = catalog.FindTool(fileName);
+        if (tool is null) return Results.NotFound();
+        return Results.File(await releases.EnsureToolCachedAsync(tool, ct), enableRangeProcessing: true);
     }
 
     private static async Task<IResult> GetBackendAssetAsync(

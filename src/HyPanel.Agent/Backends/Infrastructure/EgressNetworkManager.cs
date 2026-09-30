@@ -8,7 +8,8 @@ using HyPanel.Agent.Networking;
 using HyPanel.Shared.Contracts;
 
 /// <summary>Owns hpe*/hpw* exit interfaces, routing tables 100001..116000 and inet hypanel_egress.</summary>
-public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, EgressTransportRegistry? transports = null, AgentEnrollmentOptions? options = null)
+public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, EgressTransportRegistry? transports = null,
+    AgentEnrollmentOptions? options = null, BackendBinaryManager? binaryManager = null)
 {
     private EgressNetworkReport report = new(false, false, null);
     public EgressNetworkReport Report
@@ -33,7 +34,17 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
         try
         {
             if (!OperatingSystem.IsLinux()) throw new InvalidOperationException("出口转发仅支持 Linux 节点。");
-            var script = BuildScriptCore(state, Transports, Path.Combine(options?.DataDirectory ?? Path.GetTempPath(), "egress-fou-ports"));
+            var needsWireGuard = state.Enabled && state.Transport == EgressTransports.WireGuard
+                || state.Tunnels.Any(t => t.Transport == EgressTransports.WireGuard);
+            var wg = "wg";
+            if (needsWireGuard)
+            {
+                if (state.WireGuardTool is null || binaryManager is null)
+                    throw new InvalidOperationException("WireGuard 工具发布信息尚未同步，请等待面板同步新版发布信息后重试。");
+                wg = await binaryManager.EnsureToolAsync(state.WireGuardTool, ct);
+            }
+            var script = BuildScriptCore(state, Transports,
+                Path.Combine(options?.DataDirectory ?? Path.GetTempPath(), "egress-fou-ports"), wg);
             hasManagedNetwork = true;
             await RunAsync(script, ct);
             Report = new(state.Enabled, state.Enabled, null, Transports.SupportedTransports, state.Transport, AppliedPort(state));
@@ -74,7 +85,8 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
         return 0;
     }
 
-    internal static string BuildScriptCore(EgressNetworkState state, EgressTransportRegistry registry, string portStatePath = "/tmp/hypanel-egress-fou-ports")
+    internal static string BuildScriptCore(EgressNetworkState state, EgressTransportRegistry registry,
+        string portStatePath = "/tmp/hypanel-egress-fou-ports", string wireGuardPath = "wg")
     {
         if (state.Tunnels.Count > 16000 || state.Tunnels.Select(t => t.Slot).Distinct().Count() != state.Tunnels.Count)
             throw new InvalidOperationException("Invalid exit tunnel allocation.");
@@ -91,6 +103,7 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
                 ? new[] { GreUdpEgressTransportBackend.Port(state.TransportOptionsJson) } : Array.Empty<int>()).Distinct().ToArray();
         var portFile = "'" + portStatePath.Replace("'", "'\"'\"'") + "'";
         var script = new StringBuilder("set -eu\nexport PATH=/usr/sbin:/usr/bin:/sbin:/bin\n");
+        script.AppendLine("export HYPANEL_WG='" + wireGuardPath.Replace("'", "'\"'\"'") + "'");
         if (fouPorts.Length > 0)
             script.AppendLine($"grep -Fxq '{string.Join(" ", fouPorts)}' {portFile} 2>/dev/null || printf '%s\\n' '{string.Join(" ", fouPorts)}' >> {portFile}");
         var active = state.Enabled || state.Tunnels.Count > 0;

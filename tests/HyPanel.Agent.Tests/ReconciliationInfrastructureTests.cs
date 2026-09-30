@@ -115,6 +115,36 @@ public sealed class ReconciliationInfrastructureTests
     }
 
     [TestMethod]
+    public async Task WireGuardTool_IsDownloadedOnDemand_AndRepairsCorruptCache()
+    {
+        var payload = Encoding.UTF8.GetBytes("verified wg tool");
+        using var handler = new RecordingHandler(request =>
+        {
+            Assert.AreEqual("https://panel.example/api/releases/v1/tools/backend.bin", request.RequestUri!.AbsoluteUri);
+            Assert.AreEqual("agent-secret", request.Headers.Authorization!.Parameter);
+            return new HttpResponseMessage(HttpStatusCode.OK) { RequestMessage = request,
+                Content = new ByteArrayContent(payload) };
+        });
+        using var client = new HttpClient(handler);
+        var manager = await CreateBinaryManagerAsync(client);
+        var artifact = Artifact(payload) with { BackendType = "wireguard-tools" };
+        Assert.AreEqual(0, handler.RequestCount);
+        var path = await manager.EnsureToolAsync(artifact, CancellationToken.None);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        Assert.AreEqual(path, await manager.EnsureToolAsync(artifact, CancellationToken.None));
+        Assert.AreEqual(1, handler.RequestCount);
+        if (!OperatingSystem.IsWindows()) Assert.IsTrue(File.GetUnixFileMode(path).HasFlag(UnixFileMode.UserExecute));
+        await manager.PruneUnusedAsync([], CancellationToken.None);
+        Assert.IsTrue(File.Exists(path));
+        await File.WriteAllTextAsync(path, "corrupt");
+        await manager.EnsureToolAsync(artifact, CancellationToken.None);
+        Assert.AreEqual(2, handler.RequestCount);
+        CollectionAssert.AreEqual(payload, await File.ReadAllBytesAsync(path));
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => manager.EnsureToolAsync(
+            artifact with { Sha256 = new string('0', 64) }, CancellationToken.None));
+    }
+
+    [TestMethod]
     public void DiskSpace_ImpossibleRequirement_ReportsInsufficientSpace()
     {
         var root = Path.GetPathRoot(Path.GetFullPath(dataDirectory))!;

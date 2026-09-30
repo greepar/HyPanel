@@ -82,6 +82,9 @@ jobs:
         if: matrix.image == ''
         with:
           dotnet-version: 10.0.x
+      - name: Install static WireGuard toolchain
+        if: runner.os == 'Linux' && matrix.image == ''
+        run: sudo apt-get update -qq && sudo apt-get install -y musl-tools build-essential curl xz-utils
       - name: Build release artifacts
         if: matrix.image == ''
         shell: bash
@@ -108,8 +111,9 @@ jobs:
           docker run --rm -v "$PWD:/src" -w /src \
             -e AGENT_RIDS -e SERVER_RIDS -e EXTRA_PUBLISH_ARGS -e RELEASE_VERSION -e SOURCE_DATE_EPOCH \
             -e REQUIRE_ALL_AGENT_RIDS=false -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 \
+            -e WIREGUARD_CC=cc \
             "$IMAGE" sh -euc '
-              apk add --no-cache python3 >/dev/null
+              apk add --no-cache python3 make curl xz linux-headers >/dev/null
               sh scripts/build-release.sh "$RELEASE_VERSION" release-output
             '
       - uses: actions/upload-artifact@v4
@@ -135,10 +139,10 @@ jobs:
       - name: Assemble release metadata
         run: |
           mkdir assembled
-          find gathered -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp '{}' assembled/ \;
+          find gathered -type f \( -name '*.tar.gz' -o -name '*.tar.xz' -o -name '*.zip' -o -name 'wg-*' \) -exec cp '{}' assembled/ \;
           cp gathered/release-linux-x64/install.sh assembled/
           cp gathered/release-linux-x64/install.ps1 assembled/
-          jq -s --argjson frozen '["win-x64","win-arm64","osx-x64","osx-arm64","linux-x64","linux-arm64","linux-musl-x64","linux-musl-arm64"]' 'def assets: (map(.assets) | add); {schemaVersion:1, version:.[0].version, publishedAt:.[0].publishedAt, assets:assets} | if ([.assets[].rid] | unique | sort) == ($frozen | sort) and (.assets | length) == 8 then . else error("manifest must contain exactly 8 frozen Agent RIDs") end' gathered/*/manifest.json > assembled/manifest.json
+          jq -s --argjson frozen '["win-x64","win-arm64","osx-x64","osx-arm64","linux-x64","linux-arm64","linux-musl-x64","linux-musl-arm64"]' 'def assets: (map(.assets) | add); def tools: (map(.tools // []) | add); {schemaVersion:1, version:.[0].version, publishedAt:.[0].publishedAt, assets:assets, tools:tools} | if ([.assets[].rid] | unique | sort) == ($frozen | sort) and (.assets | length) == 8 and ([.tools[].rid] | unique | length) == 4 and (.tools | length) == 4 then . else error("manifest must contain 8 Agent RIDs and 4 WireGuard tool RIDs") end' gathered/*/manifest.json > assembled/manifest.json
           (cd assembled && sha256sum -- * > SHA256SUMS)
       - name: Create release
         uses: softprops/action-gh-release@v2

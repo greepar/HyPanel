@@ -14,13 +14,13 @@ public sealed class WireGuardEgressTransportBackend : IEgressTransportBackend
     {
         var option = Parse(optionsJson);
         if (option.InterfaceName != "hpwx") throw new InvalidOperationException("WireGuard 出口接口无效。");
-        return "command -v wg >/dev/null || { echo '缺少 wireguard-tools，请更新节点安装环境。' >&2; exit 1; }\n" +
+        return "command -v \"$HYPANEL_WG\" >/dev/null || { echo 'WireGuard 工具不可用，请更新到正式发布的 Linux Agent。' >&2; exit 1; }\n" +
             EnsureInterface("hpwx") + Config("hpwx", option.PrivateKey, option.Port, []) + $"ip link set hpwx mtu {Definition.Mtu} up\n";
     }
 
     public string PrepareTunnels(IReadOnlyList<EgressTunnel> tunnels)
     {
-        var script = new StringBuilder("command -v wg >/dev/null || { echo '缺少 wireguard-tools，请更新节点安装环境。' >&2; exit 1; }\n");
+        var script = new StringBuilder("command -v \"$HYPANEL_WG\" >/dev/null || { echo 'WireGuard 工具不可用，请更新到正式发布的 Linux Agent。' >&2; exit 1; }\n");
         foreach (var group in tunnels.GroupBy(t => Interface(t)))
         {
             var first = group.First();
@@ -67,7 +67,7 @@ public sealed class WireGuardEgressTransportBackend : IEgressTransportBackend
 
     private static string Config(string name, string privateKey, int? port, IReadOnlyList<Peer> peers)
     {
-        var s = new StringBuilder($"wg syncconf {name} /dev/stdin <<'HYPANEL_WG_CONFIG'\n[Interface]\nPrivateKey = {privateKey}\n");
+        var s = new StringBuilder($"\"$HYPANEL_WG\" syncconf {name} /dev/stdin <<'HYPANEL_WG_CONFIG'\n[Interface]\nPrivateKey = {privateKey}\n");
         if (port is not null) s.AppendLine($"ListenPort = {port}");
         foreach (var peer in peers)
         {

@@ -119,7 +119,9 @@ try {
     $manifestUri = $null
     if (-not [Uri]::TryCreate($ManifestUrl, [UriKind]::Absolute, [ref] $manifestUri) -or (Origin $manifestUri) -ne (Origin $panel)) { Fail 'Manifest URL must be same-origin.' }
     $manifest = Invoke-RestMethod -Uri $manifestUri.AbsoluteUri -Method Get -UseBasicParsing
-    Exact-Properties $manifest @('schemaVersion', 'version', 'publishedAt', 'assets') 'Manifest'
+    $manifestProperties = @('schemaVersion', 'version', 'publishedAt', 'assets')
+    if ($manifest.PSObject.Properties.Name -contains 'tools') { $manifestProperties += 'tools' }
+    Exact-Properties $manifest $manifestProperties 'Manifest'
     if ([int](Property $manifest 'schemaVersion') -ne 1) { Fail 'Manifest schemaVersion must be 1.' }
     $version = [string](Property $manifest 'version')
     if ($version -notmatch '^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$') { Fail 'Manifest version is invalid.' }

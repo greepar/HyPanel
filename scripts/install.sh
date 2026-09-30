@@ -243,21 +243,21 @@ fi
 
 # Optional host preparation (Linux only).  Failures are reported but never abort the Agent installation.
 install_nftables() {
-    if command -v nft >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 && command -v ping >/dev/null 2>&1 && command -v wg >/dev/null 2>&1; then note "network tools already installed"; return 0; fi
-    note "installing nftables, GRE and WireGuard network tools"
+    if command -v nft >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 && command -v ping >/dev/null 2>&1; then note "network tools already installed"; return 0; fi
+    note "installing nftables and GRE network tools"
     if command -v apt-get >/dev/null 2>&1; then
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables iproute2 iputils-ping wireguard-tools >/dev/null 2>&1 ||
-            { apt-get update -q >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables iproute2 iputils-ping wireguard-tools >/dev/null 2>&1; } || true
-    elif command -v dnf >/dev/null 2>&1; then dnf install -y -q nftables iproute iputils wireguard-tools >/dev/null 2>&1 || true
-    elif command -v yum >/dev/null 2>&1; then yum install -y -q nftables iproute iputils wireguard-tools >/dev/null 2>&1 || true
-    elif command -v apk >/dev/null 2>&1; then apk add --no-cache nftables iproute2 iputils wireguard-tools >/dev/null 2>&1 || true
-    elif command -v pacman >/dev/null 2>&1; then pacman -S --noconfirm --needed nftables iproute2 iputils wireguard-tools >/dev/null 2>&1 || true
-    elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install nftables iproute2 iputils wireguard-tools >/dev/null 2>&1 || true
-    elif command -v opkg >/dev/null 2>&1; then { opkg update >/dev/null 2>&1; opkg install nftables ip-full iputils-ping wireguard-tools kmod-wireguard >/dev/null 2>&1; } || true
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables iproute2 iputils-ping >/dev/null 2>&1 ||
+            { apt-get update -q >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables iproute2 iputils-ping >/dev/null 2>&1; } || true
+    elif command -v dnf >/dev/null 2>&1; then dnf install -y -q nftables iproute iputils >/dev/null 2>&1 || true
+    elif command -v yum >/dev/null 2>&1; then yum install -y -q nftables iproute iputils >/dev/null 2>&1 || true
+    elif command -v apk >/dev/null 2>&1; then apk add --no-cache nftables iproute2 iputils >/dev/null 2>&1 || true
+    elif command -v pacman >/dev/null 2>&1; then pacman -S --noconfirm --needed nftables iproute2 iputils >/dev/null 2>&1 || true
+    elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install nftables iproute2 iputils >/dev/null 2>&1 || true
+    elif command -v opkg >/dev/null 2>&1; then { opkg update >/dev/null 2>&1; opkg install nftables ip-full iputils-ping >/dev/null 2>&1; } || true
     else note "no supported package manager found; install nftables manually for port hopping"; return 0
     fi
-    if command -v nft >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 && command -v ping >/dev/null 2>&1 && command -v wg >/dev/null 2>&1; then note "network tools installed"
-    else note "some network tools are missing; install iproute2, nftables, ping and wireguard-tools before enabling exit forwarding"
+    if command -v nft >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 && command -v ping >/dev/null 2>&1; then note "network tools installed"
+    else note "some network tools are missing; install iproute2, nftables, ping before enabling exit forwarding"
     fi
 }
 
@@ -348,7 +348,7 @@ try:
         "linux-x64", "linux-arm64", "linux-musl-x64", "linux-musl-arm64",
         "osx-x64", "osx-arm64", "win-x64", "win-arm64",
     }
-    if not isinstance(manifest, dict) or set(manifest) != {"schemaVersion", "version", "publishedAt", "assets"}:
+    if not isinstance(manifest, dict) or set(manifest) not in ({"schemaVersion", "version", "publishedAt", "assets"}, {"schemaVersion", "version", "publishedAt", "assets", "tools"}):
         raise ValueError("unexpected manifest fields")
     if type(manifest["schemaVersion"]) is not int or manifest["schemaVersion"] != 1:
         raise ValueError("unsupported manifest schema")
