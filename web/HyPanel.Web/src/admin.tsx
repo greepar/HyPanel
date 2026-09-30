@@ -1782,6 +1782,32 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
     null,
   );
   const [selected, setSelected] = useState<string[]>([]);
+  // Optimistic switch states: while a PUT is in flight (or the Server has not caught up), auto-refresh
+  // must not bounce the toggle back to the old value. Entries expire once the Server agrees or after 15s.
+  const overrides = useRef(new Map<string, { enabled?: boolean; backendUpdatePolicy?: "Auto" | "Manual"; at: number }>());
+  const pruneOverrides = () => {
+    const now = Date.now();
+    for (const [id, entry] of overrides.current) if (now - entry.at > 15_000) overrides.current.delete(id);
+  };
+  const applyOverrides = (list: Service[]): Service[] => {
+    pruneOverrides();
+    if (!overrides.current.size) return list;
+    return list.map((service) => {
+      const entry = overrides.current.get(service.id);
+      if (!entry) return service;
+      if (entry.enabled !== undefined && service.enabled !== entry.enabled)
+        return { ...service, enabled: entry.enabled };
+      if (entry.backendUpdatePolicy !== undefined && service.backendUpdatePolicy !== entry.backendUpdatePolicy)
+        return { ...service, backendUpdatePolicy: entry.backendUpdatePolicy };
+      return service;
+    });
+  };
+  const override = (serviceId: string, patch: { enabled?: boolean; backendUpdatePolicy?: "Auto" | "Manual" }) => {
+    overrides.current.set(serviceId, { ...patch, at: Date.now() });
+  };
+  const clearOverride = (serviceId: string) => {
+    overrides.current.delete(serviceId);
+  };
   const loadServices = async (id: string, signal?: AbortSignal, silent = false) => {
     if (!silent) {
       setLoading(true);
@@ -1791,9 +1817,11 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
       const next = await api.services(id, signal);
       if (signal?.aborted) return;
       setServices(
-        node.online
-          ? next
-          : next.map((service) => ({ ...service, runtime: null })),
+        applyOverrides(
+          node.online
+            ? next
+            : next.map((service) => ({ ...service, runtime: null })),
+        ),
       );
       // A background refresh keeps the selection of services that still exist.
       setSelected((current) =>
@@ -1853,6 +1881,9 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
     }
   };
   const enabled = async (service: Service, value: boolean) => {
+    // Optimistic: flip the switch immediately and keep it flipped against background refreshes.
+    override(service.id, { enabled: value });
+    setServices((current) => current.map((item) => (item.id === service.id ? { ...item, enabled: value } : item)));
     try {
       await api.request(
         `/api/admin/v1/nodes/${nodeId}/services/${service.id}/enabled`,
@@ -1860,10 +1891,14 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
       );
       await loadServices(nodeId, undefined, true);
     } catch (reason) {
+      clearOverride(service.id);
+      setServices((current) => current.map((item) => (item.id === service.id ? { ...item, enabled: !value } : item)));
       setError(messageFor(reason, "无法更新服务状态"));
     }
   };
   const batch = async (value: boolean) => {
+    for (const serviceId of selected) override(serviceId, { enabled: value });
+    setServices((current) => current.map((item) => (selected.includes(item.id) ? { ...item, enabled: value } : item)));
     try {
       await api.request("/api/admin/v1/services/batch-enabled", {
         method: "POST",
@@ -1877,6 +1912,8 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
       });
       await loadServices(nodeId, undefined, true);
     } catch (reason) {
+      for (const serviceId of selected) clearOverride(serviceId);
+      await loadServices(nodeId, undefined, true);
       setError(messageFor(reason, "无法批量更新服务"));
     }
   };
@@ -1952,8 +1989,12 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
                 edit={() => setEditor({ service })}
                 remove={() => void remove(service)}
               enabled={(value) => void enabled(service, value)}
-              refresh={() => loadServices(nodeId, undefined, true)}
-              setError={setError}
+               refresh={() => loadServices(nodeId, undefined, true)}
+               onPolicyChange={(serviceId, policy) => {
+                 override(serviceId, { backendUpdatePolicy: policy });
+                 setServices((current) => current.map((item) => (item.id === serviceId ? { ...item, backendUpdatePolicy: policy } : item)));
+               }}
+               setError={setError}
               />
             ))}
           </div>
@@ -2005,6 +2046,7 @@ function ServiceCard({
   remove,
   enabled,
   refresh,
+  onPolicyChange,
   setError,
 }: {
   api: ApiClient;
@@ -2017,6 +2059,7 @@ function ServiceCard({
   remove: () => void;
   enabled: (value: boolean) => void;
   refresh: () => Promise<void>;
+  onPolicyChange?: (serviceId: string, policy: "Auto" | "Manual") => void;
   setError: (value: string) => void;
 }) {
   const backend = backendFor(service.backendType);
@@ -2057,6 +2100,9 @@ function ServiceCard({
     }
   };
   const backendPolicy = async (enabled: boolean) => {
+    // Optimistic: keep the switch where the admin put it until the Server confirms.
+    const previous = service.backendUpdatePolicy;
+    onPolicyChange?.(service.id, enabled ? "Auto" : "Manual");
     try {
       await api.setBackendUpdatePolicy(
         nodeId,
@@ -2066,6 +2112,7 @@ function ServiceCard({
       setError(`后端自动更新已${enabled ? "开启" : "关闭"}。`);
       await refresh();
     } catch (reason) {
+      onPolicyChange?.(service.id, previous);
       setError(messageFor(reason, "无法修改后端更新策略"));
     }
   };
