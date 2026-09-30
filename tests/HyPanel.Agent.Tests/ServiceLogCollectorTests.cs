@@ -12,6 +12,18 @@ namespace HyPanel.Agent.Tests;
 public sealed class ServiceLogCollectorTests
 {
     [TestMethod]
+    public async Task DiagnosticProbe_BoundsOutputAndDoesNotInterpretShellArguments()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var literal = "; echo SECRET";
+        var result = await EgressDiagnosticCollector.RunAsync("/bin/echo", [literal], CancellationToken.None);
+        StringAssert.Contains(result, literal);
+        var bounded = await EgressDiagnosticCollector.RunAsync("/bin/echo", [new string('x', 20000)], CancellationToken.None);
+        Assert.IsTrue(bounded.Length < 8500);
+        StringAssert.Contains(bounded, "输出已截断");
+    }
+
+    [TestMethod]
     public void TailUtf8_UnicodeInput_ReturnsValidNewestContentWithinByteLimit()
     {
         var result = ServiceLogCollector.TailUtf8("prefix-秘密-😀-tail", 12);

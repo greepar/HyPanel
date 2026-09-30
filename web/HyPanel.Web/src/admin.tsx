@@ -2211,10 +2211,10 @@ function ServiceLogPanel({
       <div className="section-toolbar">
         <div>
           <h2>{service.name}</h2>
-          <span>仅收集 Agent 内存中该服务进程最近的输出，不读取任意文件。</span>
+          <span>收集服务进程日志；使用出口转发时，同时收集入口和出口的隧道、路由及防火墙诊断。</span>
         </div>
         <button className="button button-primary" type="button" disabled={busy || waiting} onClick={() => void collect()}>
-          {waiting ? "等待 Agent 返回…" : "收集最新日志"}
+          {waiting ? "等待 Agent 返回…" : "收集日志与网络诊断"}
         </button>
       </div>
       {service.runtime?.errorMessage && <Notice kind="error">当前错误：{service.runtime.errorMessage}</Notice>}

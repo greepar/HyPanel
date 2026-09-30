@@ -465,11 +465,13 @@ internal sealed partial class SqliteServerRepository(
                               SELECT @id, a.id, 'CollectServiceLogs', 'Pending', @created, NULL, NULL,
                                      NULL, NULL, @expires, s.id, NULL
                               FROM service_instances s
-                              INNER JOIN agents a ON a.node_id = s.node_id
-                              WHERE s.id = @service AND s.node_id = @node
+                              INNER JOIN agents a ON a.node_id = @node
+                              WHERE s.id = @service AND (s.node_id = @node OR EXISTS (
+                                  SELECT 1 FROM service_egress e WHERE e.service_id=s.id AND e.exit_node_id=@node))
                                 AND NOT EXISTS (
                                   SELECT 1 FROM agent_commands active
                                   WHERE active.target_service_id = s.id
+                                    AND active.agent_id = a.id
                                     AND active.type = 'CollectServiceLogs'
                                     AND active.status IN ('Pending', 'Running')
                                     AND (active.expires_at_utc IS NULL OR active.expires_at_utc > @created));

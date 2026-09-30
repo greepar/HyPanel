@@ -18,12 +18,14 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
         private set => report = value;
     }
     public IReadOnlyDictionary<Guid, string> Failures { get; private set; } = new Dictionary<Guid, string>();
+    internal EgressNetworkState? DesiredNetwork { get; private set; }
     private bool hasManagedNetwork;
     private EgressTransportRegistry Transports => transports ?? EgressTransportRegistry.Default;
 
     public async Task ApplyAsync(EgressNetworkState? state, CancellationToken ct)
     {
         state ??= new(false, []);
+        DesiredNetwork = state;
         var failures = new Dictionary<Guid, string>();
         if (!state.Enabled && state.Tunnels.Count == 0 && !hasManagedNetwork)
         {

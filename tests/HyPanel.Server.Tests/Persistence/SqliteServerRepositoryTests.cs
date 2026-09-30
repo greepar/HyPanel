@@ -52,6 +52,25 @@ public sealed class SqliteServerRepositoryTests
     }
 
     [TestMethod]
+    public async Task EgressDiagnostics_QueuesBothAgentsAndRejectsUnrelatedNode()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var source = Guid.NewGuid(); var exit = Guid.NewGuid(); var unrelated = Guid.NewGuid();
+        await CreateAgentAsync(fixture, source, "a-token", "a-secret");
+        await CreateAgentAsync(fixture, exit, "b-token", "b-secret");
+        await CreateAgentAsync(fixture, unrelated, "c-token", "c-secret");
+        await fixture.Repository.SetEgressEnabledAsync(exit, true, CancellationToken.None);
+        var service = CreateService(source, Guid.NewGuid(), "egress") with { ConfigJson = $"{{\"exitNodeId\":\"{exit}\"}}" };
+        await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
+        var expiry = fixture.Time.GetUtcNow().AddMinutes(2);
+        Assert.IsNotNull(await fixture.Repository.CreateCollectServiceLogsCommandAsync(Guid.NewGuid(), source, service.Id, expiry, CancellationToken.None));
+        Assert.IsNotNull(await fixture.Repository.CreateCollectServiceLogsCommandAsync(Guid.NewGuid(), exit, service.Id, expiry, CancellationToken.None));
+        Assert.IsNull(await fixture.Repository.CreateCollectServiceLogsCommandAsync(Guid.NewGuid(), unrelated, service.Id, expiry, CancellationToken.None));
+        Assert.IsNull(await fixture.Repository.CreateCollectServiceLogsCommandAsync(Guid.NewGuid(), exit, service.Id, expiry, CancellationToken.None));
+        Assert.AreEqual(2, (await fixture.Repository.GetServiceDiagnosticsAsync(source, service.Id, CancellationToken.None)).Count);
+    }
+
+    [TestMethod]
     public async Task Egress_ReportsCapabilitiesBeforeMatchingConfigurationAck()
     {
         await using var fixture = await TestDatabase.CreateAsync();

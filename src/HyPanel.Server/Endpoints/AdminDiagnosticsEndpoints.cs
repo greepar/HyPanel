@@ -23,6 +23,14 @@ internal static class AdminDiagnosticsEndpoints
         if (!serviceExists) return Results.NotFound();
         var command = await repository.CreateCollectServiceLogsCommandAsync(Guid.NewGuid(), nodeId, serviceId,
             time.GetUtcNow() + CommandLifetime, cancellationToken);
+        var network = await repository.GetEgressNetworkAsync(nodeId, cancellationToken);
+        if (command is not null && network.Tunnels.FirstOrDefault(t => !t.IsExit && t.ServiceId == serviceId) is not null)
+        {
+            var exit = (await repository.GetServicesForNodeAsync(nodeId, cancellationToken)).Single(s => s.Service.Id == serviceId);
+            if (SqliteServerRepository.ExitNode(exit.Service.ConfigJson) is { } exitNode)
+                await repository.CreateCollectServiceLogsCommandAsync(Guid.NewGuid(), exitNode, serviceId,
+                    time.GetUtcNow() + CommandLifetime, cancellationToken);
+        }
         return command is null
             ? Results.Conflict()
             : Results.Json(new CreateDiagnosticCommandResponse(command.Id),
