@@ -44,7 +44,9 @@ internal sealed partial class SqliteServerRepository
                 reader.GetBoolean(4) && !reader.IsDBNull(6) && !reader.IsDBNull(7)
                     && SqliteValue.ToDateTimeOffset(reader.GetString(6)) >= cutoff
                     && SqliteValue.ToDateTimeOffset(reader.GetString(7)) >= cutoff,
-                reader.IsDBNull(5) ? null : reader.GetString(5), reader.GetInt32(8), !reader.IsDBNull(7) && SqliteValue.ToDateTimeOffset(reader.GetString(7)) >= cutoff,
+                reader.IsDBNull(5) ? null : reader.GetString(5), reader.GetInt32(8), !reader.IsDBNull(10) && (
+                    !reader.IsDBNull(7) && SqliteValue.ToDateTimeOffset(reader.GetString(7)) >= cutoff
+                    || !reader.IsDBNull(6) && SqliteValue.ToDateTimeOffset(reader.GetString(6)) >= cutoff),
                 reader.GetString(9), ReadSupportedTransports(reader.IsDBNull(10) ? null : reader.GetString(10)), reader.GetInt32(11)));
         return nodes;
     }
@@ -112,7 +114,8 @@ internal sealed partial class SqliteServerRepository
         command.CommandText = """
             INSERT INTO node_egress(node_id,enabled,ready) SELECT @node,0,0 WHERE @enabled=0
                 ON CONFLICT(node_id) DO NOTHING;
-            UPDATE node_egress SET ready=@ready,error=@error,observed_at_utc=@now,supported_transports_json=@supported
+            UPDATE node_egress SET supported_transports_json=@supported WHERE node_id=@node;
+            UPDATE node_egress SET ready=@ready,error=@error,observed_at_utc=@now
             WHERE node_id=@node AND enabled=@enabled AND transport=@transport
                 AND (enabled=0 OR udp_port=@port OR @port=0 AND (transport='gre' OR udp_port=0 OR transport='gre-udp' AND udp_port=47541));
             """;

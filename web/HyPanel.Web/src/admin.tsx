@@ -1607,7 +1607,7 @@ function EgressSettings({ api, node, setError }: { api: ApiClient; node: Node; s
       <div><dt>使用此出口的服务</dt><dd>{egress?.usedBy ?? 0}</dd></div>
     </dl>
     {egress?.error && <p className="field-help">{egress.error}</p>}
-    {!supported && <p className="field-help">需要已更新 Agent 的 Linux 节点和公网 IPv4。</p>}
+    {!supported && <p className="field-help">尚未收到 Agent 的出口能力上报，请检查节点日志；已有出口仍可停用。</p>}
     <div className="egress-backend-field">
       <span>出口后端</span>
       <Select value={transport} disabled={busy || !!egress?.enabled} onChange={value => { setTransport(value); setUdpPort(value === 'wireguard' ? '51820' : '47541'); }}
@@ -1624,7 +1624,7 @@ function EgressSettings({ api, node, setError }: { api: ApiClient; node: Node; s
         : '两端需要接收 FOU UDP 数据包，面板会下发同一端口；请在两端放行此 UDP 端口。'}</p>
     </label>}
     {transport === 'wireguard' && <p className="field-help">点击启用后自动下载并校验 WireGuard 工具，入口节点使用此出口时也会自动下载；无需手动安装系统包，仍需内核支持 WireGuard。</p>}
-    <button className="button button-secondary" type="button" disabled={busy || !egress || !supported || !node.online || (transport !== 'gre' && (!Number.isInteger(Number(udpPort)) || Number(udpPort) < 1 || Number(udpPort) > 65535)) || (!!egress.enabled && egress.usedBy > 0)} onClick={() => void toggle()}>
+    <button className="button button-secondary" type="button" disabled={busy || !egress || (!egress.enabled && (!supported || !node.online)) || (!egress.enabled && transport !== 'gre' && (!Number.isInteger(Number(udpPort)) || Number(udpPort) < 1 || Number(udpPort) > 65535)) || (!!egress.enabled && egress.usedBy > 0)} onClick={() => void toggle()}>
       {busy ? '提交中…' : egress?.enabled ? '停用出口转发' : transport === 'wireguard' ? '安装并启用出口转发' : '启用出口转发'}
     </button>
     {!!egress?.usedBy && <p className="field-help">先切换使用此出口的服务，才能停用或删除该出口。</p>}

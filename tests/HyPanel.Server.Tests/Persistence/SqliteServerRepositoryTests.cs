@@ -52,6 +52,23 @@ public sealed class SqliteServerRepositoryTests
     }
 
     [TestMethod]
+    public async Task Egress_ReportsCapabilitiesBeforeMatchingConfigurationAck()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var node = Guid.NewGuid();
+        var agent = await CreateAgentAsync(fixture, node, "exit-token", "exit-secret");
+        await fixture.Repository.TryUpdateAgentReportAsync(agent, "0.5.18", "linux-x64", 0, null, CancellationToken.None);
+        await fixture.Repository.SetEgressEnabledAsync(node, true, CancellationToken.None, EgressTransports.GreUdp, 47541);
+        await fixture.Repository.RecordEgressReportAsync(node, new(false, false, null,
+            [EgressTransports.Gre, EgressTransports.GreUdp, EgressTransports.WireGuard]), CancellationToken.None);
+        var exit = (await fixture.Repository.GetEgressNodesAsync(CancellationToken.None)).Single(n => n.Id == node);
+        Assert.IsTrue(exit.Supported);
+        Assert.IsFalse(exit.Ready);
+        Assert.IsTrue(exit.SupportedTransports.Contains(EgressTransports.WireGuard));
+        Assert.IsTrue(await fixture.Repository.SetEgressEnabledAsync(node, false, CancellationToken.None, EgressTransports.GreUdp, 47541));
+    }
+
+    [TestMethod]
     public async Task Egress_AllocatesTunnelsForXrayAndShadowsocks()
     {
         await using var fixture = await TestDatabase.CreateAsync();

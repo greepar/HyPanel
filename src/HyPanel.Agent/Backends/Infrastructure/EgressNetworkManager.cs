@@ -103,6 +103,16 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
                 ? new[] { GreUdpEgressTransportBackend.Port(state.TransportOptionsJson) } : Array.Empty<int>()).Distinct().ToArray();
         var portFile = "'" + portStatePath.Replace("'", "'\"'\"'") + "'";
         var script = new StringBuilder("set -eu\nexport PATH=/usr/sbin:/usr/bin:/sbin:/bin\n");
+        script.AppendLine("export LC_ALL=C");
+        // Exit-side GRE interfaces have no policy table; deleting a link may also remove its last route.
+        // Treat an absent table as already cleaned, while preserving permission and other kernel errors.
+        script.AppendLine("""
+            flush_egress_table() {
+              if error=$(ip -4 route flush table "$1" 2>&1); then return 0; fi
+              case "$error" in *'FIB table does not exist'*) return 0;; esac
+              printf '%s\n' "$error" >&2; return 1
+            }
+            """);
         script.AppendLine("export HYPANEL_WG='" + wireGuardPath.Replace("'", "'\"'\"'") + "'");
         if (fouPorts.Length > 0)
             script.AppendLine($"grep -Fxq '{string.Join(" ", fouPorts)}' {portFile} 2>/dev/null || printf '%s\\n' '{string.Join(" ", fouPorts)}' >> {portFile}");
@@ -162,12 +172,12 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
         script.AppendLine("  case \"$name\" in hpw*) ip link delete \"$name\"; continue;; esac");
         script.AppendLine("  case \"$slot\" in ''|*[!0-9]*) continue;; esac");
         script.AppendLine("  [ \"$slot\" -ge 1 ] && [ \"$slot\" -le 16000 ] || continue");
-        script.AppendLine("  ip link delete \"$name\"\n  ip rule del pref \"$((10000 + slot))\" 2>/dev/null || true\n  ip route flush table \"$((100000 + slot))\"\ndone");
+        script.AppendLine("  ip link delete \"$name\"\n  ip rule del pref \"$((10000 + slot))\" 2>/dev/null || true\n  flush_egress_table \"$((100000 + slot))\"\ndone");
         // Also remove orphan source rules if an interface was deleted outside the Agent.
         script.AppendLine("if command -v ip >/dev/null; then");
         script.AppendLine("for slot in $(ip -4 rule show | awk '$1 ~ /^[0-9]+:$/ {p=$1+0; if(p>10000 && p<=26000) for(i=1;i<=NF;i++) if($i==\"lookup\" && $(i+1)==p+90000) print p-10000}'); do");
         if (keepSlots.Length > 0) script.AppendLine($"  case \"$slot\" in {keepSlots}) continue;; esac");
-        script.AppendLine("  ip rule del pref \"$((10000 + slot))\" 2>/dev/null || true\n  ip route flush table \"$((100000 + slot))\"\ndone\nfi");
+        script.AppendLine("  ip rule del pref \"$((10000 + slot))\" 2>/dev/null || true\n  flush_egress_table \"$((100000 + slot))\"\ndone\nfi");
         var keepPorts = string.Join("|", fouPorts);
         script.AppendLine($"for port in {EgressTransports.GreUdpPort} $(cat {portFile} 2>/dev/null || true); do");
         script.AppendLine("  case \"$port\" in ''|*[!0-9]*) continue;; esac");
