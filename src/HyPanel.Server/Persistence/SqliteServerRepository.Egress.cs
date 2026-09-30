@@ -114,7 +114,7 @@ internal sealed partial class SqliteServerRepository
                 ON CONFLICT(node_id) DO NOTHING;
             UPDATE node_egress SET ready=@ready,error=@error,observed_at_utc=@now,supported_transports_json=@supported
             WHERE node_id=@node AND enabled=@enabled AND transport=@transport
-                AND (udp_port=@port OR @port=0 AND (transport='gre' OR udp_port=0 OR transport='gre-udp' AND udp_port=47541));
+                AND (enabled=0 OR udp_port=@port OR @port=0 AND (transport='gre' OR udp_port=0 OR transport='gre-udp' AND udp_port=47541));
             """;
         command.Parameters.AddWithValue("@node", nodeId.ToString("D"));
         command.Parameters.AddWithValue("@enabled", report.Enabled ? 1 : 0);

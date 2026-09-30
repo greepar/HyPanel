@@ -43,6 +43,12 @@ public sealed class SqliteServerRepositoryTests
         await fixture.Repository.RecordEgressReportAsync(exit, new(true, true, null,
             [EgressTransports.WireGuard], EgressTransports.WireGuard, 4434), CancellationToken.None);
         Assert.IsFalse((await fixture.Repository.GetEgressNodesAsync(CancellationToken.None)).Single(n => n.Id == exit).Ready);
+        foreach (var service in await fixture.Repository.GetServicesForNodeAsync(source, CancellationToken.None))
+            await fixture.Repository.UpdateServiceAsync(service.Service with { ConfigJson = "{}" }, CancellationToken.None);
+        Assert.IsTrue(await fixture.Repository.SetEgressEnabledAsync(exit, false, CancellationToken.None, EgressTransports.WireGuard, 4433));
+        await fixture.Repository.RecordEgressReportAsync(exit, new(false, false, null,
+            [EgressTransports.WireGuard], EgressTransports.WireGuard), CancellationToken.None);
+        Assert.IsTrue((await fixture.Repository.GetEgressNodesAsync(CancellationToken.None)).Single(n => n.Id == exit).Supported);
     }
 
     [TestMethod]
