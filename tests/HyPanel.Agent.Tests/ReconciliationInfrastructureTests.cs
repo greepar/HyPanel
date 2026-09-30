@@ -42,8 +42,12 @@ public sealed class ReconciliationInfrastructureTests
         var requested = initial with { EgressRoute = new ServiceEgressRoute(1) };
         var result = await fixture.Reconciler.ApplyAsync(Desired(2, [requested]), fixture.Credentials, CancellationToken.None);
         Assert.IsFalse(result.Succeeded);
+        var failure = fixture.Reconciler.GetRuntimeStates().Single(state => state.ServiceId == initial.ServiceId);
+        Assert.AreEqual("egress_unavailable", failure.ErrorCode);
+        StringAssert.Contains(failure.ErrorMessage!, "出口转发管理器不可用");
         Assert.AreNotEqual(ServiceRuntimeStatus.Running, fixture.Supervisor.GetStatus(initial.ServiceId).Status);
         await fixture.Reconciler.RefreshRuntimeStatesAsync(CancellationToken.None);
+        StringAssert.Contains(fixture.Reconciler.GetRuntimeStates().Single().ErrorMessage!, "出口转发管理器不可用");
         Assert.AreNotEqual(ServiceRuntimeStatus.Running, fixture.Supervisor.GetStatus(initial.ServiceId).Status);
         var saved = await fixture.StateStore.LoadAsync(CancellationToken.None);
         Assert.AreEqual(new ServiceEgressRoute(1), saved.DesiredState!.Services.Single().EgressRoute);

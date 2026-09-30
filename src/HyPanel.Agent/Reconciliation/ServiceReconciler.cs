@@ -87,8 +87,8 @@ public sealed class ServiceReconciler(
             {
                 var error = egressNetwork is null ? "出口转发管理器不可用。"
                     : egressNetwork.Failures.GetValueOrDefault(service.ServiceId);
-                if (error is null && preflight.Failures.Any(f => f.ServiceId == service.ServiceId))
-                    error = "出口服务配置尚未就绪。";
+                if (error is null && preflight.Failures.FirstOrDefault(f => f.ServiceId == service.ServiceId) is { } failure)
+                    error = $"出口服务配置未通过验证（{failure.ErrorCode}）。";
                 if (error is null && !(desiredState.EgressNetwork?.Tunnels.Any(t =>
                         !t.IsExit && t.ServiceId == service.ServiceId && t.Slot == service.EgressRoute!.Slot) ?? false))
                     error = "出口隧道配置缺失。";
@@ -170,7 +170,7 @@ public sealed class ServiceReconciler(
                         {
                             // Never restart an older direct-outbound config when an exit was requested.
                             await processSupervisor.StopAsync(plan.Desired.ServiceId, StopTimeout, cancellationToken);
-                            blockedEgress[plan.Desired.ServiceId] = "出口服务配置失败，已停止出网。";
+                            blockedEgress[plan.Desired.ServiceId] = $"出口服务启动失败（{ErrorCode(exception)}）。";
                             SetFailed(plan.Desired.ServiceId, "egress_unavailable");
                             continue;
                         }
@@ -764,12 +764,22 @@ public sealed class ServiceReconciler(
     }
 
     private ServiceRuntimeState State(Guid id, ServiceRuntimeStatus status, string? version, string? configSha,
-        BackendTrafficSnapshot? traffic, string? errorCode) => new(id, status, version, configSha, traffic,
-        timeProvider.GetUtcNow(), errorCode, errorCode is null ? null : SafeMessage(errorCode));
+        BackendTrafficSnapshot? traffic, string? errorCode)
+    {
+        var message = errorCode is null ? null : SafeMessage(errorCode);
+        if (errorCode == "egress_unavailable" && blockedEgress.TryGetValue(id, out var reason))
+        {
+            const string prefix = "出口网络不可用，服务已停止出网：";
+            var detail = reason.Replace('\r', ' ').Replace('\n', ' ').Trim();
+            message = prefix + detail[..Math.Min(detail.Length, 1024 - prefix.Length)];
+        }
+        return new ServiceRuntimeState(id, status, version, configSha, traffic,
+            timeProvider.GetUtcNow(), errorCode, message);
+    }
 
     private static string SafeMessage(string code) => code switch
     {
-        "egress_unavailable" => "出口网络不可用，服务已停止出网；请检查出口节点和 GRE 防火墙。",
+        "egress_unavailable" => "出口网络不可用，服务已停止出网；请查看出口节点状态和两端 Agent 的网络错误。",
         "invalid_desired_state" => "Desired state is invalid.",
         "invalid_service" => "A service definition is invalid.",
         "artifact_unavailable" => "A required backend artifact is unavailable.",
