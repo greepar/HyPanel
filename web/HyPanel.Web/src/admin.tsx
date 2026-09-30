@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ApiError, type ApiClient, type InstallPlatform } from "./api";
+import { useAutoRefresh, readCache, writeCache, dropCache } from "./hooks";
 import { OwnSubscription } from "./subscription";
 import { PasskeyPanel } from "./passkey";
 import {
@@ -116,25 +117,6 @@ export function AdminApp({
   return <OverviewPage api={api} setError={setError} account={account} />;
 }
 
-/**
- * Silently re-runs `refresh` every few seconds while the tab is visible (and once when it becomes visible again),
- * so runtime status such as 重启退避 → 运行中 shows up without reloading the page.
- */
-function useAutoRefresh(refresh: () => unknown, deps: unknown[] = [], intervalMs = 5000) {
-  const latest = useRef(refresh);
-  latest.current = refresh;
-  useEffect(() => {
-    const tick = () => {
-      if (document.visibilityState === "visible") void latest.current();
-    };
-    const timer = setInterval(tick, intervalMs);
-    document.addEventListener("visibilitychange", tick);
-    return () => {
-      clearInterval(timer);
-      document.removeEventListener("visibilitychange", tick);
-    };
-  }, deps);
-}
 function SettingsPage({ api, setError, account }: PageProps & { account: boolean }) {
   const [settings, setSettings] = useState<GlobalSettings | null>(null);
   const [certificates, setCertificates] = useState<Certificate[]>([]);
@@ -444,12 +426,13 @@ function CertificatePanel({ api, certificates, setCertificates, setError }: { ap
 }
 
 function OverviewPage({ api, setError, account }: PageProps & { account: boolean }) {
-  const [health, setHealth] = useState<HealthSummary | null>(null);
-  const [nodes, setNodes] = useState<Node[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [health, setHealth] = useState<HealthSummary | null>(() => readCache<HealthSummary>("overview:health") ?? null);
+  const [nodes, setNodes] = useState<Node[]>(() => readCache<Node[]>("overview:nodes") ?? []);
+  const [loading, setLoading] = useState(() => !readCache("overview:health"));
   const [loadError, setLoadError] = useState("");
   const load = async (silent = false) => {
-    if (!silent) {
+    const cached = !!readCache("overview:health");
+    if (!silent && !cached) {
       setLoading(true);
       setLoadError("");
     }
@@ -460,10 +443,12 @@ function OverviewPage({ api, setError, account }: PageProps & { account: boolean
       ]);
       setHealth(nextHealth);
       setNodes(nextNodes);
+      writeCache("overview:health", nextHealth);
+      writeCache("overview:nodes", nextNodes);
     } catch (reason) {
-      if (!silent) setLoadError(messageFor(reason, "无法加载概览"));
+      if (!silent && !cached) setLoadError(messageFor(reason, "无法加载概览"));
     } finally {
-      if (!silent) setLoading(false);
+      if (!silent && !cached) setLoading(false);
     }
   };
   useEffect(() => {
@@ -597,8 +582,8 @@ function OverviewPage({ api, setError, account }: PageProps & { account: boolean
 }
 
 function NodesPage({ api, setError }: PageProps) {
-  const [nodes, setNodes] = useState<Node[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [nodes, setNodes] = useState<Node[]>(() => readCache<Node[]>("nodes:list") ?? []);
+  const [loading, setLoading] = useState(() => !readCache("nodes:list"));
   const [loadError, setLoadError] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
@@ -614,16 +599,19 @@ function NodesPage({ api, setError }: PageProps) {
   const [query, setQuery] = useState("");
   const [deleting, setDeleting] = useState<Node | null>(null);
   const load = async (silent = false) => {
-    if (!silent) {
+    const cached = !!readCache("nodes:list");
+    if (!silent && !cached) {
       setLoading(true);
       setLoadError("");
     }
     try {
-      setNodes(await api.nodes());
+      const next = await api.nodes();
+      setNodes(next);
+      writeCache("nodes:list", next);
     } catch (reason) {
-      if (!silent) setLoadError(messageFor(reason, "无法加载节点"));
+      if (!silent && !cached) setLoadError(messageFor(reason, "无法加载节点"));
     } finally {
-      if (!silent) setLoading(false);
+      if (!silent && !cached) setLoading(false);
     }
   };
   useEffect(() => {
@@ -1257,12 +1245,13 @@ function NodeDetailPage({
   nodeId,
   tab,
 }: PageProps & { nodeId: string; tab: NodeTab }) {
-  const [node, setNode] = useState<Node | null>(null);
-  const [services, setServices] = useState<Service[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [node, setNode] = useState<Node | null>(() => (readCache<Node[]>("nodes:list") ?? []).find((item) => item.id === nodeId) ?? null);
+  const [services, setServices] = useState<Service[]>(() => readCache<Service[]>(`node:${nodeId}:services`) ?? []);
+  const [loading, setLoading] = useState(() => !readCache<Node[]>("nodes:list"));
   const [loadError, setLoadError] = useState("");
   const load = async (silent = false) => {
-    if (!silent) {
+    const cached = !!(readCache<Node[]>("nodes:list") || readCache(`node:${nodeId}:services`));
+    if (!silent && !cached) {
       setLoading(true);
       setLoadError("");
     }
@@ -1271,12 +1260,14 @@ function NodeDetailPage({
         api.nodes(),
         api.services(nodeId),
       ]);
+      writeCache("nodes:list", nodes);
+      writeCache(`node:${nodeId}:services`, nextServices);
       setNode(nodes.find((item) => item.id === nodeId) ?? null);
       setServices(nextServices);
     } catch (reason) {
-      if (!silent) setLoadError(messageFor(reason, "无法加载节点详情"));
+      if (!silent && !cached) setLoadError(messageFor(reason, "无法加载节点详情"));
     } finally {
-      if (!silent) setLoading(false);
+      if (!silent && !cached) setLoading(false);
     }
   };
   useEffect(() => {
@@ -2038,6 +2029,14 @@ function ServiceCard({
   useEffect(() => {
     void api.endpoint(nodeId, service.id).then((value) => setEndpoint(value ?? null), () => undefined);
   }, [nodeId, service.id]);
+  // A failing service auto-requests one log collection so the failure is never silent; one shot per error message.
+  const lastAutoCollect = useRef<string | null>(null);
+  useEffect(() => {
+    const error = service.runtime?.errorMessage;
+    if (!error || lastAutoCollect.current === error) return;
+    lastAutoCollect.current = error;
+    void api.collectLogs(nodeId, service.id).catch(() => undefined);
+  }, [service.runtime?.errorMessage, nodeId, service.id]);
   const updateBackend = async () => {
     if (
       !service.latestBackendVersion ||
@@ -2186,6 +2185,13 @@ function ServiceLogPanel({
   useEffect(() => {
     setRecords(null);
     void load();
+  }, [nodeId, service.id]);
+  // Auto-collect on entry: a fresh log snapshot when the panel opens, so problems surface without a click.
+  const autoCollected = useRef(false);
+  useEffect(() => {
+    if (autoCollected.current) return;
+    autoCollected.current = true;
+    void api.collectLogs(nodeId, service.id).then(() => void load(), () => undefined);
   }, [nodeId, service.id]);
   // While the Agent has a collection in flight, poll until it reports back on its next sync.
   useEffect(() => {
@@ -2685,19 +2691,20 @@ function ServiceEditor({
 }
 
 function UsersPage({ api, setError }: PageProps) {
-  const [users, setUsers] = useState<User[]>([]);
-  const [groups, setGroups] = useState<UserGroup[]>([]);
+  const [users, setUsers] = useState<User[]>(() => readCache<User[]>("users:list") ?? []);
+  const [groups, setGroups] = useState<UserGroup[]>(() => readCache<UserGroup[]>("users:groups") ?? []);
   const [groupEditor, setGroupEditor] = useState<{ group: UserGroup | null; name: string; autoInclude: boolean; serviceIds: string[] } | null>(null);
-  const [services, setServices] = useState<ServiceRef[]>([]);
-  const [usage, setUsage] = useState<Usage[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [services, setServices] = useState<ServiceRef[]>(() => readCache<ServiceRef[]>("users:services") ?? []);
+  const [usage, setUsage] = useState<Usage[]>(() => readCache<Usage[]>("users:usage") ?? []);
+  const [loading, setLoading] = useState(() => !readCache("users:list"));
   const [loadError, setLoadError] = useState("");
   const [editor, setEditor] = useState<{
     user: User | null;
     form: UserForm;
   } | null>(null);
   const load = async (silent = false) => {
-    if (!silent) {
+    const cached = !!readCache("users:list");
+    if (!silent && !cached) {
       setLoading(true);
       setLoadError("");
     }
@@ -2708,7 +2715,6 @@ function UsersPage({ api, setError }: PageProps) {
         api.usage(),
         api.groups(),
       ]);
-      setGroups(nextGroups);
       const nested = await Promise.all(
         nodes.map(async (node) =>
           (await api.services(node.id)).map((service) => ({
@@ -2719,17 +2725,23 @@ function UsersPage({ api, setError }: PageProps) {
         ),
       );
       setUsers(nextUsers);
+      setGroups(nextGroups);
       setServices(nested.flat());
       setUsage(nextUsage);
+      writeCache("users:list", nextUsers);
+      writeCache("users:groups", nextGroups);
+      writeCache("users:services", nested.flat());
+      writeCache("users:usage", nextUsage);
     } catch (reason) {
-      if (!silent) setLoadError(messageFor(reason, "无法加载用户"));
+      if (!silent && !cached) setLoadError(messageFor(reason, "无法加载用户"));
     } finally {
-      if (!silent) setLoading(false);
+      if (!silent && !cached) setLoading(false);
     }
   };
   useEffect(() => {
     void load();
   }, []);
+  useAutoRefresh(() => load(true));
   const save = async (event: Event) => {
     event.preventDefault();
     if (!editor) return;

@@ -4,17 +4,21 @@ import { Eye, EyeOff } from 'lucide-preact'
 import type { ApiClient } from './api'
 import type { Usage, User } from './domain'
 import { PasskeyPanel } from './passkey'
+import { useAutoRefresh, readCache, writeCache } from './hooks'
 import { copyText, Empty, ErrorState, formatBytes, Loading, messageFor, Page, Stat } from './ui'
 
 export function SubscriptionPage({ api, setError }: { api: ApiClient; setError: (value: string) => void }) {
-  const [me, setMe] = useState<User | null>(null)
-  const [usage, setUsage] = useState<Usage[]>([])
-  const [loading, setLoading] = useState(true)
+  const [me, setMe] = useState<User | null>(() => readCache<User>('subscription:me') ?? null)
+  const [usage, setUsage] = useState<Usage[]>(() => readCache<Usage[]>('subscription:usage') ?? [])
+  const [loading, setLoading] = useState(() => !readCache('subscription:me'))
   const [loadError, setLoadError] = useState('')
 
-  const load = async () => {
-    setLoading(true)
-    setLoadError('')
+  const load = async (silent = false) => {
+    const cached = !!readCache('subscription:me')
+    if (!silent && !cached) {
+      setLoading(true)
+      setLoadError('')
+    }
     try {
       const [user, rows] = await Promise.all([
         api.request<User>('/api/user/v1/me'),
@@ -22,14 +26,17 @@ export function SubscriptionPage({ api, setError }: { api: ApiClient; setError: 
       ])
       setMe(user)
       setUsage(rows)
+      writeCache('subscription:me', user)
+      writeCache('subscription:usage', rows)
     } catch (reason) {
-      setLoadError(messageFor(reason, '无法加载订阅账户'))
+      if (!silent && !cached) setLoadError(messageFor(reason, '无法加载订阅账户'))
     } finally {
-      setLoading(false)
+      if (!silent && !cached) setLoading(false)
     }
   }
 
   useEffect(() => { void load() }, [])
+  useAutoRefresh(() => load(true))
 
   const total = usage.reduce((sum, row) => sum + row.uploadBytes + row.downloadBytes, 0)
   const remaining = me?.trafficLimitBytes == null ? null : Math.max(0, me.trafficLimitBytes - total)

@@ -341,7 +341,8 @@ public sealed class SyncWorker(
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
                                                    or InvalidDataException or JsonException)
             {
-                return Failed(command.CommandId, startedAt, "log_collection_failed", "Service logs could not be collected.");
+                return Failed(command.CommandId, startedAt, "log_collection_failed",
+                    $"Service logs could not be collected: {exception.GetType().Name}: {exception.Message}");
             }
         }
 
@@ -365,12 +366,14 @@ public sealed class SyncWorker(
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
                                               or InvalidOperationException)
         {
-            return Failed(command.CommandId, startedAt, "health_check_failed", "Agent metrics could not be collected.");
+            return Failed(command.CommandId, startedAt, "health_check_failed",
+                $"Agent metrics could not be collected: {exception.GetType().Name}: {exception.Message}");
         }
     }
 
     private AgentCommandResult Failed(Guid commandId, DateTimeOffset startedAt, string code, string message) =>
-        new(commandId, AgentCommandStatus.Failed, startedAt, timeProvider.GetUtcNow(), code, message, null);
+        new(commandId, AgentCommandStatus.Failed, startedAt, timeProvider.GetUtcNow(), code,
+            message.Length > 1000 ? message[..1000] + "…" : message, null);
 
     private static bool IsTransient(Exception exception) => exception is HttpRequestException or TaskCanceledException;
     private sealed class AgentCredentialException : Exception;
