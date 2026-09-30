@@ -15,6 +15,44 @@ namespace HyPanel.Server.Tests.Persistence;
 public sealed class SqliteServerRepositoryTests
 {
     [TestMethod]
+    public async Task EgressLifecycle_RequiresAgentAckAndProtectsReferencedExit()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var source = Guid.NewGuid(); var exit = Guid.NewGuid();
+        var sourceAgent = await CreateAgentAsync(fixture, source, "source-token", "source-secret");
+        var exitAgent = await CreateAgentAsync(fixture, exit, "exit-token", "exit-secret");
+        await fixture.Repository.TryUpdateAgentReportAsync(sourceAgent, "1.0", "linux-x64", 0, null, CancellationToken.None);
+        await fixture.Repository.TryUpdateAgentReportAsync(exitAgent, "1.0", "linux-x64", 0, null, CancellationToken.None);
+        Assert.IsTrue(await fixture.Repository.SetEgressEnabledAsync(exit, true, CancellationToken.None));
+        Assert.IsFalse((await fixture.Repository.GetEgressNodesAsync(CancellationToken.None)).Single(n => n.Id == exit).Ready);
+        // An acknowledgement for a different backend cannot make this exit ready.
+        await fixture.Repository.RecordEgressReportAsync(exit,
+            new(true, true, null, [EgressTransports.WireGuard], EgressTransports.WireGuard), CancellationToken.None);
+        Assert.IsFalse((await fixture.Repository.GetEgressNodesAsync(CancellationToken.None)).Single(n => n.Id == exit).Ready);
+        await fixture.Repository.RecordEgressReportAsync(exit, new(true, true, null), CancellationToken.None);
+        var readyExit = (await fixture.Repository.GetEgressNodesAsync(CancellationToken.None)).Single(n => n.Id == exit);
+        Assert.IsTrue(readyExit.Ready);
+        Assert.AreEqual(EgressTransports.Gre, readyExit.Transport);
+        CollectionAssert.AreEqual(new[] { EgressTransports.Gre }, readyExit.SupportedTransports.ToArray());
+        var service = CreateService(source, Guid.NewGuid(), "egress") with { ConfigJson = $"{{\"exitNodeId\":\"{exit}\"}}" };
+        await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
+        var a = await fixture.Repository.GetEgressNetworkAsync(source, CancellationToken.None);
+        var b = await fixture.Repository.GetEgressNetworkAsync(exit, CancellationToken.None);
+        Assert.IsFalse(a.Tunnels.Single().IsExit); Assert.IsTrue(b.Tunnels.Single().IsExit);
+        Assert.AreEqual(a.Tunnels.Single().Slot, b.Tunnels.Single().Slot);
+        Assert.IsFalse(await fixture.Repository.SetEgressEnabledAsync(exit, false, CancellationToken.None));
+        await Assert.ThrowsExactlyAsync<SqliteException>(() => fixture.Repository.DeleteNodeAsync(exit, CancellationToken.None));
+        fixture.Time.Advance(TimeSpan.FromSeconds(31));
+        Assert.IsFalse((await fixture.Repository.GetEgressNodesAsync(CancellationToken.None)).Single(n => n.Id == exit).Ready);
+        await fixture.Repository.UpdateServiceAsync(service with { ConfigJson = "{}" }, CancellationToken.None);
+        Assert.AreEqual(0, (await fixture.Repository.GetEgressNetworkAsync(exit, CancellationToken.None)).Tunnels.Count);
+        Assert.IsTrue(await fixture.Repository.SetEgressEnabledAsync(exit, false, CancellationToken.None));
+        // A stale acknowledgement of the old enabled state cannot make a disabled node ready again.
+        await fixture.Repository.RecordEgressReportAsync(exit, new(true, true, null), CancellationToken.None);
+        Assert.IsFalse((await fixture.Repository.GetEgressNodesAsync(CancellationToken.None)).Single(n => n.Id == exit).Ready);
+    }
+
+    [TestMethod]
     public async Task MigrateAsync_WhenRunTwice_AppliesEachMigrationOnceAndAddsCommandExpiryColumn()
     {
         await using var fixture = await TestDatabase.CreateAsync();
@@ -35,7 +73,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L), (22L, 1L), (23L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L), (22L, 1L), (23L, 1L), (24L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();

@@ -33,6 +33,25 @@ public sealed class ReconciliationInfrastructureTests
     }
 
     [TestMethod]
+    public async Task ExitFailure_StopsPreviousLocalServiceAndPersistsExitIntent()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        await using var fixture = await ReconcilerFixture.CreateAsync(dataDirectory, new FakeProvider());
+        var initial = Service("exit-test", "tcp");
+        Assert.IsTrue((await fixture.Reconciler.ApplyAsync(Desired(1, [initial]), fixture.Credentials, CancellationToken.None)).Succeeded);
+        var requested = initial with { EgressRoute = new ServiceEgressRoute(1) };
+        var result = await fixture.Reconciler.ApplyAsync(Desired(2, [requested]), fixture.Credentials, CancellationToken.None);
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreNotEqual(ServiceRuntimeStatus.Running, fixture.Supervisor.GetStatus(initial.ServiceId).Status);
+        await fixture.Reconciler.RefreshRuntimeStatesAsync(CancellationToken.None);
+        Assert.AreNotEqual(ServiceRuntimeStatus.Running, fixture.Supervisor.GetStatus(initial.ServiceId).Status);
+        var saved = await fixture.StateStore.LoadAsync(CancellationToken.None);
+        Assert.AreEqual(new ServiceEgressRoute(1), saved.DesiredState!.Services.Single().EgressRoute);
+        await fixture.Reconciler.RestoreAsync(fixture.Credentials, CancellationToken.None);
+        Assert.AreNotEqual(ServiceRuntimeStatus.Running, fixture.Supervisor.GetStatus(initial.ServiceId).Status);
+    }
+
+    [TestMethod]
     public void BackendProviderRegistry_DuplicateBackendType_Throws()
     {
         var exception = Assert.ThrowsExactly<InvalidOperationException>(() =>

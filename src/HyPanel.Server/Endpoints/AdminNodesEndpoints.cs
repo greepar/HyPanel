@@ -11,10 +11,53 @@ internal static class AdminNodesEndpoints
     public static void Map(IEndpointRouteBuilder endpoints)
     {
         endpoints.MapPost("/api/admin/v1/nodes", CreateAsync);
+        endpoints.MapGet("/api/admin/v1/egress-nodes", ListEgressAsync);
+        endpoints.MapGet("/api/admin/v1/egress-backends", ListEgressBackendsAsync);
+        endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/egress", SetEgressAsync);
         endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/agent-update-policy", SetUpdatePolicyAsync);
         endpoints.MapPost("/api/admin/v1/nodes/{nodeId:guid}/agent-update", RequestUpdateAsync);
         endpoints.MapPost("/api/admin/v1/nodes/agent-update", RequestBatchUpdateAsync);
         endpoints.MapDelete("/api/admin/v1/nodes/{nodeId:guid}", DeleteAsync);
+    }
+
+    private static IResult EgressError(int status, string message) =>
+        Results.Json(new EgressErrorResponse(message), ServerJsonSerializerContext.Default.EgressErrorResponse,
+            statusCode: status);
+
+    private static async Task<IResult> ListEgressBackendsAsync(HttpRequest request, AdminAuthorization authorization,
+        CancellationToken ct)
+    {
+        var access = await authorization.AuthorizeAsync(request, ct);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        return Results.Json(HyPanel.Shared.Contracts.EgressTransports.Available.ToArray(),
+            ServerJsonSerializerContext.Default.EgressTransportDefinitionArray);
+    }
+
+    private static async Task<IResult> ListEgressAsync(HttpRequest request, AdminAuthorization authorization,
+        SqliteServerRepository repository, CancellationToken ct)
+    {
+        var access = await authorization.AuthorizeAsync(request, ct);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        return Results.Json((await repository.GetEgressNodesAsync(ct)).ToArray(),
+            ServerJsonSerializerContext.Default.EgressNodeRecordArray);
+    }
+
+    private static async Task<IResult> SetEgressAsync(Guid nodeId, SetEgressRequest body, HttpRequest request,
+        AdminAuthorization authorization, SqliteServerRepository repository, CancellationToken ct)
+    {
+        var access = await authorization.AuthorizeAsync(request, ct);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        if (!HyPanel.Shared.Contracts.EgressTransports.Available.Any(b => b.Id == body.Transport))
+            return EgressError(400, "该出口后端尚未实现。");
+        var node = (await repository.GetNodeObservationsAsync(ct)).FirstOrDefault(n => n.Id == nodeId);
+        if (node is null) return Results.NotFound();
+        if (body.Enabled && !(await repository.GetEgressNodesAsync(ct)).Any(n => n.Id == nodeId && n.Supported && n.SupportedTransports.Contains(body.Transport)))
+            return EgressError(400, "请先更新该节点的 Agent，等待它重新上报后再启用出口。");
+        if (body.Enabled && (node.ReportedPlatform?.StartsWith("linux-", StringComparison.Ordinal) != true
+            || node.PublicIpv4 is null))
+            return EgressError(400, "出口转发需要已接入的 Linux 节点和公网 IPv4。");
+        return await repository.SetEgressEnabledAsync(nodeId, body.Enabled, ct, body.Transport)
+            ? Results.NoContent() : EgressError(409, "该出口仍被服务使用，请先切换这些服务的出口。");
     }
 
     private static async Task<IResult> DeleteAsync(Guid nodeId, HttpRequest httpRequest,
@@ -22,6 +65,8 @@ internal static class AdminNodesEndpoints
     {
         var access = await authorization.AuthorizeAsync(httpRequest, cancellationToken);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        if ((await repository.GetEgressNodesAsync(cancellationToken)).Any(n => n.Id == nodeId && n.UsedBy > 0))
+            return EgressError(409, "该节点仍被服务用作出口，请先切换这些服务的出口。");
         return await repository.DeleteNodeAsync(nodeId, cancellationToken) ? Results.NoContent() : Results.NotFound();
     }
 

@@ -2,6 +2,10 @@ namespace HyPanel.Server.Endpoints;
 
 using HyPanel.Shared.Contracts;
 
+internal sealed record EgressErrorResponse(string Error);
+
+internal sealed record SetEgressRequest(bool Enabled, string Transport = EgressTransports.Gre);
+
 internal sealed record CreateNodeRequest(string DisplayName);
 
 internal sealed record CreateNodeResponse(Guid Id, string DisplayName, DateTimeOffset CreatedAtUtc);

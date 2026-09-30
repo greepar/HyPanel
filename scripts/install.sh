@@ -69,6 +69,21 @@ uninstall_agent() {
     esac
     # Port-hopping redirects are kept in a HyPanel-owned nftables table.
     command -v nft >/dev/null 2>&1 && nft delete table inet hypanel_hop >/dev/null 2>&1 || true
+    command -v nft >/dev/null 2>&1 && nft delete table inet hypanel_egress >/dev/null 2>&1 || true
+    # Reserved HyPanel GRE interfaces and source routing rules, including orphan rules.
+    if command -v ip >/dev/null 2>&1; then
+        for path in /sys/class/net/hpe*; do
+            [ -e "$path" ] || continue
+            name=${path##*/}; slot=${name#hpe}
+            case "$slot" in ''|*[!0-9]*) continue ;; esac
+            [ "$slot" -ge 1 ] && [ "$slot" -le 16000 ] || continue
+            ip link delete "$name" >/dev/null 2>&1 || true
+        done
+        for slot in $(ip -4 rule show | awk '$1 ~ /^[0-9]+:$/ {p=$1+0; if(p>10000 && p<=26000) for(i=1;i<=NF;i++) if($i=="lookup" && $(i+1)==p+90000) print p-10000}'); do
+            ip rule del pref "$((10000 + slot))" >/dev/null 2>&1 || true
+            ip route flush table "$((100000 + slot))" >/dev/null 2>&1 || true
+        done
+    fi
     # Backend processes (xray, hysteria, ...) run from the data directory; make sure none survive.
     if command -v pkill >/dev/null 2>&1; then
         pkill -f "^$install_root/hypanel-agent" >/dev/null 2>&1 || true
@@ -223,20 +238,20 @@ fi
 
 # Optional host preparation (Linux only).  Failures are reported but never abort the Agent installation.
 install_nftables() {
-    if command -v nft >/dev/null 2>&1; then note "nftables already installed"; return 0; fi
-    note "installing nftables"
+    if command -v nft >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 && command -v ping >/dev/null 2>&1; then note "nftables already installed"; return 0; fi
+    note "installing nftables and GRE network tools"
     if command -v apt-get >/dev/null 2>&1; then
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables >/dev/null 2>&1 ||
-            { apt-get update -q >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables >/dev/null 2>&1; } || true
-    elif command -v dnf >/dev/null 2>&1; then dnf install -y -q nftables >/dev/null 2>&1 || true
-    elif command -v yum >/dev/null 2>&1; then yum install -y -q nftables >/dev/null 2>&1 || true
-    elif command -v apk >/dev/null 2>&1; then apk add --no-cache nftables >/dev/null 2>&1 || true
-    elif command -v pacman >/dev/null 2>&1; then pacman -S --noconfirm --needed nftables >/dev/null 2>&1 || true
-    elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install nftables >/dev/null 2>&1 || true
-    elif command -v opkg >/dev/null 2>&1; then { opkg update >/dev/null 2>&1; opkg install nftables >/dev/null 2>&1; } || true
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables iproute2 iputils-ping >/dev/null 2>&1 ||
+            { apt-get update -q >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables iproute2 iputils-ping >/dev/null 2>&1; } || true
+    elif command -v dnf >/dev/null 2>&1; then dnf install -y -q nftables iproute iputils >/dev/null 2>&1 || true
+    elif command -v yum >/dev/null 2>&1; then yum install -y -q nftables iproute iputils >/dev/null 2>&1 || true
+    elif command -v apk >/dev/null 2>&1; then apk add --no-cache nftables iproute2 iputils >/dev/null 2>&1 || true
+    elif command -v pacman >/dev/null 2>&1; then pacman -S --noconfirm --needed nftables iproute2 iputils >/dev/null 2>&1 || true
+    elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install nftables iproute2 iputils >/dev/null 2>&1 || true
+    elif command -v opkg >/dev/null 2>&1; then { opkg update >/dev/null 2>&1; opkg install nftables ip-full iputils-ping >/dev/null 2>&1; } || true
     else note "no supported package manager found; install nftables manually for port hopping"; return 0
     fi
-    if command -v nft >/dev/null 2>&1; then note "nftables installed"
+    if command -v nft >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 && command -v ping >/dev/null 2>&1; then note "nftables installed"
     else note "could not install nftables; port hopping stays unavailable until it is installed"
     fi
 }
@@ -619,9 +634,9 @@ RestartSec=10
 KillSignal=SIGTERM
 KillMode=control-group
 TimeoutStopSec=30
-# NET_ADMIN lets the Agent manage its own nftables table for Hysteria2 port hopping.
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
-AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
+# NET_ADMIN lets the Agent manage port hopping and GRE exit routes.
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN CAP_NET_RAW
 NoNewPrivileges=true
 PrivateTmp=true
 UMask=0077
@@ -645,7 +660,7 @@ respawn_max=0
 directory="$DATA_DIR"
 pidfile=/run/hypanel-agent.pid
 command_user="$AGENT_USER:$AGENT_GROUP"
-capabilities="^cap_net_bind_service,^cap_net_admin"
+capabilities="^cap_net_bind_service,^cap_net_admin,^cap_net_raw"
 output_log=/var/log/hypanel-agent.log
 error_log=/var/log/hypanel-agent.log
 depend() { need net; after firewall; }

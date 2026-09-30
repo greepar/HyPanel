@@ -27,6 +27,7 @@ using HyPanel.Shared.Contracts;
 [JsonSerializable(typeof(UserUsageDelta))]
 [JsonSerializable(typeof(UserUsageDelta[]))]
 [JsonSerializable(typeof(Guid[]))]
+[JsonSerializable(typeof(string[]))]
 [JsonSerializable(typeof(AgentCommand))]
 [JsonSerializable(typeof(AgentCommand[]))]
 [JsonSerializable(typeof(AgentCommandResult))]

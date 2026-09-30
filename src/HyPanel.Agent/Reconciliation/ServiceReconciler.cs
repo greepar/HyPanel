@@ -17,7 +17,8 @@ public sealed class ServiceReconciler(
     AgentStateStore stateStore,
     AgentUsageStateStore usageStateStore,
     TimeProvider timeProvider,
-    ILogger<ServiceReconciler> logger)
+    ILogger<ServiceReconciler> logger,
+    EgressNetworkManager? egressNetwork = null)
 {
     private static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan StartHealthDelay = TimeSpan.FromMilliseconds(750);
@@ -28,6 +29,10 @@ public sealed class ServiceReconciler(
     // Panel-assigned control port each service's local port was chosen for (see WithLocalControlPortAsync).
     private readonly ConcurrentDictionary<Guid, int> assignedControlPorts = new();
     private readonly SemaphoreSlim applyGate = new(1, 1);
+
+    private readonly ConcurrentDictionary<Guid, string> blockedEgress = new();
+    public EgressNetworkReport? EgressReport => egressNetwork?.Report;
+    public Task CleanupEgressAsync(CancellationToken ct) => egressNetwork?.ApplyAsync(new(false, []), ct) ?? Task.CompletedTask;
 
     public IReadOnlyList<ServiceRuntimeState> GetRuntimeStates() =>
         runtimeStates.Values.OrderBy(state => state.ServiceId).ToArray();
@@ -62,6 +67,42 @@ public sealed class ServiceReconciler(
             }
 
             var previous = await stateStore.LoadAsync(cancellationToken);
+            if (desiredState.Services.Any(s => s.EgressRoute is not null &&
+                    previous.DesiredState?.Services.FirstOrDefault(p => p.ServiceId == s.ServiceId)?.EgressRoute != s.EgressRoute))
+                // Persist exit intent before changing the running service, so a crash cannot restore a local exit.
+                await stateStore.SaveAsync(new AgentLocalState(previous.AppliedRevision, WithoutTlsMaterial(desiredState)), cancellationToken);
+            // Stop old services before changing or removing their source route, including a switch from local exit.
+            foreach (var service in desiredState.Services)
+            {
+                var old = previous.DesiredState?.Services.FirstOrDefault(s => s.ServiceId == service.ServiceId);
+                if (old?.EgressRoute != service.EgressRoute)
+                    await processSupervisor.StopAsync(service.ServiceId, StopTimeout, cancellationToken);
+            }
+            foreach (var removed in previous.DesiredState?.Services.Where(s =>
+                         !desiredState.Services.Any(d => d.ServiceId == s.ServiceId)) ?? [])
+                await processSupervisor.StopAsync(removed.ServiceId, StopTimeout, cancellationToken);
+            if (egressNetwork is not null) await egressNetwork.ApplyAsync(desiredState.EgressNetwork, cancellationToken);
+            blockedEgress.Clear();
+            foreach (var service in desiredState.Services.Where(s => s.EgressRoute is not null && s.Enabled))
+            {
+                var error = egressNetwork is null ? "出口转发管理器不可用。"
+                    : egressNetwork.Failures.GetValueOrDefault(service.ServiceId);
+                if (error is null && preflight.Failures.Any(f => f.ServiceId == service.ServiceId))
+                    error = "出口服务配置尚未就绪。";
+                if (error is null && !(desiredState.EgressNetwork?.Tunnels.Any(t =>
+                        !t.IsExit && t.ServiceId == service.ServiceId && t.Slot == service.EgressRoute!.Slot) ?? false))
+                    error = "出口隧道配置缺失。";
+                if (error is not null)
+                {
+                    blockedEgress[service.ServiceId] = error;
+                    await processSupervisor.StopAsync(service.ServiceId, StopTimeout, cancellationToken);
+                    preflight = preflight with
+                    {
+                        Plans = preflight.Plans.Where(p => p.Desired.ServiceId != service.ServiceId).ToArray(),
+                        Failures = preflight.Failures.Append(new ServiceFailure(service.ServiceId, "egress_unavailable")).ToArray()
+                    };
+                }
+            }
             var failed = preflight.Failures.Count > 0;
             var failedServiceIds = preflight.Failures.Select(failure => failure.ServiceId).ToHashSet();
             var firstErrorCode = preflight.Failures.FirstOrDefault()?.ErrorCode;
@@ -113,7 +154,7 @@ public sealed class ServiceReconciler(
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                     {
-                        if (changed.Count > 0) await RollbackAsync(changed, CancellationToken.None);
+                        if (changed.Count > 0) await RollbackSafelyAsync(changed, desiredState, CancellationToken.None);
                         throw;
                     }
                     catch (Exception exception) when (IsExpectedFailure(exception))
@@ -125,6 +166,14 @@ public sealed class ServiceReconciler(
                         if (exception is not BackendBackoffException)
                             RegisterRecoveryFailure(plan.Desired.ServiceId, RecoveryKey(plan));
                         LogFailureOnce(plan.Desired.ServiceId, ErrorCode(exception));
+                        if (plan.Desired.EgressRoute is not null)
+                        {
+                            // Never restart an older direct-outbound config when an exit was requested.
+                            await processSupervisor.StopAsync(plan.Desired.ServiceId, StopTimeout, cancellationToken);
+                            blockedEgress[plan.Desired.ServiceId] = "出口服务配置失败，已停止出网。";
+                            SetFailed(plan.Desired.ServiceId, "egress_unavailable");
+                            continue;
+                        }
                         await RollbackAsync(changed, cancellationToken);
                         if (exception is BackendBackoffException)
                             continue;
@@ -170,7 +219,7 @@ public sealed class ServiceReconciler(
             {
                 var code = ErrorCode(exception);
                 logger.LogWarning("Desired state persistence failed with error code {ErrorCode}.", code);
-                if (appliedChanges.Count > 0) await RollbackAsync(appliedChanges, CancellationToken.None);
+                if (appliedChanges.Count > 0) await RollbackSafelyAsync(appliedChanges, desiredState, CancellationToken.None);
                 SetFailed(failedService, code);
                 return new ApplyResult(false, code, SafeMessage(code));
             }
@@ -194,6 +243,12 @@ public sealed class ServiceReconciler(
     {
         foreach (var item in runtimeStates.ToArray())
         {
+            if (blockedEgress.ContainsKey(item.Key))
+            {
+                await processSupervisor.StopAsync(item.Key, StopTimeout, cancellationToken);
+                SetFailed(item.Key, "egress_unavailable");
+                continue;
+            }
             try
             {
                 var metadata = await instanceStore.TryLoadAsync(item.Key, cancellationToken);
@@ -267,6 +322,18 @@ public sealed class ServiceReconciler(
                 SetFailed(item.Key, "runtime_refresh_failed");
             }
         }
+    }
+
+    private async Task RollbackSafelyAsync(IReadOnlyList<Guid> ids, NodeDesiredState desired, CancellationToken ct)
+    {
+        var exitIds = desired.Services.Where(s => s.EgressRoute is not null).Select(s => s.ServiceId).ToHashSet();
+        foreach (var id in ids.Where(exitIds.Contains))
+        {
+            blockedEgress[id] = "出口服务配置未完成，已停止出网。";
+            await processSupervisor.StopAsync(id, StopTimeout, ct);
+            SetFailed(id, "egress_unavailable");
+        }
+        await RollbackAsync(ids.Where(id => !exitIds.Contains(id)).ToArray(), ct);
     }
 
     private async Task ApplyServiceAsync(ServicePlan plan, List<Guid> changed, NodeDesiredState? previousState,
@@ -570,7 +637,9 @@ public sealed class ServiceReconciler(
         foreach (var id in ids)
         {
             var metadata = await instanceStore.TryLoadAsync(id, cancellationToken);
-            if (metadata is not null) services.Add(metadata.DesiredState);
+            var requested = attempted.Services.FirstOrDefault(s => s.ServiceId == id);
+            if (requested?.EgressRoute is not null && failedServiceIds.Contains(id)) services.Add(requested);
+            else if (metadata is not null) services.Add(metadata.DesiredState);
         }
 
         var previousArtifacts = previous?.BackendArtifacts ?? [];
@@ -584,7 +653,7 @@ public sealed class ServiceReconciler(
             .Cast<BackendArtifact>()
             .DistinctBy(artifact => (artifact.BackendType, artifact.Version, artifact.Rid))
             .ToArray();
-        return new NodeDesiredState(previous?.Revision ?? 0, services, artifacts);
+        return new NodeDesiredState(previous?.Revision ?? 0, services, artifacts, attempted.EgressNetwork);
     }
 
     private static NodeDesiredState WithoutTlsMaterial(NodeDesiredState state) => state with
@@ -700,6 +769,7 @@ public sealed class ServiceReconciler(
 
     private static string SafeMessage(string code) => code switch
     {
+        "egress_unavailable" => "出口网络不可用，服务已停止出网；请检查出口节点和 GRE 防火墙。",
         "invalid_desired_state" => "Desired state is invalid.",
         "invalid_service" => "A service definition is invalid.",
         "artifact_unavailable" => "A required backend artifact is unavailable.",

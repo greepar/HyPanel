@@ -17,6 +17,24 @@ public sealed class Hysteria2ProviderTests
     private readonly Hysteria2Provider provider = new();
 
     [TestMethod]
+    public async Task ExitRoute_BindsOnlyOutboundAndRejectsMissingRoute()
+    {
+        var exit = Guid.NewGuid();
+        var config = CreateConfigJson().TrimEnd('}') + $",\"exitNodeId\":\"{exit}\"}}";
+        var desired = CreateDesiredState(configJson: config);
+        Assert.IsFalse((await provider.ValidateAsync(desired, CancellationToken.None)).IsValid);
+        desired = desired with { EgressRoute = new ServiceEgressRoute(1) };
+        Assert.IsTrue((await provider.ValidateAsync(desired, CancellationToken.None)).IsValid);
+        var rendered = await provider.RenderConfigAsync(desired, CancellationToken.None);
+        var yaml = Encoding.UTF8.GetString(rendered.Content.Span);
+        StringAssert.Contains(yaml, "listen: \"203.0.113.10:443\"");
+        StringAssert.Contains(yaml, "mode: 4");
+        StringAssert.Contains(yaml, $"bindIPv4: \"{EgressAddressing.Source(1)}\"");
+        Assert.IsFalse(yaml.Contains("type: socks5"));
+        Assert.IsFalse((await provider.ValidateAsync(desired with { EgressRoute = new(0) }, CancellationToken.None)).IsValid);
+    }
+
+    [TestMethod]
     public async Task ValidateAsync_ValidConfig_ReturnsUdpPortOnly()
     {
         var result = await provider.ValidateAsync(CreateDesiredState(), CancellationToken.None);

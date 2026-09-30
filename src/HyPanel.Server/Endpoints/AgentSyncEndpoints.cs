@@ -51,6 +51,10 @@ internal static class AgentSyncEndpoints
             return Results.BadRequest();
         }
 
+        if (request.EgressNetwork?.Error is { Length: > 1024 }
+            || request.EgressNetwork?.SupportedTransports is { } supported
+                && (supported.Count > 16 || supported.Any(id => string.IsNullOrWhiteSpace(id) || id.Length > 64)))
+            return Results.BadRequest();
         var metricSnapshotJson = JsonSerializer.Serialize(request.Metrics, HyPanelJsonSerializerContext.Default.NodeMetrics);
         var publicIpv4 = request.PublicIpv4 ?? PublicIpv4From(httpRequest.HttpContext.Connection.RemoteIpAddress);
         if (!await repository.TryUpdateAgentSyncAsync(
@@ -69,6 +73,7 @@ internal static class AgentSyncEndpoints
             return Results.Unauthorized();
         }
 
+        await repository.RecordEgressReportAsync(agent.NodeId, request.EgressNetwork, cancellationToken);
         await repository.RecordAgentUpdateReportAsync(agent.AgentId, request.AgentUpdate, cancellationToken);
         await repository.RefreshCredentialEligibilityAsync(agent.AgentId, cancellationToken);
 
@@ -92,6 +97,7 @@ internal static class AgentSyncEndpoints
         }
 
         var update = await GetAgentUpdateAsync(agent.AgentId, request, repository, releaseCatalog, cancellationToken);
+        var network = await repository.GetEgressNetworkAsync(agent.NodeId, cancellationToken);
         NodeDesiredState? desiredState = null;
         var rid = request.Platform.Trim();
         var resolved = desired.Value.Services.Where(service => service.Enabled)
@@ -103,7 +109,7 @@ internal static class AgentSyncEndpoints
         foreach (var (service, artifact) in resolved)
             if (artifact is null) backendReleaseSync.RequestCache(service.BackendType, service.BackendVersion, rid);
         var artifacts = DistinctArtifacts(resolved.Select(item => item.Artifact));
-        if (request.AppliedRevision != desired.Value.Revision
+        if (network.Enabled || network.Tunnels.Count > 0 || request.AppliedRevision != desired.Value.Revision
             || request.AppliedBackendArtifacts is { } appliedArtifacts && !appliedArtifacts.SequenceEqual(artifacts))
         {
             var desiredServices = new List<ServiceDesiredState>(desired.Value.Services.Count);
@@ -133,9 +139,11 @@ internal static class AgentSyncEndpoints
                 }
                 desiredServices.Add(new ServiceDesiredState(service.Id, service.Name, service.BackendType,
                     service.BackendVersion, service.Enabled, service.ConfigSchemaVersion, service.ConfigJson, users,
-                    controlPorts.TryGetValue(service.Id, out var controlPort) ? controlPort : null, tls));
+                    controlPorts.TryGetValue(service.Id, out var controlPort) ? controlPort : null, tls,
+                    network.Tunnels.FirstOrDefault(t => !t.IsExit && t.ServiceId == service.Id) is { } tunnel
+                        ? new ServiceEgressRoute(tunnel.Slot) : null));
             }
-            desiredState = new NodeDesiredState(desired.Value.Revision, desiredServices, artifacts);
+            desiredState = new NodeDesiredState(desired.Value.Revision, desiredServices, artifacts, network);
         }
         var response = new AgentSyncResponse(
             desired.Value.Revision,

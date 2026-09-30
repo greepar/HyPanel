@@ -31,6 +31,26 @@ internal static class AdminServicesEndpoints
         endpoints.MapGet("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}/secrets", GetSecretsAsync);
     }
 
+    internal static async Task<bool> HasValidEgressAsync(Guid nodeId, string backend, string config,
+        SqliteServerRepository repository, CancellationToken ct, string? previousConfig = null)
+    {
+        using var json = JsonDocument.Parse(config);
+        if (!json.RootElement.TryGetProperty("exitNodeId", out var field) || field.ValueKind == JsonValueKind.Null)
+            return true;
+        if (backend != "hysteria2" || field.ValueKind != JsonValueKind.String
+            || !field.TryGetGuid(out var exit) || exit == Guid.Empty || exit == nodeId) return false;
+        var exits = await repository.GetEgressNodesAsync(ct);
+        var target = exits.FirstOrDefault(n => n.Id == exit);
+        // Preserve an existing selection while either node is offline; the Agent still fails closed.
+        if (previousConfig is not null && SqliteServerRepository.ExitNode(previousConfig) == exit)
+            return target is { Enabled: true };
+        var source = (await repository.GetNodeObservationsAsync(ct)).FirstOrDefault(n => n.Id == nodeId);
+        if (source?.ReportedPlatform?.StartsWith("linux-", StringComparison.Ordinal) != true
+            || source.PublicIpv4 is null) return false;
+        return target is { Enabled: true, Ready: true }
+            && exits.Any(n => n.Id == nodeId && n.Supported && n.SupportedTransports.Contains(target.Transport));
+    }
+
     private static async Task<IResult> ListAsync(Guid nodeId, HttpRequest request,
         AdminAuthorization authorization, SqliteServerRepository repository, BackendArtifactCatalog releaseCatalog,
         CancellationToken cancellationToken)
@@ -74,7 +94,8 @@ internal static class AdminServicesEndpoints
         if (!TryValidateCreate(request, out var name, out var backendType, out var version, out var configJson))
             return Results.BadRequest();
         if (!await HasValidCertificateAsync(backendType, configJson, repository, cancellationToken) ||
-            !HasValidPortHopping(backendType, configJson))
+            !HasValidPortHopping(backendType, configJson) ||
+            !await HasValidEgressAsync(nodeId, backendType, configJson, repository, cancellationToken))
             return Results.BadRequest();
         var now = timeProvider.GetUtcNow();
         var result = await repository.CreateServiceAsync(
@@ -102,7 +123,8 @@ internal static class AdminServicesEndpoints
         if (!TryValidateUpdate(request, out var name, out var version, out var configJson)) return Results.BadRequest();
         if (!TryMergeRedactedSecrets(existing.ConfigJson, configJson, out configJson)) return Results.BadRequest();
         if (!await HasValidCertificateAsync(existing.BackendType, configJson, repository, cancellationToken) ||
-            !HasValidPortHopping(existing.BackendType, configJson))
+            !HasValidPortHopping(existing.BackendType, configJson) ||
+            !await HasValidEgressAsync(nodeId, existing.BackendType, configJson, repository, cancellationToken, existing.ConfigJson))
             return Results.BadRequest();
         var now = timeProvider.GetUtcNow();
         var result = await repository.UpdateServiceAsync(

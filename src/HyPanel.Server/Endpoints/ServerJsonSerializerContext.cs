@@ -8,6 +8,10 @@ using System.Text.Json.Serialization;
 using HyPanel.Shared.Contracts;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(SetEgressRequest))]
+[JsonSerializable(typeof(EgressErrorResponse))]
+[JsonSerializable(typeof(EgressNodeRecord[]))]
+[JsonSerializable(typeof(EgressTransportDefinition[]))]
 [JsonSerializable(typeof(CreateNodeRequest))]
 [JsonSerializable(typeof(CreateNodeResponse))]
 [JsonSerializable(typeof(CreateEnrollmentTokenResponse))]

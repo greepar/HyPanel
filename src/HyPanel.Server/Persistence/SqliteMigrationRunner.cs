@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 23;
+    public const long CurrentSchemaVersion = 24;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -598,6 +598,25 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             insertMigration.Parameters.AddWithValue("@version", PanelUrlSchemaVersion);
             insertMigration.Parameters.AddWithValue("@at", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
             await insertMigration.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, 24, cancellationToken))
+        {
+            await ExecuteAsync(connection, transaction, """
+                CREATE TABLE node_egress (
+                    node_id TEXT PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
+                    enabled INTEGER NOT NULL DEFAULT 0,
+                    ready INTEGER NOT NULL DEFAULT 0,
+                    transport TEXT NOT NULL DEFAULT 'gre',
+                    supported_transports_json TEXT NULL,
+                    error TEXT NULL,
+                    observed_at_utc TEXT NULL);
+                CREATE TABLE service_egress (
+                    slot INTEGER PRIMARY KEY CHECK (slot BETWEEN 1 AND 16000),
+                    service_id TEXT NOT NULL UNIQUE REFERENCES service_instances(id) ON DELETE CASCADE,
+                    exit_node_id TEXT NOT NULL REFERENCES nodes(id));
+                INSERT INTO schema_migrations (version, applied_at_utc) VALUES (24, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                """, cancellationToken);
         }
 
         await transaction.CommitAsync(cancellationToken);

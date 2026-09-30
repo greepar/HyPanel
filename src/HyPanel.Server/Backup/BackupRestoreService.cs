@@ -397,6 +397,7 @@ internal sealed class BackupRestoreService
         if (version >= 14) requiredTables.Add("revoked_agents");
         if (version >= 17) requiredTables.AddRange(["user_groups", "user_group_services"]);
         if (version >= 21) requiredTables.Add("user_passkeys");
+        if (version >= 24) requiredTables.AddRange(["node_egress", "service_egress"]);
         foreach (var table in requiredTables)
             if (!await TableExistsAsync(connection, table, cancellationToken))
                 throw new BackupException("candidate_repository_invalid");

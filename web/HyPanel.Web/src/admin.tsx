@@ -1211,7 +1211,7 @@ function InstallModal({
           <label className="switch">
             <input type="checkbox" checked={options.nftables} onChange={(event) => toggle("nftables", event.currentTarget.checked)} />
             <span />
-            安装 nftables（Hysteria2 端口跳跃需要）
+            安装网络工具（端口跳跃和出口转发需要）
           </label>
           <label className="switch">
             <input type="checkbox" checked={options.tuneNetwork} onChange={(event) => toggle("tuneNetwork", event.currentTarget.checked)} />
@@ -1569,6 +1569,57 @@ function NodeLogs({
   );
 }
 
+function EgressSettings({ api, node, setError }: { api: ApiClient; node: Node; setError: (value: string) => void }) {
+  const [egress, setEgress] = useState<import('./domain').EgressNode | null>(null);
+  const [backends, setBackends] = useState<import('./domain').EgressTransportDefinition[]>([]);
+  const [transport, setTransport] = useState('gre');
+  useEffect(() => { void api.egressBackends().then(setBackends).catch(reason => setError(messageFor(reason, "无法加载出口后端"))); }, []);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => void api.egressNodes().then(list => {
+      if (!cancelled) {
+        const value = list.find(item => item.id === node.id) ?? null;
+        setEgress(value);
+        if (value?.enabled) setTransport(value.transport);
+      }
+    }).catch(reason => { if (!cancelled) setError(messageFor(reason, "无法读取出口状态")); });
+    load();
+    const timer = window.setInterval(load, 8000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [node.id]);
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      await api.setEgressEnabled(node.id, !egress?.enabled, transport);
+      const list = await api.egressNodes();
+      setEgress(list.find(item => item.id === node.id) ?? null);
+    } catch (reason) { setError(messageFor(reason, "无法配置出口转发")); }
+    finally { setBusy(false); }
+  };
+  const supported = node.platform?.startsWith('linux-') && !!node.publicIpv4 && !!egress?.supported && !!egress.supportedTransports?.includes(transport);
+  return <section className="card panel">
+    <SectionTitle title="出口转发" description="让其他节点上的 Hysteria2 使用这台服务器的出口 IP。" />
+    <dl className="facts-list">
+      <div><dt>状态</dt><dd>{!egress ? '读取中…' : !egress.enabled ? '未启用' : egress.error ? '配置失败' : egress.ready ? '已就绪' : node.online ? '等待 Agent 配置或上报' : '节点离线'}</dd></div>
+      <div><dt>出口 IP</dt><dd>{node.publicIpv4 || '未检测到 IPv4'}</dd></div>
+      <div><dt>使用此出口的服务</dt><dd>{egress?.usedBy ?? 0}</dd></div>
+    </dl>
+    {egress?.error && <p className="field-help">{egress.error}</p>}
+    {!supported && <p className="field-help">需要已更新 Agent 的 Linux 节点和公网 IPv4。</p>}
+    <label>出口后端
+      <select value={transport} disabled={busy || !!egress?.enabled} onChange={event => setTransport(event.currentTarget.value)}>
+        {backends.map(backend => <option key={backend.id} value={backend.id} disabled={!egress?.supportedTransports?.includes(backend.id)}>{backend.name} · {backend.encrypted ? '加密' : '不加密'}</option>)}
+      </select>
+    </label>
+    <p className="field-help">配置成功后，此节点会出现在服务的出口列表中。当前提供 IPv4 出口；后端类型由面板和两端 Agent 的能力共同决定。</p>
+    <button className="button button-secondary" type="button" disabled={busy || !egress || !supported || !node.online || (!!egress.enabled && egress.usedBy > 0)} onClick={() => void toggle()}>
+      {busy ? '提交中…' : egress?.enabled ? '停用出口转发' : '启用出口转发'}
+    </button>
+    {!!egress?.usedBy && <p className="field-help">先切换使用此出口的服务，才能停用或删除该出口。</p>}
+  </section>;
+}
+
 function NodeSettings({
   api,
   node,
@@ -1624,6 +1675,7 @@ function NodeSettings({
     node.agentUpdateStatus === "Failed";
   return (
     <div className="detail-grid">
+      <EgressSettings api={api} node={node} setError={setError} />
       <section className="card panel">
         <SectionTitle title="Agent 更新" description={agentUpdateLabel(node)} />
         <dl className="facts-list">
@@ -2211,6 +2263,16 @@ function ServiceEditor({
   const [definitions, setDefinitions] = useState<BackendDefinition[]>([]);
   const [form, setForm] = useState<ServiceForm | null>(null);
   const [certificates, setCertificates] = useState<Certificate[]>([]);
+  const [egressNodes, setEgressNodes] = useState<import('./domain').EgressNode[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => void api.egressNodes().then(list => {
+      if (!cancelled) setEgressNodes(list.filter(item => item.id !== nodeId));
+    }).catch(reason => { if (!cancelled) setError(messageFor(reason, "无法加载出口节点")); });
+    load();
+    const timer = window.setInterval(load, 8000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [nodeId]);
   const [busy, setBusy] = useState(false);
   const [generating, setGenerating] = useState(false);
   // New services are named "<node>-<protocol>" (made unique on the node) until the admin types a name.
@@ -2538,6 +2600,17 @@ function ServiceEditor({
             </div>
           )}
           <div className="form-grid">{protocolFields.map(renderField)}</div>
+          {form.backendType === "hysteria2" && <label>
+            出口节点
+            <select value={form.values.exitNodeId ?? ""} onChange={event => setForm({ ...form, values: { ...form.values, exitNodeId: event.currentTarget.value } })}>
+              <option value="">本机直连</option>
+              {form.values.exitNodeId && !egressNodes.some(item => item.id === form.values.exitNodeId) && <option value={form.values.exitNodeId} disabled>原出口不可用</option>}
+              {egressNodes.filter(item => (item.enabled && item.ready) || item.id === form.values.exitNodeId).map(item => <option key={item.id} value={item.id} disabled={!item.enabled || !item.ready}>
+                {item.displayName} · {item.publicIpv4 ?? '未知 IP'} · {item.transport}{!item.ready ? ' · 未就绪' : ''}
+              </option>)}
+            </select>
+            <span className="field-help">先在目标节点的“设置 → 出口转发”启用出口，配置成功后即可选择。出口断开时停止出网，不自动切回本机。</span>
+          </label>}
         </fieldset>
         <fieldset>
           <legend>连接地址（可选）</legend>

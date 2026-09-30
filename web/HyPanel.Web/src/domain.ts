@@ -152,5 +152,9 @@ export type BackendDefinition = {
   fields: BackendField[]
 }
 
+export type EgressNode = { id: string; displayName: string; publicIpv4: string | null; enabled: boolean; ready: boolean; error: string | null; usedBy: number; supported: boolean; transport: string; supportedTransports: string[] }
+
 export type ServiceForm = { backendType: string; name: string; version: string; values: Record<string, string> }
 export type ServicePayload = { name: string; backendType: string; backendVersion: string; configSchemaVersion: 1; configJson: string }
+
+export type EgressTransportDefinition = { id: string; name: string; encrypted: boolean; outerTransport: string; ipProtocol: number | null; mtu: number }

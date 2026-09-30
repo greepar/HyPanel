@@ -1340,6 +1340,7 @@ internal sealed partial class SqliteServerRepository(
                 return (null, 0);
             }
 
+            await UpdateServiceEgressAsync(connection, transaction, service, cancellationToken);
             var revision = await IncrementRevisionAsync(connection, transaction, nodeId, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return (service, revision);

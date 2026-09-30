@@ -5,6 +5,7 @@ using HyPanel.Agent.Backends.Hysteria2;
 using HyPanel.Agent.Backends.Infrastructure;
 using HyPanel.Agent.Backends.Xray;
 using HyPanel.Agent.Reconciliation;
+using HyPanel.Agent.Networking;
 using HyPanel.Agent.Updates;
 
 public static class Program
@@ -50,6 +51,9 @@ public static class Program
         builder.Services.AddSingleton<BackendProcessSupervisor>();
         builder.Services.AddSingleton<UdpPortRelay>();
         builder.Services.AddSingleton<PortHoppingManager>();
+        builder.Services.AddSingleton<IEgressTransportBackend, GreEgressTransportBackend>();
+        builder.Services.AddSingleton<EgressTransportRegistry>();
+        builder.Services.AddSingleton<EgressNetworkManager>();
         builder.Services.AddSingleton<ServiceLogCollector>();
         builder.Services.AddSingleton<ServiceReconciler>();
         builder.Services.AddHostedService<SyncWorker>();

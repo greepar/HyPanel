@@ -28,6 +28,7 @@ export default defineConfig({
         text: '使用',
         items: [
           { text: '创建服务', link: '/guide/services' },
+          { text: '跨节点出口', link: '/guide/egress' },
           { text: '用户与订阅', link: '/guide/users' },
           { text: 'TLS 证书', link: '/guide/certificates' },
           { text: '更新与备份', link: '/guide/maintenance' },
