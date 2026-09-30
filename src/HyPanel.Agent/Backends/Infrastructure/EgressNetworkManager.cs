@@ -124,6 +124,8 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
         script.AppendLine("for slot in $(ip -4 rule show | awk '$1 ~ /^[0-9]+:$/ {p=$1+0; if(p>10000 && p<=26000) for(i=1;i<=NF;i++) if($i==\"lookup\" && $(i+1)==p+90000) print p-10000}'); do");
         if (keep.Length > 0) script.AppendLine($"  case \"hpe$slot\" in {keep}) continue;; esac");
         script.AppendLine("  ip rule del pref \"$((10000 + slot))\" 2>/dev/null || true\n  ip route flush table \"$((100000 + slot))\"\ndone\nfi");
+        if (state.Transport != EgressTransports.GreUdp && state.Tunnels.All(t => t.Transport != EgressTransports.GreUdp))
+            script.AppendLine($"ip fou show | grep -Eq '^port {EgressTransports.GreUdpPort} ipproto 47($| )' && ip fou del port {EgressTransports.GreUdpPort} || true");
         return script.ToString();
     }
 

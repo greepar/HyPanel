@@ -30,11 +30,14 @@ public static class EgressAddressing
 public static class EgressTransports
 {
     public const string Gre = "gre";
+    public const string GreUdp = "gre-udp";
     public const string WireGuard = "wireguard";
     public const string GretapOverUdp = "gretap-udp";
     public static EgressTransportDefinition GreDefinition { get; } = new(Gre, "GRE", false, "ip", 47, 1400);
+    public const int GreUdpPort = 47541;
+    public static EgressTransportDefinition GreUdpDefinition { get; } = new(GreUdp, "GRE over UDP / FOU（UDP 47541）", false, "udp", null, 1392);
     // Extend this catalog when a transport is implemented; the frontend does not hardcode its options.
-    public static IReadOnlyList<EgressTransportDefinition> Available { get; } = [GreDefinition];
+    public static IReadOnlyList<EgressTransportDefinition> Available { get; } = [GreDefinition, GreUdpDefinition];
 }
 
 public sealed record EgressTransportDefinition(string Id, string Name, bool Encrypted,

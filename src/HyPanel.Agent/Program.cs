@@ -52,6 +52,7 @@ public static class Program
         builder.Services.AddSingleton<UdpPortRelay>();
         builder.Services.AddSingleton<PortHoppingManager>();
         builder.Services.AddSingleton<IEgressTransportBackend, GreEgressTransportBackend>();
+        builder.Services.AddSingleton<IEgressTransportBackend, GreUdpEgressTransportBackend>();
         builder.Services.AddSingleton<EgressTransportRegistry>();
         builder.Services.AddSingleton<EgressNetworkManager>();
         builder.Services.AddSingleton<ServiceLogCollector>();

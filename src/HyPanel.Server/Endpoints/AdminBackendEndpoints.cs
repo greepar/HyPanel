@@ -108,11 +108,13 @@ internal static class AdminBackendEndpoints
         for (var attempt = 0; attempt < 256; attempt++)
         {
             var port = RandomNumberGenerator.GetInt32(MinimumSuggestedPort, MaximumSuggestedPort);
-            if (port is >= ReservedControlPortStart and <= ReservedControlPortEnd || used.Contains(port)) continue;
+            if (port is >= ReservedControlPortStart and <= ReservedControlPortEnd
+                || port == HyPanel.Shared.Contracts.EgressTransports.GreUdpPort || used.Contains(port)) continue;
             return port;
         }
         for (var port = MinimumSuggestedPort; port < MaximumSuggestedPort; port++)
-            if (port is not (>= ReservedControlPortStart and <= ReservedControlPortEnd) && !used.Contains(port))
+            if (port is not (>= ReservedControlPortStart and <= ReservedControlPortEnd)
+                && port != HyPanel.Shared.Contracts.EgressTransports.GreUdpPort && !used.Contains(port))
                 return port;
         return 443;
     }

@@ -21,7 +21,7 @@ public sealed class GreEgressTransportBackend : IEgressTransportBackend
         var script = new StringBuilder();
         script.AppendLine($"local_ip=$(ip -4 route get {tunnel.RemoteIpv4} | awk '{{for(i=1;i<=NF;i++) if($i==\"src\") {{print $(i+1); exit}}}}')");
         script.AppendLine("[ -n \"$local_ip\" ] || { echo '无法确定隧道本地地址' >&2; exit 1; }");
-        script.AppendLine($"if ip link show {name} >/dev/null 2>&1; then ip tunnel change {name} mode gre local \"$local_ip\" remote {tunnel.RemoteIpv4} key {EgressAddressing.Key(tunnel.Slot)} ttl 64; else ip tunnel add {name} mode gre local \"$local_ip\" remote {tunnel.RemoteIpv4} key {EgressAddressing.Key(tunnel.Slot)} ttl 64; fi");
+        script.AppendLine($"if ip link show {name} >/dev/null 2>&1; then ip link set dev {name} type gre local \"$local_ip\" remote {tunnel.RemoteIpv4} key {EgressAddressing.Key(tunnel.Slot)} ttl 64 encap none; else ip link add {name} type gre local \"$local_ip\" remote {tunnel.RemoteIpv4} key {EgressAddressing.Key(tunnel.Slot)} ttl 64 encap none; fi");
         return script.ToString();
     }
 

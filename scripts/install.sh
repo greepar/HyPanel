@@ -83,6 +83,7 @@ uninstall_agent() {
             ip rule del pref "$((10000 + slot))" >/dev/null 2>&1 || true
             ip route flush table "$((100000 + slot))" >/dev/null 2>&1 || true
         done
+        ip fou show 2>/dev/null | grep -Eq '^port 47541 ipproto 47($| )' && ip fou del port 47541 >/dev/null 2>&1 || true
     fi
     # Backend processes (xray, hysteria, ...) run from the data directory; make sure none survive.
     if command -v pkill >/dev/null 2>&1; then

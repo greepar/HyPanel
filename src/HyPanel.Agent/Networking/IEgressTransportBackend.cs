@@ -33,5 +33,5 @@ public sealed class EgressTransportRegistry
     public IEgressTransportBackend Resolve(string id) => backends.TryGetValue(id, out var backend)
         ? backend : throw new InvalidOperationException($"Agent 不支持出口后端 {id}，请更新 Agent 或选择已支持的后端。");
 
-    public static EgressTransportRegistry Default { get; } = new([new GreEgressTransportBackend()]);
+    public static EgressTransportRegistry Default { get; } = new([new GreEgressTransportBackend(), new GreUdpEgressTransportBackend()]);
 }

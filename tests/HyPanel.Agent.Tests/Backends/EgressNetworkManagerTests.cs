@@ -10,6 +10,42 @@ namespace HyPanel.Agent.Tests.Backends;
 public sealed class EgressNetworkManagerTests
 {
     [TestMethod]
+    public async Task GreUdp_ConfiguresFouOnBothEndsAndCleansReservedPortWhenUnused()
+    {
+        var id = Guid.NewGuid();
+        var source = EgressNetworkManager.BuildScript(new(false,
+            [new(id, 1, false, "203.0.113.2", EgressTransports.GreUdp)]));
+        var exit = EgressNetworkManager.BuildScript(new(true,
+            [new(id, 1, true, "203.0.113.1", EgressTransports.GreUdp)], EgressTransports.GreUdp));
+        foreach (var script in new[] { source, exit })
+        {
+            StringAssert.Contains(script, "ip fou add port 47541 ipproto 47");
+            StringAssert.Contains(script, "encap fou encap-sport 47541 encap-dport 47541");
+            StringAssert.Contains(script, "mtu 1392 up");
+            StringAssert.Contains(script, "udp dport 47541 accept");
+            Assert.IsFalse(script.Contains("ip fou del port 47541"));
+            if (!OperatingSystem.IsWindows())
+            {
+                using var process = new Process { StartInfo = new ProcessStartInfo("/bin/sh", "-n")
+                    { RedirectStandardInput = true, RedirectStandardError = true, UseShellExecute = false } };
+                process.Start();
+                await process.StandardInput.WriteAsync(script);
+                process.StandardInput.Close();
+                var error = await process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+                Assert.AreEqual(0, process.ExitCode, error);
+            }
+        }
+        StringAssert.Contains(exit, "ip saddr 169.254.1.1 masquerade");
+        var idleExit = EgressNetworkManager.BuildScript(new(true, [], EgressTransports.GreUdp));
+        StringAssert.Contains(idleExit, "ip fou add port 47541 ipproto 47");
+        Assert.IsFalse(idleExit.Contains("ip fou del port 47541"));
+        StringAssert.Contains(EgressNetworkManager.BuildScript(new(false, [])), "ip fou del port 47541");
+        Assert.ThrowsExactly<InvalidOperationException>(() => EgressNetworkManager.BuildScript(new(true,
+            [new(id, 1, true, "203.0.113.1", EgressTransports.GreUdp, "{\"port\":1}")], EgressTransports.GreUdp)));
+    }
+
+    [TestMethod]
     public void NewTransport_UsesItsOwnCommandsAndMtuWithoutChangingRoutingOrNat()
     {
         var registry = new EgressTransportRegistry([new GreEgressTransportBackend(), new TestUdpBackend()]);
