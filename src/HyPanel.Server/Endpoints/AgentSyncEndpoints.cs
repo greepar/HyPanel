@@ -70,7 +70,8 @@ internal static class AgentSyncEndpoints
                 publicIpv4,
                 request.CountryCode))
         {
-            return Results.Unauthorized();
+            // Authentication already succeeded. Reject invalid payloads without claiming the secret is wrong.
+            return Results.BadRequest();
         }
 
         await repository.RecordEgressReportAsync(agent.NodeId, request.EgressNetwork, cancellationToken);

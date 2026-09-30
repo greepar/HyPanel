@@ -1159,7 +1159,13 @@ internal sealed partial class SqliteServerRepository(
             ownership.CommandText = "SELECT 1 FROM agent_commands WHERE id = @id AND agent_id = @agentId AND type = 'CollectServiceLogs';";
             ownership.Parameters.AddWithValue("@id", result.CommandId.ToString("D"));
             ownership.Parameters.AddWithValue("@agentId", agentId.ToString("D"));
-            if (await ownership.ExecuteScalarAsync(cancellationToken) is null) return false;
+            if (await ownership.ExecuteScalarAsync(cancellationToken) is null)
+            {
+                // A service deletion or retention cleanup may remove a command before its result arrives.
+                // Discard only missing commands; existing commands still enforce Agent ownership and type.
+                ownership.CommandText = "SELECT 1 FROM agent_commands WHERE id=@id;";
+                return await ownership.ExecuteScalarAsync(cancellationToken) is null;
+            }
             output = result.Output;
         }
 
@@ -1274,7 +1280,9 @@ internal sealed partial class SqliteServerRepository(
     private async Task<bool> RecordUsageBatchAsync(SqliteConnection connection, SqliteTransaction transaction,
         Guid agentId, UsageBatch batch, CancellationToken cancellationToken)
     {
-        // Validate the entire batch before recording its idempotency receipt.
+        // Deleted services/users may leave durable usage queued on an Agent. Acknowledge those records
+        // without totals, while retaining ownership/binding validation for all remaining records.
+        var currentRecords = new List<UserUsageDelta>();
         foreach (var record in batch.Records)
         {
             await using var valid = connection.CreateCommand();
@@ -1289,7 +1297,13 @@ internal sealed partial class SqliteServerRepository(
             valid.Parameters.AddWithValue("@agentId", agentId.ToString("D"));
             valid.Parameters.AddWithValue("@serviceId", record.ServiceId.ToString("D"));
             valid.Parameters.AddWithValue("@userId", record.UserId.ToString("D"));
-            if (await valid.ExecuteScalarAsync(cancellationToken) is null) return false;
+            if (await valid.ExecuteScalarAsync(cancellationToken) is null)
+            {
+                valid.CommandText = "SELECT EXISTS(SELECT 1 FROM service_instances WHERE id=@serviceId) AND EXISTS(SELECT 1 FROM users WHERE id=@userId);";
+                if (Convert.ToInt64(await valid.ExecuteScalarAsync(cancellationToken)) == 0) continue;
+                return false;
+            }
+            currentRecords.Add(record);
         }
 
         await using var receipt = connection.CreateCommand();
@@ -1302,7 +1316,7 @@ internal sealed partial class SqliteServerRepository(
         receipt.Parameters.AddWithValue("@accepted", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
         if (await receipt.ExecuteNonQueryAsync(cancellationToken) == 0) return true;
 
-        foreach (var record in batch.Records)
+        foreach (var record in currentRecords)
         {
             await using var total = connection.CreateCommand();
             total.Transaction = transaction;

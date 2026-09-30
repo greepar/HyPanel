@@ -1501,6 +1501,27 @@ public sealed class SqliteServerRepositoryTests
     }
 
     [TestMethod]
+    public async Task AgentSync_DeletedServiceUsageAndDiagnosticResultsDoNotBlockHeartbeat()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var node = Guid.NewGuid();
+        var agent = await CreateAgentAsync(fixture, node, "stale-token", "stale-secret");
+        var user = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Stale", "stale", "hash", "User", true, null, null, "stale-sub", CancellationToken.None);
+        var service = XrayService(CreateService(node, Guid.NewGuid(), "deleted"));
+        await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
+        await fixture.Repository.BindServiceAsync(user.User.Id, service.Id, CancellationToken.None);
+        var commandId = Guid.NewGuid();
+        await fixture.Repository.CreateCollectServiceLogsCommandAsync(commandId, node, service.Id, fixture.Time.GetUtcNow().AddMinutes(2), CancellationToken.None);
+        await fixture.Repository.DeleteServiceAsync(node, service.Id, CancellationToken.None);
+        var batch = new UsageBatch(Guid.NewGuid(), fixture.Time.GetUtcNow(), [new UserUsageDelta(user.User.Id, service.Id, 1, 2)]);
+        var result = new AgentCommandResult(commandId, AgentCommandStatus.Succeeded, fixture.Time.GetUtcNow(), fixture.Time.GetUtcNow(), null, null, "old logs");
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agent, "0.5.19", "linux-x64", 8, null, [], [result], CancellationToken.None, [batch]));
+        Assert.AreEqual(8L, (await fixture.Repository.GetNodeObservationsAsync(CancellationToken.None)).Single(n => n.Id == node).AppliedRevision);
+        Assert.AreEqual(0, (await fixture.Repository.GetUsageTotalsAsync(null, null, CancellationToken.None)).Count);
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agent, "0.5.19", "linux-x64", 8, null, [], [result], CancellationToken.None, [batch]));
+    }
+
+    [TestMethod]
     public async Task AgentSync_UsageIsIdempotentAndInvalidOwnershipOrBindingRollsBack()
     {
         await using var fixture = await TestDatabase.CreateAsync();
@@ -1523,8 +1544,13 @@ public sealed class SqliteServerRepositoryTests
         Assert.AreEqual(10L, totals[0].UploadBytes);
         Assert.AreEqual(20L, totals[0].DownloadBytes);
 
+        var otherNode = Guid.NewGuid();
+        await CreateAgentAsync(fixture, otherNode, "foreign-usage-token", "foreign-usage-secret");
+        var foreignService = XrayService(CreateService(otherNode, Guid.NewGuid(), "foreign usage"));
+        await fixture.Repository.CreateServiceAsync(foreignService, CancellationToken.None);
+        await fixture.Repository.BindServiceAsync(user.User.Id, foreignService.Id, CancellationToken.None);
         var invalidBatch = new UsageBatch(Guid.NewGuid(), fixture.Time.GetUtcNow(),
-            [new UserUsageDelta(user.User.Id, Guid.NewGuid(), 1, 1)]);
+            [new UserUsageDelta(user.User.Id, foreignService.Id, 1, 1)]);
         Assert.IsFalse(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "2.0", "linux-x64", 5,
             "must-not-commit", [], [], CancellationToken.None, [invalidBatch]));
         Assert.AreEqual(4L,
