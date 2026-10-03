@@ -22,7 +22,15 @@ public sealed record AgentSyncResponse(
     IReadOnlyList<Guid> AcceptedUsageBatchIds,
     int SyncIntervalSeconds,
     AgentUpdateDescriptor? AgentUpdate = null,
-    string? PanelUrl = null);
+    string? PanelUrl = null,
+    IReadOnlyList<PortRelayRule>? Relays = null);
+
+/// <summary>
+/// A TCP port this node forwards to the node that really runs the service. Sent on every sync, separately from the
+/// desired state, because the target address can change without a revision change. Null means the Panel did not
+/// say (older Panel); an empty list means no relays.
+/// </summary>
+public sealed record PortRelayRule(Guid ServiceId, int ListenPort, string TargetHost, int TargetPort);
 
 public enum AgentUpdateStatus
 {

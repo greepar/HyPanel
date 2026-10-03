@@ -24,6 +24,7 @@ public sealed class SyncWorker(
     ServiceReconciler reconciler,
     BackendProcessSupervisor processSupervisor,
     PortHoppingManager portHopping,
+    TcpPortRelay tcpRelay,
     AgentEnrollmentOptions enrollmentOptions,
     HttpClient httpClient,
     TimeProvider timeProvider,
@@ -97,6 +98,8 @@ public sealed class SyncWorker(
                         await portHopping.ApplyAsync(state.DesiredState, stoppingToken);
                     }
                 }
+
+                if (response.Relays is not null) tcpRelay.Apply(response.Relays);
 
                 if (pendingResults.Length > 0)
                 {

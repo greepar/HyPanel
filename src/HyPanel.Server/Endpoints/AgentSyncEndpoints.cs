@@ -157,7 +157,8 @@ internal static class AgentSyncEndpoints
             SyncIntervalSeconds,
             update,
             // Agents move to the configured panel address once an authenticated sync there succeeds.
-            (await repository.GetGlobalSettingsAsync(cancellationToken)).PanelUrl);
+            (await repository.GetGlobalSettingsAsync(cancellationToken)).PanelUrl,
+            await repository.GetPortRelaysAsync(agent.NodeId, cancellationToken));
         return Results.Json(response, HyPanelJsonSerializerContext.Default.AgentSyncResponse);
     }
 

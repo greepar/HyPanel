@@ -1,6 +1,7 @@
 namespace HyPanel.Agent;
 
 using System.Diagnostics;
+using System.Net;
 using System.Text;
 using HyPanel.Agent.Backends.Infrastructure;
 using HyPanel.Agent.Networking;
@@ -25,7 +26,8 @@ public sealed class EgressDiagnosticCollector(EgressNetworkManager network, Agen
                 var local = tunnel.IsExit ? EgressAddressing.Exit(tunnel.Slot) : EgressAddressing.Source(tunnel.Slot);
                 var peer = tunnel.IsExit ? EgressAddressing.Source(tunnel.Slot) : EgressAddressing.Exit(tunnel.Slot);
                 output.AppendLine($"角色：{(tunnel.IsExit ? "出口" : "入口")} 后端：{tunnel.Transport} 接口：{name} 对端公网：{tunnel.RemoteIpv4}");
-                await Probe("ip", ["-4", "address", "show", "dev", name]);
+                output.AppendLine($"$ interface {name}");
+                output.AppendLine(KernelSettings.DescribeInterface(name));
                 await Probe("ip", ["-4", "route", "get", peer, "from", local]);
                 if (!tunnel.IsExit) await Probe("ip", ["-4", "route", "show", "table", EgressAddressing.Table(tunnel.Slot).ToString()]);
                 if (tunnel.Transport == EgressTransports.WireGuard && state!.WireGuardTool is { } tool)
@@ -34,13 +36,15 @@ public sealed class EgressDiagnosticCollector(EgressNetworkManager network, Agen
                     foreach (var field in new[] { "public-key", "listen-port", "peers", "endpoints", "allowed-ips", "latest-handshakes", "transfer" })
                         await Probe(wg, ["show", name, field]);
                 }
-                await Probe("ping", ["-n", "-c", "2", "-W", "2", "-I", local, peer]);
+                output.AppendLine($"$ icmp {local} -> {peer}");
+                output.AppendLine(await IcmpProbe.DescribeAsync(IPAddress.Parse(local), IPAddress.Parse(peer), 2, TimeSpan.FromSeconds(2), deadline.Token));
             }
             await Probe("ip", ["-4", "rule", "show"]);
             await Probe("nft", ["list", "ruleset"]);
             await Probe("iptables", ["-S", "INPUT"]);
             await Probe("iptables", ["-S", "FORWARD"]);
-            await Probe("sysctl", ["net.ipv4.ip_forward", "net.ipv4.icmp_echo_ignore_all", "net.ipv4.conf.all.rp_filter"]);
+            output.AppendLine("$ /proc/sys");
+            output.AppendLine(KernelSettings.Describe("net/ipv4/ip_forward", "net/ipv4/icmp_echo_ignore_all", "net/ipv4/conf/all/rp_filter"));
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { output.AppendLine("诊断达到时间限制，以上为已收集结果。"); }
         return ServiceLogCollector.TailUtf8(output.ToString(), 30000);

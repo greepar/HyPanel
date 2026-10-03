@@ -49,6 +49,10 @@ export function formFor(service: Service, definition: BackendDefinition): Servic
     values[field.key] = raw == null ? '' : String(raw)
   }
   if (definition.supportsEgress) values.exitNodeId = typeof config.exitNodeId === 'string' ? config.exitNodeId : ''
+  if (service.backendType === 'xray') {
+    values.relayNodeId = typeof config.relayNodeId === 'string' ? config.relayNodeId : ''
+    values.relayPort = config.relayPort == null ? '' : String(config.relayPort)
+  }
   return { backendType: service.backendType, name: service.name, version: service.backendVersion, values }
 }
 
@@ -76,6 +80,12 @@ export function payloadFor(form: ServiceForm, definition: BackendDefinition): Se
     config[field.configKey] = raw
   }
   if (definition.supportsEgress && form.values.exitNodeId) config.exitNodeId = form.values.exitNodeId
+  if (form.backendType === 'xray' && form.values.relayNodeId) {
+    const port = Number((form.values.relayPort ?? '').trim())
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('请填写 1–65535 之间的转发端口。')
+    config.relayNodeId = form.values.relayNodeId
+    config.relayPort = port
+  }
   return { name: form.name.trim(), backendType: form.backendType, backendVersion: form.version.trim(), configSchemaVersion: 1, configJson: JSON.stringify(config) }
 }
 

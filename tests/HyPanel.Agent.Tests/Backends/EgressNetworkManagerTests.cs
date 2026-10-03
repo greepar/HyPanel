@@ -10,6 +10,30 @@ namespace HyPanel.Agent.Tests.Backends;
 public sealed class EgressNetworkManagerTests
 {
     [TestMethod]
+    public async Task Exit_AllowsTunnelForwardingThroughIptablesChainAndRemovesItWhenIdle()
+    {
+        var id = Guid.NewGuid();
+        var exit = EgressNetworkManager.BuildScript(new(true, [new(id, 1, true, "203.0.113.1")]));
+        StringAssert.Contains(exit, "iptables -w -A HYPANEL-EGRESS -i hpe1 -s 169.254.1.1 -j ACCEPT");
+        StringAssert.Contains(exit, "iptables -w -I FORWARD 1 -j HYPANEL-EGRESS");
+        var source = EgressNetworkManager.BuildScript(new(false, [new(id, 1, false, "203.0.113.2")]));
+        Assert.IsFalse(source.Contains("-I FORWARD"));
+        StringAssert.Contains(source, "iptables -w -X HYPANEL-EGRESS");
+        if (OperatingSystem.IsWindows()) return;
+        foreach (var script in new[] { exit, source })
+        {
+            using var process = new Process { StartInfo = new ProcessStartInfo("/bin/sh", "-n")
+                { RedirectStandardInput = true, RedirectStandardError = true, UseShellExecute = false } };
+            process.Start();
+            await process.StandardInput.WriteAsync(script);
+            process.StandardInput.Close();
+            var error = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            Assert.AreEqual(0, process.ExitCode, error);
+        }
+    }
+
+    [TestMethod]
     public async Task GreUdp_ConfiguresFouOnBothEndsAndCleansReservedPortWhenUnused()
     {
         var id = Guid.NewGuid();

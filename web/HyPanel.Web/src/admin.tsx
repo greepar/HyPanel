@@ -2676,6 +2676,21 @@ function ServiceEditor({
               ]} />
             <p className="field-help">先在目标节点的“设置 → 出口转发”启用出口，配置成功后即可选择。出口断开时停止出网，不自动切回本机。</p>
           </div>}
+          {form.backendType === "xray" && <div className="egress-backend-field">
+            <span>转发入口节点</span>
+            <Select value={form.values.relayNodeId ?? ""} onChange={value => setForm({ ...form, values: { ...form.values, relayNodeId: value } })}
+              options={[
+                { value: "", label: "不转发（客户端直连本节点）" },
+                ...egressNodes.map(item => ({ value: item.id, label: `${item.displayName} · ${item.publicIpv4 ?? '未知 IP'}` }))
+              ]} />
+            {form.values.relayNodeId && <label>
+              转发端口（在入口节点监听）
+              <input type="number" min="1" max="65535" value={form.values.relayPort ?? ""}
+                onInput={event => setForm({ ...form, values: { ...form.values, relayPort: event.currentTarget.value } })} />
+            </label>}
+            <p className="field-help">服务仍运行在本节点，由入口节点的 Agent 把该 TCP 端口转发到这里；订阅自动使用入口节点的地址和转发端口。
+              请在入口节点放行转发端口，并在本节点放行入口节点的访问。用户流量统计在本节点，本节点看到的来源 IP 是入口节点。</p>
+          </div>}
         </fieldset>
         <fieldset>
           <legend>连接地址（可选）</legend>

@@ -50,6 +50,7 @@ public static class Program
         builder.Services.AddSingleton<BackendInstanceStore>();
         builder.Services.AddSingleton<BackendProcessSupervisor>();
         builder.Services.AddSingleton<UdpPortRelay>();
+        builder.Services.AddSingleton<TcpPortRelay>();
         builder.Services.AddSingleton<PortHoppingManager>();
         builder.Services.AddSingleton<IEgressTransportBackend, GreEgressTransportBackend>();
         builder.Services.AddSingleton<IEgressTransportBackend, GreUdpEgressTransportBackend>();

@@ -8,7 +8,7 @@ B 做 NAT 后访问目标网站。网站看到 B 的 IP，用户认证和流量�
 
 1. 更新面板和两端 Agent。旧 Agent 不支持出口配置。
 2. 两端必须是支持所选隧道后端的 Linux 节点，有固定、可互通的公网 IPv4。
-3. 使用新版节点安装命令，勾选安装网络工具，安装 `iproute2`、`nftables`、`ping` 并配置 Agent 权限。
+3. 使用新版节点安装命令，勾选安装网络工具，安装 `iproute2`、`nftables` 并配置 Agent 权限。
 4. 在 B 的“设置 → 出口转发”选择 GRE、GRE over UDP（FOU）或 WireGuard。FOU / WireGuard 可以设置 UDP 端口（1–65535），默认分别为 47541 / 51820。WireGuard 点击“安装并启用出口转发”后，面板和 Agent 按需下载对应平台的独立 `wg` 工具并校验 SHA-256；其他后端点击“启用出口转发”。Agent 检查权限和内核支持，成功后显示“已就绪”。
 5. 在 A 创建或编辑服务，在“出口节点”中选择 B，然后保存。
 6. 两端 Agent 自动配置隧道、源地址策略路由和 B 的 NAT。A 会通过隧道检查 B 的连通性。
@@ -18,6 +18,19 @@ B 做 NAT 后访问目标网站。网站看到 B 的 IP，用户认证和流量�
 没有额外的用户态转发程序需要常驻；“启用出口转发”配置的是 Linux 内核网络。
 每个服务有独立的隧道地址和路由表，可以分别选择不同出口。WireGuard 让同一出口的服务共享 B 的接口和监听端口，同一 A→B 的服务共享一个认证对端；删除服务时同步清理其地址和 AllowedIPs。A 的整机默认路由不会修改。
 订阅地址仍是 A，证书和端口跳跃仍配置在 A。
+
+## TCP 端口转发（Xray REALITY）
+
+和跨节点出口相反：服务运行在节点 B，由入口节点 A 的 Agent 把一个 TCP 端口转发到 B。
+在 B 上编辑 Xray 服务，选择“转发入口节点”A 并填写转发端口。订阅自动使用 A 的公网地址和该端口，
+其余参数（UUID、公钥、SNI）仍是 B 的。转发由 Agent 内置的 C# 代码完成，不依赖 `ip`、`nft` 或 `iptables`，Agent 每次同步都会更新转发规则。
+
+- 在 A 放行转发端口，在 B 放行 A 的访问。转发端口不能和 A 上已有服务的监听端口重复。
+- REALITY 端到端加密，A 到 B 之间不是明文。
+- 用户认证和流量统计在 B；B 看到的来源 IP 是 A。
+- A 绑定端口失败（例如被占用）时，Agent 日志会记录原因；面板暂不显示转发状态。
+- 入口节点 A 可以是 Linux、macOS 或 Windows：转发只用标准 socket，不依赖 Linux 内核功能。Windows 和 macOS 的系统防火墙需要自行放行 Agent 监听的转发端口；Docker Desktop / OrbStack 里的 Agent 会监听该端口，由 Docker 转发到主机。
+- 当前只支持 Xray REALITY（TCP）。
 
 ## 网络与权限
 
@@ -29,7 +42,7 @@ B 做 NAT 后访问目标网站。网站看到 B 的 IP，用户认证和流量�
 - B 的已有防火墙需允许从 `hpe*` / `hpw*` 隧道接口到公网的转发，以及已建立连接的回程。
   HyPanel 只管理自己的 `inet hypanel_egress` 表，不清空其他防火墙规则。
   其他表中的拒绝规则仍然生效。
-- 原生安装的 Agent 使用 `CAP_NET_ADMIN` 管理隧道、路由和网络 sysctl，使用 `CAP_NET_RAW` 检查连通性。
+- 原生安装的 Agent 使用 `CAP_NET_ADMIN` 管理隧道、路由和网络 sysctl，使用 `CAP_NET_RAW` 发送内置 ICMP 探测（不依赖系统 `ping`）。
   旧安装需要重新运行新版安装命令，单纯更新 Agent 二进制不会修改 systemd 权限或补齐工具。
 - Docker 需要 Linux 主机、host 网络、`NET_ADMIN` 和 `NET_RAW` 权限，可写的网络 sysctl，以及主机对所选隧道后端的内核支持。
   Docker Desktop / OrbStack 的 Linux 内核如果不支持所选后端，会显示配置失败。

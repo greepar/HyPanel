@@ -70,6 +70,7 @@ uninstall_agent() {
     # Port-hopping redirects are kept in a HyPanel-owned nftables table.
     command -v nft >/dev/null 2>&1 && nft delete table inet hypanel_hop >/dev/null 2>&1 || true
     command -v nft >/dev/null 2>&1 && nft delete table inet hypanel_egress >/dev/null 2>&1 || true
+    if command -v iptables >/dev/null 2>&1; then while iptables -w -D FORWARD -j HYPANEL-EGRESS 2>/dev/null; do :; done; iptables -w -F HYPANEL-EGRESS 2>/dev/null && iptables -w -X HYPANEL-EGRESS 2>/dev/null || true; fi
     # Reserved HyPanel GRE interfaces and source routing rules, including orphan rules.
     if command -v ip >/dev/null 2>&1; then
         for path in /sys/class/net/hpe* /sys/class/net/hpw*; do
@@ -243,7 +244,7 @@ fi
 
 # Optional host preparation (Linux only).  Failures are reported but never abort the Agent installation.
 install_nftables() {
-    if command -v nft >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 && command -v ping >/dev/null 2>&1; then note "network tools already installed"; return 0; fi
+    if command -v nft >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 ; then note "network tools already installed"; return 0; fi
     note "installing nftables and GRE network tools"
     if command -v apt-get >/dev/null 2>&1; then
         DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables iproute2 iputils-ping >/dev/null 2>&1 ||
@@ -256,8 +257,8 @@ install_nftables() {
     elif command -v opkg >/dev/null 2>&1; then { opkg update >/dev/null 2>&1; opkg install nftables ip-full iputils-ping >/dev/null 2>&1; } || true
     else note "no supported package manager found; install nftables manually for port hopping"; return 0
     fi
-    if command -v nft >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 && command -v ping >/dev/null 2>&1; then note "network tools installed"
-    else note "some network tools are missing; install iproute2, nftables, ping before enabling exit forwarding"
+    if command -v nft >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 ; then note "network tools installed"
+    else note "some network tools are missing; install iproute2 and nftables before enabling exit forwarding"
     fi
 }
 

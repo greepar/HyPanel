@@ -48,13 +48,24 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
             var script = BuildScriptCore(state, Transports,
                 Path.Combine(options?.DataDirectory ?? Path.GetTempPath(), "egress-fou-ports"), wg);
             hasManagedNetwork = true;
+            if (state.Enabled || state.Tunnels.Count > 0) KernelSettings.RelaxStrictReversePath("net/ipv4/conf/all/rp_filter");
+            if (state.Enabled)
+            {
+                KernelSettings.Ensure("net/ipv4/ip_forward", "1");
+                KernelSettings.Ensure("net/ipv4/conf/all/rp_filter", "2");
+            }
             await RunAsync(script, ct);
+            // Interface rp_filter can only be set once the script has created the interface.
+            foreach (var name in state.Tunnels.Select(t => Transports.Resolve(t.Transport).Interface(t)).Distinct())
+                KernelSettings.Ensure($"net/ipv4/conf/{name}/rp_filter", "2");
             Report = new(state.Enabled, state.Enabled, null, Transports.SupportedTransports, state.Transport, AppliedPort(state));
             foreach (var tunnel in state.Tunnels.Where(t => !t.IsExit))
             {
                 try
                 {
-                    await RunAsync($"ping -n -c 1 -W 3 -I {EgressAddressing.Source(tunnel.Slot)} {EgressAddressing.Exit(tunnel.Slot)} >/dev/null\n", ct);
+                    var probe = await IcmpProbe.PingAsync(IPAddress.Parse(EgressAddressing.Source(tunnel.Slot)),
+                        IPAddress.Parse(EgressAddressing.Exit(tunnel.Slot)), 1, TimeSpan.FromSeconds(3), ct);
+                    if (!probe.Success) throw new InvalidOperationException(probe.Error ?? "ICMP 无应答");
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -121,14 +132,11 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
         var active = state.Enabled || state.Tunnels.Count > 0;
         if (active)
         {
-            script.AppendLine("command -v ip >/dev/null && command -v nft >/dev/null && command -v ping >/dev/null || { echo '缺少 iproute2、nftables 或 ping，请用新版节点安装命令安装网络工具。' >&2; exit 1; }");
+            script.AppendLine("command -v ip >/dev/null && command -v nft >/dev/null || { echo '缺少 iproute2 或 nftables，请用新版节点安装命令安装网络工具。' >&2; exit 1; }");
             // Source-address routing requires loose reverse-path checks on encapsulated return traffic.
-            script.AppendLine("if [ \"$(cat /proc/sys/net/ipv4/conf/all/rp_filter)\" = 1 ]; then sysctl -q -w net.ipv4.conf.all.rp_filter=2; fi");
         }
         if (state.Enabled)
         {
-            script.AppendLine("sysctl -q -w net.ipv4.ip_forward=1");
-            script.AppendLine("sysctl -q -w net.ipv4.conf.all.rp_filter=2");
             // Check the selected backend before advertising this node as an exit.
             if (state.Transport != EgressTransports.WireGuard || !state.Tunnels.Any(t => t.IsExit && t.Transport == EgressTransports.WireGuard))
                 script.Append(registry.Resolve(state.Transport).PrepareExit(state.TransportOptionsJson));
@@ -152,7 +160,6 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
             script.Append(backend.ConfigureTunnel(t));
             script.AppendLine($"ip address replace {local}/30 dev {name}");
             script.AppendLine($"ip link set {name} mtu {backend.Definition.Mtu} up");
-            script.AppendLine($"sysctl -q -w net.ipv4.conf.{name}.rp_filter=2");
             if (!t.IsExit)
             {
                 // The unreachable route survives interface deletion and stops lookup falling through to main.
@@ -166,7 +173,8 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
         script.AppendLine("if command -v nft >/dev/null; then nft -f - <<'HYPANEL_NFT'");
         script.Append(BuildNftCore(state, registry));
         script.AppendLine("HYPANEL_NFT\nfi");
-        var keep = string.Join("|", state.Tunnels.Select(t => registry.Resolve(t.Transport).Interface(t)).Distinct().Concat(state.Enabled && state.Transport == EgressTransports.WireGuard ? new[] { "hpwx" } : Array.Empty<string>()));
+        script.Append(BuildIptablesForward(state, registry));
+        var keep =string.Join("|", state.Tunnels.Select(t => registry.Resolve(t.Transport).Interface(t)).Distinct().Concat(state.Enabled && state.Transport == EgressTransports.WireGuard ? new[] { "hpwx" } : Array.Empty<string>()));
         var keepSlots = string.Join("|", state.Tunnels.Where(t => !t.IsExit).Select(t => t.Slot));
         script.AppendLine("for path in /sys/class/net/hpe* /sys/class/net/hpw*; do");
         script.AppendLine("  [ -e \"$path\" ] || continue; name=${path##*/}; slot=${name#hpe}");
@@ -187,6 +195,34 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
         script.AppendLine("  ip fou show 2>/dev/null | grep -Eq \"^port $port ipproto 47($| )\" && ip fou del port \"$port\" || true\ndone");
         script.AppendLine($"printf '%s\\n' '{string.Join(" ", fouPorts)}' > {portFile}");
         return script.ToString();
+    }
+
+    /// <summary>
+    /// An accept in our nft forward chain does not override a drop in another base chain, and ufw / Docker keep a
+    /// FORWARD policy of DROP through iptables-nft. Own a dedicated iptables chain jumped to first from FORWARD so
+    /// exit traffic is allowed without touching or flushing the administrator's rules.
+    /// </summary>
+    internal static string BuildIptablesForward(EgressNetworkState state, EgressTransportRegistry registry)
+    {
+        var s = new StringBuilder("if command -v iptables >/dev/null 2>&1; then\n");
+        var exits = state.Tunnels.Where(t => t.IsExit).ToArray();
+        if (exits.Length == 0)
+        {
+            s.AppendLine("  while iptables -w -D FORWARD -j HYPANEL-EGRESS 2>/dev/null; do :; done");
+            s.AppendLine("  iptables -w -F HYPANEL-EGRESS 2>/dev/null && iptables -w -X HYPANEL-EGRESS 2>/dev/null || true");
+            return s.AppendLine("fi").ToString();
+        }
+        s.AppendLine("  { iptables -w -N HYPANEL-EGRESS 2>/dev/null || true; iptables -w -F HYPANEL-EGRESS;");
+        foreach (var t in exits)
+        {
+            var name = registry.Resolve(t.Transport).Interface(t);
+            var source = EgressAddressing.Source(t.Slot);
+            s.AppendLine($"    iptables -w -A HYPANEL-EGRESS -i {name} -s {source} -j ACCEPT;");
+            s.AppendLine($"    iptables -w -A HYPANEL-EGRESS -o {name} -d {source} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT;");
+        }
+        s.AppendLine("    iptables -w -C FORWARD -j HYPANEL-EGRESS 2>/dev/null || iptables -w -I FORWARD 1 -j HYPANEL-EGRESS;");
+        s.AppendLine("  } || echo '警告：无法写入 iptables FORWARD 放行规则，出口转发可能被现有防火墙拦截。' >&2");
+        return s.AppendLine("fi").ToString();
     }
 
     internal static string BuildNft(EgressNetworkState state) => BuildNftCore(state, EgressTransportRegistry.Default);

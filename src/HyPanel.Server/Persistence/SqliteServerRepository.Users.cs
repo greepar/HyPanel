@@ -506,8 +506,9 @@ internal sealed partial class SqliteServerRepository
         await using var cmd = c.CreateCommand();
         cmd.CommandText = """
                            SELECT s.id,n.display_name || ' · ' || s.name,s.backend_type,s.config_json,
-                                  COALESCE(p.host,a.public_ipv4),
-                                  COALESCE(p.port,CAST(json_extract(s.config_json,'$.listenPort') AS INTEGER)),
+                                  COALESCE(p.host,CASE WHEN rn.id IS NULL THEN a.public_ipv4 ELSE ra.public_ipv4 END),
+                                  COALESCE(p.port,CASE WHEN rn.id IS NULL THEN NULL ELSE CAST(json_extract(s.config_json,'$.relayPort') AS INTEGER) END,
+                                           CAST(json_extract(s.config_json,'$.listenPort') AS INTEGER)),
                                   p.tls_server_name,COALESCE(p.updated_at_utc,a.last_seen_at_utc),
                                    k.nonce,k.ciphertext,k.tag,c.san,c.certificate_pem,n.display_name,a.country_code
                            FROM user_service_bindings b
@@ -515,11 +516,14 @@ internal sealed partial class SqliteServerRepository
                            JOIN nodes n ON n.id=s.node_id
                            LEFT JOIN agents a ON a.node_id=s.node_id
                            LEFT JOIN service_public_endpoints p ON p.service_id=s.id
+                           LEFT JOIN nodes rn ON lower(rn.id)=lower(json_extract(s.config_json,'$.relayNodeId'))
+                           LEFT JOIN agents ra ON ra.node_id=rn.id
                            LEFT JOIN certificates c ON c.id=json_extract(s.config_json,'$.certificateId')
                            JOIN user_service_credentials k ON k.user_id=b.user_id AND k.service_id=b.service_id
                            WHERE b.user_id=@user AND s.enabled=1 AND k.status='Active'
-                             AND (p.host IS NOT NULL OR a.public_ipv4 IS NOT NULL)
-                             AND COALESCE(p.port,CAST(json_extract(s.config_json,'$.listenPort') AS INTEGER)) BETWEEN 1 AND 65535
+                             AND (p.host IS NOT NULL OR CASE WHEN rn.id IS NULL THEN a.public_ipv4 ELSE ra.public_ipv4 END IS NOT NULL)
+                             AND COALESCE(p.port,CASE WHEN rn.id IS NULL THEN NULL ELSE CAST(json_extract(s.config_json,'$.relayPort') AS INTEGER) END,
+                                          CAST(json_extract(s.config_json,'$.listenPort') AS INTEGER)) BETWEEN 1 AND 65535
                            -- Grouped by node, then service, so a node's services sit together in the client.
                            ORDER BY n.display_name COLLATE NOCASE,s.name COLLATE NOCASE,s.id;
                           """;

@@ -53,6 +53,26 @@ internal static class AdminServicesEndpoints
             && exits.Any(n => n.Id == nodeId && n.Supported && n.SupportedTransports.Contains(target.Transport));
     }
 
+    /// <summary>
+    /// A relayed service runs on its own node while another node's Agent forwards a TCP port to it. Only Xray
+    /// (TCP) is supported, the relay must be another existing node, and its port must be free there.
+    /// </summary>
+    internal static async Task<bool> HasValidRelayAsync(Guid nodeId, Guid serviceId, string backend, string config,
+        SqliteServerRepository repository, CancellationToken ct)
+    {
+        using var json = JsonDocument.Parse(config);
+        var root = json.RootElement;
+        var hasNode = root.ValueKind == JsonValueKind.Object && root.TryGetProperty("relayNodeId", out var node)
+            && node.ValueKind != JsonValueKind.Null;
+        var hasPort = root.ValueKind == JsonValueKind.Object && root.TryGetProperty("relayPort", out var port)
+            && port.ValueKind != JsonValueKind.Null;
+        if (!hasNode && !hasPort) return true;
+        if (SqliteServerRepository.Relay(config) is not { } relay || backend != "xray"
+            || relay.NodeId == Guid.Empty || relay.NodeId == nodeId || relay.Port is < 1 or > 65535) return false;
+        return await repository.GetNodeAsync(relay.NodeId, ct) is not null
+            && !await repository.IsRelayPortTakenAsync(relay.NodeId, relay.Port, serviceId, ct);
+    }
+
     private static async Task<IResult> ListAsync(Guid nodeId, HttpRequest request,
         AdminAuthorization authorization, SqliteServerRepository repository, BackendArtifactCatalog releaseCatalog,
         CancellationToken cancellationToken)
@@ -97,7 +117,8 @@ internal static class AdminServicesEndpoints
             return Results.BadRequest();
         if (!await HasValidCertificateAsync(backendType, configJson, repository, cancellationToken) ||
             !HasValidPortHopping(backendType, configJson) ||
-            !await HasValidEgressAsync(nodeId, backendType, configJson, repository, cancellationToken))
+            !await HasValidEgressAsync(nodeId, backendType, configJson, repository, cancellationToken) ||
+            !await HasValidRelayAsync(nodeId, Guid.Empty, backendType, configJson, repository, cancellationToken))
             return Results.BadRequest();
         var now = timeProvider.GetUtcNow();
         var result = await repository.CreateServiceAsync(
@@ -126,7 +147,8 @@ internal static class AdminServicesEndpoints
         if (!TryMergeRedactedSecrets(existing.ConfigJson, configJson, out configJson)) return Results.BadRequest();
         if (!await HasValidCertificateAsync(existing.BackendType, configJson, repository, cancellationToken) ||
             !HasValidPortHopping(existing.BackendType, configJson) ||
-            !await HasValidEgressAsync(nodeId, existing.BackendType, configJson, repository, cancellationToken, existing.ConfigJson))
+            !await HasValidEgressAsync(nodeId, existing.BackendType, configJson, repository, cancellationToken, existing.ConfigJson) ||
+            !await HasValidRelayAsync(nodeId, serviceId, existing.BackendType, configJson, repository, cancellationToken))
             return Results.BadRequest();
         var now = timeProvider.GetUtcNow();
         var result = await repository.UpdateServiceAsync(

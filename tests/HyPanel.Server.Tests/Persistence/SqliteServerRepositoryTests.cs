@@ -1331,6 +1331,44 @@ public sealed class SqliteServerRepositoryTests
     }
 
     [TestMethod]
+    public async Task Relay_ForwardsFromRelayNodeAndSubscriptionPointsAtIt()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var home = Guid.NewGuid(); var relay = Guid.NewGuid();
+        var homeAgent = await CreateAgentAsync(fixture, home, "home-token", "home-secret");
+        var relayAgent = await CreateAgentAsync(fixture, relay, "relay-token", "relay-secret");
+        var service = XrayService(CreateService(home, Guid.NewGuid(), "relayed")) with
+        {
+            ConfigJson = $"{{\"listenPort\":8443,\"relayNodeId\":\"{relay}\",\"relayPort\":9443,\"flow\":\"xtls-rprx-vision\",\"realityPublicKey\":\"k\",\"shortId\":\"a1\",\"serverName\":\"sni.example\",\"fingerprint\":\"chrome\"}}"
+        };
+        await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
+        var user = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Relay", "relay", "hash", "User", true,
+            null, null, "relay-user-token", CancellationToken.None);
+        Assert.IsTrue(await fixture.Repository.BindServiceAsync(user.User.Id, service.Id, CancellationToken.None));
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(homeAgent, "1.0.0", "linux-x64", 0, null,
+            [], [], CancellationToken.None, publicIpv4: "203.0.113.10"));
+
+        // The forward only needs the service node's address; clients get no address until the relay node reports one.
+        Assert.AreEqual(1, (await fixture.Repository.GetPortRelaysAsync(relay, CancellationToken.None)).Count);
+        StringAssert.Contains(await RenderSubscriptionAsync(fixture, "relay-user-token"), "proxies: []");
+
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(relayAgent, "1.0.0", "linux-x64", 0, null,
+            [], [], CancellationToken.None, publicIpv4: "203.0.113.20"));
+        var rule = (await fixture.Repository.GetPortRelaysAsync(relay, CancellationToken.None)).Single();
+        Assert.AreEqual(new PortRelayRule(service.Id, 9443, "203.0.113.10", 8443), rule);
+        Assert.AreEqual(0, (await fixture.Repository.GetPortRelaysAsync(home, CancellationToken.None)).Count);
+        var mihomo = await RenderSubscriptionAsync(fixture, "relay-user-token");
+        StringAssert.Contains(mihomo, "server: \"203.0.113.20\"");
+        StringAssert.Contains(mihomo, "port: 9443");
+        Assert.IsTrue(await fixture.Repository.IsRelayPortTakenAsync(relay, 9443, Guid.NewGuid(), CancellationToken.None));
+        Assert.IsFalse(await fixture.Repository.IsRelayPortTakenAsync(relay, 9443, service.Id, CancellationToken.None));
+        Assert.IsFalse(await fixture.Repository.IsRelayPortTakenAsync(relay, 9444, Guid.NewGuid(), CancellationToken.None));
+
+        await fixture.Repository.SetServiceEnabledAsync(home, service.Id, false, CancellationToken.None);
+        Assert.AreEqual(0, (await fixture.Repository.GetPortRelaysAsync(relay, CancellationToken.None)).Count);
+    }
+
+    [TestMethod]
     public async Task PublicSubscription_UsesReportedIpv4WhenManualEndpointIsMissing()
     {
         await using var fixture = await TestDatabase.CreateAsync();
