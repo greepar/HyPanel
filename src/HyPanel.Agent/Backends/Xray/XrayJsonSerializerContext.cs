@@ -37,6 +37,11 @@ internal sealed class XrayConfig
     public string? Fingerprint { get; init; }
 
     public Guid? ExitNodeId { get; init; }
+
+    /// <summary>Node whose Agent forwards <see cref="RelayPort"/> to this service; only that Agent acts on it.</summary>
+    public Guid? RelayNodeId { get; init; }
+
+    public int? RelayPort { get; init; }
 }
 
 internal sealed class XrayShadowsocksConfig

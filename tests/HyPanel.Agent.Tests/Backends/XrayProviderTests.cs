@@ -37,6 +37,16 @@ public sealed class XrayProviderTests
     }
 
     [TestMethod]
+    public async Task ValidateAsync_AcceptsRelayFieldsOwnedByTheRelayNode()
+    {
+        var config = CreateConfigJson();
+        config = config[..^1] + $",\"relayNodeId\":\"{Guid.NewGuid():D}\",\"relayPort\":9443}}";
+        var result = await provider.ValidateAsync(CreateDesiredState(configJson: config), CancellationToken.None);
+        Assert.IsTrue(result.IsValid);
+        Assert.AreEqual(2, result.TcpPorts.Count);
+    }
+
+    [TestMethod]
     public async Task ValidateAsync_ValidConfig_ReturnsTcpPortOnly()
     {
         var result = await provider.ValidateAsync(CreateDesiredState(), CancellationToken.None);
