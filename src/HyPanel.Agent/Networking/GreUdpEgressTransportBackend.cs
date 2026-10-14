@@ -31,6 +31,9 @@ public sealed class GreUdpEgressTransportBackend : IEgressTransportBackend
     public string InputFirewallRule(EgressTunnel tunnel) =>
         $"ip saddr {tunnel.RemoteIpv4} ip protocol udp udp dport {Port(tunnel.TransportOptionsJson)} accept";
 
+    public FirewallOpening? Inbound(EgressTunnel tunnel) =>
+        new("udp", Port(tunnel.TransportOptionsJson), tunnel.RemoteIpv4);
+
     internal static string EnsureReceivePort(int port) =>
         $"ip fou show | grep -Eq '^port {port} ipproto 47($| )' || ip fou add port {port} ipproto 47 || {{ echo '无法配置 GRE over UDP (FOU) 接收端口，请检查内核 FOU 支持及端口占用。' >&2; exit 1; }}\n";
 

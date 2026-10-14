@@ -62,6 +62,10 @@ public sealed class WireGuardEgressTransportBackend : IEgressTransportBackend
         ? $"ip saddr {tunnel.RemoteIpv4} ip protocol udp udp dport {Parse(tunnel.TransportOptionsJson).Port} accept"
         : string.Empty;
 
+    public FirewallOpening? Inbound(EgressTunnel tunnel) => tunnel.IsExit
+        ? new("udp", Parse(tunnel.TransportOptionsJson).Port, tunnel.RemoteIpv4)
+        : null;
+
     private static string EnsureInterface(string name) =>
         $"ip link show {name} >/dev/null 2>&1 || ip link add {name} type wireguard || {{ echo '内核不支持 WireGuard 或 Agent 缺少 NET_ADMIN 权限。' >&2; exit 1; }}\n";
 

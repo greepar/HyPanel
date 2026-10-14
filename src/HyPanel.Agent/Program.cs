@@ -56,6 +56,7 @@ public static class Program
         builder.Services.AddSingleton<IEgressTransportBackend, GreUdpEgressTransportBackend>();
         builder.Services.AddSingleton<IEgressTransportBackend, WireGuardEgressTransportBackend>();
         builder.Services.AddSingleton<EgressTransportRegistry>();
+        builder.Services.AddSingleton<FirewallManager>();
         builder.Services.AddSingleton<EgressNetworkManager>();
         builder.Services.AddSingleton<EgressDiagnosticCollector>();
         builder.Services.AddSingleton<ServiceLogCollector>();

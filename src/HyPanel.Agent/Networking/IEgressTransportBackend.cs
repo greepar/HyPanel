@@ -15,6 +15,12 @@ public interface IEgressTransportBackend
     string Interface(EgressTunnel tunnel) => EgressAddressing.Interface(tunnel.Slot);
     string ConfigureTunnel(EgressTunnel tunnel);
     string InputFirewallRule(EgressTunnel tunnel);
+
+    /// <summary>
+    /// The outer packets this tunnel receives, so the host firewall can be opened for them automatically.
+    /// Null when replies to our own traffic are all that arrive (connection tracking already allows those).
+    /// </summary>
+    FirewallOpening? Inbound(EgressTunnel tunnel) => null;
 }
 
 public sealed class EgressTransportRegistry

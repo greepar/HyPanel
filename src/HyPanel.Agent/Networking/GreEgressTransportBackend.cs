@@ -27,6 +27,8 @@ public sealed class GreEgressTransportBackend : IEgressTransportBackend
 
     public string InputFirewallRule(EgressTunnel tunnel) => $"ip saddr {tunnel.RemoteIpv4} ip protocol gre accept";
 
+    public FirewallOpening? Inbound(EgressTunnel tunnel) => new("gre", null, tunnel.RemoteIpv4);
+
     private static void ValidateOptions(string? options)
     {
         if (options is not null && options.Trim() != "{}")

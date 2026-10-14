@@ -6,6 +6,7 @@ using System.Text.Json;
 using HyPanel.Shared.Contracts;
 using HyPanel.Shared.Serialization;
 using HyPanel.Agent.Backends.Infrastructure;
+using HyPanel.Agent.Networking;
 using HyPanel.Agent.Reconciliation;
 using HyPanel.Agent.Updates;
 
@@ -25,6 +26,7 @@ public sealed class SyncWorker(
     BackendProcessSupervisor processSupervisor,
     PortHoppingManager portHopping,
     TcpPortRelay tcpRelay,
+    FirewallManager firewall,
     AgentEnrollmentOptions enrollmentOptions,
     HttpClient httpClient,
     TimeProvider timeProvider,
@@ -99,7 +101,14 @@ public sealed class SyncWorker(
                     }
                 }
 
-                if (response.Relays is not null) tcpRelay.Apply(response.Relays);
+                if (response.Relays is not null)
+                {
+                    var unbound = tcpRelay.Apply(response.Relays);
+                    // The relay listens in user space, so the host firewall has to let the port in.
+                    await firewall.ApplyAsync("relay", response.Relays.Where(rule => !unbound.ContainsKey(rule.ListenPort))
+                        .Select(rule => new FirewallOpening("tcp", rule.ListenPort, null)).Distinct().ToArray(),
+                        false, stoppingToken);
+                }
 
                 if (pendingResults.Length > 0)
                 {

@@ -62,11 +62,18 @@ public sealed class PortHoppingManager(ILogger<PortHoppingManager> logger, IConf
                     string.Join("; ", rules.Select(rule => $"udp {rule.Ports} -> {rule.ListenPort}")));
             return;
         }
-        LastError = rules.Count == 0
-            ? null
-            : error.Contains("Operation not permitted", StringComparison.OrdinalIgnoreCase)
-                ? "Agent 缺少 CAP_NET_ADMIN 权限：请在节点上重新运行一次安装命令后再启用端口跳跃。"
-                : $"端口跳跃规则设置失败：{error.Trim()}";
+        if (rules.Count == 0)
+        {
+            // Nothing to hop, so a failed cleanup (typically a missing CAP_NET_ADMIN) is not worth a warning on every
+            // sync; remember the script so it is not retried until the desired rules change.
+            appliedScript = script;
+            LastError = null;
+            logger.LogDebug("Port hopping table cleanup skipped (exit {ExitCode}): {Error}", exitCode, error.Trim());
+            return;
+        }
+        LastError = error.Contains("Operation not permitted", StringComparison.OrdinalIgnoreCase)
+            ? "Agent 缺少 CAP_NET_ADMIN 权限：请在节点上重新运行一次安装命令后再启用端口跳跃。"
+            : $"端口跳跃规则设置失败：{error.Trim()}";
         logger.LogWarning("Could not apply port hopping rules (exit {ExitCode}): {Error}", exitCode, error.Trim());
     }
 

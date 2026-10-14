@@ -9,8 +9,13 @@ using HyPanel.Shared.Contracts;
 
 /// <summary>Owns hpe*/hpw* exit interfaces, routing tables 100001..116000 and inet hypanel_egress.</summary>
 public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, EgressTransportRegistry? transports = null,
-    AgentEnrollmentOptions? options = null, BackendBinaryManager? binaryManager = null)
+    AgentEnrollmentOptions? options = null, BackendBinaryManager? binaryManager = null,
+    FirewallManager? firewall = null, Func<IPAddress, CancellationToken, Task<TunnelTcpProbeResult>>? tcpProbe = null)
 {
+    /// <summary>A transient timeout must not stop a working service, so TCP probe failures need to repeat.</summary>
+    private const int TcpFailuresBeforeStop = 3;
+    private readonly Dictionary<Guid, int> tcpFailures = new();
+
     private EgressNetworkReport report = new(false, false, null);
     public EgressNetworkReport Report
     {
@@ -31,6 +36,8 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
         {
             Failures = failures;
             Report = new(false, false, null, Transports.SupportedTransports, state.Transport);
+            // A previous run may have opened firewall rules this node no longer needs.
+            if (firewall is not null) await firewall.ApplyAsync("egress", [], false, ct);
             return;
         }
         try
@@ -59,18 +66,37 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
             foreach (var name in state.Tunnels.Select(t => Transports.Resolve(t.Transport).Interface(t)).Distinct())
                 KernelSettings.Ensure($"net/ipv4/conf/{name}/rp_filter", "2");
             Report = new(state.Enabled, state.Enabled, null, Transports.SupportedTransports, state.Transport, AppliedPort(state));
+            // Open what the tunnels receive (and, on an exit, allow forwarding) before probing through them.
+            var firewallError = firewall is null ? null : await firewall.ApplyAsync("egress",
+                state.Tunnels.Select(t => Transports.Resolve(t.Transport).Inbound(t)).OfType<FirewallOpening>().Distinct().ToArray(),
+                state.Tunnels.Any(t => t.IsExit), ct);
+            var probeTcp = tcpProbe ?? ((source, token) => TunnelTcpProbe.CheckAsync(source, TimeSpan.FromSeconds(4), token));
+            foreach (var gone in tcpFailures.Keys.Where(id => state.Tunnels.All(t => t.ServiceId != id)).ToArray())
+                tcpFailures.Remove(gone);
             foreach (var tunnel in state.Tunnels.Where(t => !t.IsExit))
             {
+                var source = IPAddress.Parse(EgressAddressing.Source(tunnel.Slot));
                 try
                 {
-                    var probe = await IcmpProbe.PingAsync(IPAddress.Parse(EgressAddressing.Source(tunnel.Slot)),
-                        IPAddress.Parse(EgressAddressing.Exit(tunnel.Slot)), 1, TimeSpan.FromSeconds(3), ct);
+                    var probe = await IcmpProbe.PingAsync(source, IPAddress.Parse(EgressAddressing.Exit(tunnel.Slot)), 1,
+                        TimeSpan.FromSeconds(3), ct);
                     if (!probe.Success) throw new InvalidOperationException(probe.Error ?? "ICMP 无应答");
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    failures[tunnel.ServiceId] = "出口隧道不可达，请检查两端公网 IPv4、所选后端的协议和防火墙。";
+                    tcpFailures.Remove(tunnel.ServiceId);
+                    failures[tunnel.ServiceId] = Describe("出口隧道不可达，请检查两端公网 IPv4、所选后端的协议和防火墙。", firewallError);
+                    continue;
                 }
+                // The tunnel carries packets; now check that the exit actually forwards TCP to the internet.
+                var tcp = await probeTcp(source, ct);
+                if (tcp.Success) { tcpFailures.Remove(tunnel.ServiceId); continue; }
+                var count = tcpFailures.GetValueOrDefault(tunnel.ServiceId) + 1;
+                tcpFailures[tunnel.ServiceId] = count;
+                if (count < TcpFailuresBeforeStop) continue;
+                failures[tunnel.ServiceId] = Describe(tcp.Rejected
+                    ? "出口节点拒绝转发隧道流量，多为出口节点防火墙（firewalld 等）未放行转发。"
+                    : "出口隧道已连通，但无法经出口访问公网，请检查出口节点的转发、NAT 和防火墙。", firewallError);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -82,6 +108,9 @@ public sealed class EgressNetworkManager(ILogger<EgressNetworkManager> logger, E
         }
         Failures = failures;
     }
+
+    private static string Describe(string message, string? firewallError) =>
+        firewallError is null ? message : $"{message}{firewallError}";
 
     internal static string BuildScript(EgressNetworkState state) => BuildScriptCore(state, EgressTransportRegistry.Default);
 
