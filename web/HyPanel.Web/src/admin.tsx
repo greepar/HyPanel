@@ -1199,7 +1199,7 @@ function InstallModal({
           <label className="switch">
             <input type="checkbox" checked={options.nftables} onChange={(event) => toggle("nftables", event.currentTarget.checked)} />
             <span />
-            安装网络工具（端口跳跃和出口转发需要）
+            安装网络工具（端口跳跃需要）
           </label>
           <label className="switch">
             <input type="checkbox" checked={options.tuneNetwork} onChange={(event) => toggle("tuneNetwork", event.currentTarget.checked)} />
@@ -1560,68 +1560,6 @@ function NodeLogs({
   );
 }
 
-function EgressSettings({ api, node, setError }: { api: ApiClient; node: Node; setError: (value: string) => void }) {
-  const [egress, setEgress] = useState<import('./domain').EgressNode | null>(null);
-  const [backends, setBackends] = useState<import('./domain').EgressTransportDefinition[]>([]);
-  const [transport, setTransport] = useState('gre');
-  const [udpPort, setUdpPort] = useState('47541');
-  useEffect(() => { void api.egressBackends().then(setBackends).catch(reason => setError(messageFor(reason, "无法加载出口后端"))); }, []);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    const load = () => void api.egressNodes().then(list => {
-      if (!cancelled) {
-        const value = list.find(item => item.id === node.id) ?? null;
-        setEgress(value);
-        if (value?.enabled) { setTransport(value.transport); setUdpPort(String(value.udpPort || (value.transport === 'wireguard' ? 51820 : 47541))); }
-      }
-    }).catch(reason => { if (!cancelled) setError(messageFor(reason, "无法读取出口状态")); });
-    load();
-    const timer = window.setInterval(load, 8000);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [node.id]);
-  const toggle = async () => {
-    setBusy(true);
-    try {
-      await api.setEgressEnabled(node.id, !egress?.enabled, transport, transport === 'gre' ? undefined : Number(udpPort));
-      const list = await api.egressNodes();
-      setEgress(list.find(item => item.id === node.id) ?? null);
-    } catch (reason) { setError(messageFor(reason, "无法配置出口转发")); }
-    finally { setBusy(false); }
-  };
-  const supported = node.platform?.startsWith('linux-') && !!node.publicIpv4 && !!egress?.supported && !!egress.supportedTransports?.includes(transport);
-  return <section className="card panel">
-    <SectionTitle title="出口转发" description="让其他节点上的服务使用这台服务器的出口 IP。" />
-    <dl className="facts-list">
-      <div><dt>状态</dt><dd>{!egress ? '读取中…' : !egress.enabled ? '未启用' : egress.error ? '配置失败' : egress.ready ? '已就绪' : node.online ? '等待 Agent 配置或上报' : '节点离线'}</dd></div>
-      <div><dt>出口 IP</dt><dd>{node.publicIpv4 || '未检测到 IPv4'}</dd></div>
-      <div><dt>使用此出口的服务</dt><dd>{egress?.usedBy ?? 0}</dd></div>
-    </dl>
-    {egress?.error && <p className="field-help">{egress.error}</p>}
-    {!supported && <p className="field-help">尚未收到 Agent 的出口能力上报，请检查节点日志；已有出口仍可停用。</p>}
-    <div className="egress-backend-field">
-      <span>出口后端</span>
-      <Select value={transport} disabled={busy || !!egress?.enabled} onChange={value => { setTransport(value); setUdpPort(value === 'wireguard' ? '51820' : '47541'); }}
-        options={backends.filter(backend => egress?.supportedTransports?.includes(backend.id) || backend.id === transport)
-          .map(backend => ({ value: backend.id, label: `${backend.name} · ${backend.encrypted ? '加密' : '不加密'}` }))} />
-      <p className="field-help">配置成功后，此节点会出现在服务的出口列表中。当前提供 IPv4 出口；后端类型由面板和两端 Agent 的能力共同决定。</p>
-    </div>
-    {transport !== 'gre' && <label className="field">
-      <span>UDP 端口</span>
-      <input type="number" min="1" max="65535" value={udpPort} disabled={busy || !!egress?.enabled}
-        onInput={event => setUdpPort(event.currentTarget.value)} />
-      <p className="field-help">{transport === 'wireguard'
-        ? '在此出口节点放行这个入站 UDP 端口。入口节点主动连接，需允许 UDP 出站及会话回包。'
-        : '两端需要接收 FOU UDP 数据包，面板会下发同一端口；请在两端放行此 UDP 端口。'}</p>
-    </label>}
-    {transport === 'wireguard' && <p className="field-help">点击启用后自动下载并校验 WireGuard 工具，入口节点使用此出口时也会自动下载；无需手动安装系统包，仍需内核支持 WireGuard。</p>}
-    <button className="button button-secondary" type="button" disabled={busy || !egress || (!egress.enabled && (!supported || !node.online)) || (!egress.enabled && transport !== 'gre' && (!Number.isInteger(Number(udpPort)) || Number(udpPort) < 1 || Number(udpPort) > 65535)) || (!!egress.enabled && egress.usedBy > 0)} onClick={() => void toggle()}>
-      {busy ? '提交中…' : egress?.enabled ? '停用出口转发' : transport === 'wireguard' ? '安装并启用出口转发' : '启用出口转发'}
-    </button>
-    {!!egress?.usedBy && <p className="field-help">先切换使用此出口的服务，才能停用或删除该出口。</p>}
-  </section>;
-}
-
 function NodeSettings({
   api,
   node,
@@ -1677,7 +1615,6 @@ function NodeSettings({
     node.agentUpdateStatus === "Failed";
   return (
     <div className="detail-grid">
-      <EgressSettings api={api} node={node} setError={setError} />
       <section className="card panel">
         <SectionTitle title="Agent 更新" description={agentUpdateLabel(node)} />
         <dl className="facts-list">
@@ -2264,7 +2201,7 @@ function ServiceLogPanel({
       <div className="section-toolbar">
         <div>
           <h2>{service.name}</h2>
-          <span>收集服务进程日志；使用出口转发时，同时收集入口和出口的隧道、路由及防火墙诊断。</span>
+          <span>收集服务进程日志。</span>
         </div>
         <button className="button button-primary" type="button" disabled={busy || waiting} onClick={() => void collect()}>
           {waiting ? "等待 Agent 返回…" : "收集日志与网络诊断"}
@@ -2327,12 +2264,12 @@ function ServiceEditor({
   const [definitions, setDefinitions] = useState<BackendDefinition[]>([]);
   const [form, setForm] = useState<ServiceForm | null>(null);
   const [certificates, setCertificates] = useState<Certificate[]>([]);
-  const [egressNodes, setEgressNodes] = useState<import('./domain').EgressNode[]>([]);
+  const [relayNodes, setRelayNodes] = useState<Node[]>([]);
   useEffect(() => {
     let cancelled = false;
-    const load = () => void api.egressNodes().then(list => {
-      if (!cancelled) setEgressNodes(list.filter(item => item.id !== nodeId));
-    }).catch(reason => { if (!cancelled) setError(messageFor(reason, "无法加载出口节点")); });
+    const load = () => void api.nodes().then(list => {
+      if (!cancelled) setRelayNodes(list.filter(item => item.id !== nodeId));
+    }).catch(reason => { if (!cancelled) setError(messageFor(reason, "无法加载节点列表")); });
     load();
     const timer = window.setInterval(load, 8000);
     return () => { cancelled = true; window.clearInterval(timer); };
@@ -2664,32 +2601,20 @@ function ServiceEditor({
             </div>
           )}
           <div className="form-grid">{protocolFields.map(renderField)}</div>
-          {definition.supportsEgress && <div className="egress-backend-field">
-            <span>出口节点</span>
-            <Select value={form.values.exitNodeId ?? ""} onChange={value => setForm({ ...form, values: { ...form.values, exitNodeId: value } })}
-              options={[
-                { value: "", label: "本机直连" },
-                ...(form.values.exitNodeId && !egressNodes.some(item => item.id === form.values.exitNodeId)
-                  ? [{ value: form.values.exitNodeId, label: "原出口不可用" }] : []),
-                ...egressNodes.filter(item => (item.enabled && item.ready) || item.id === form.values.exitNodeId)
-                  .map(item => ({ value: item.id, label: `${item.displayName} · ${item.publicIpv4 ?? '未知 IP'} · ${item.transport}${!item.ready ? ' · 未就绪' : ''}` }))
-              ]} />
-            <p className="field-help">先在目标节点的“设置 → 出口转发”启用出口，配置成功后即可选择。出口断开时停止出网，不自动切回本机。</p>
-          </div>}
-          {form.backendType === "xray" && <div className="egress-backend-field">
+          {form.backendType === "xray" && <div className="relay-field">
             <span>转发入口节点</span>
             <Select value={form.values.relayNodeId ?? ""} onChange={value => setForm({ ...form, values: { ...form.values, relayNodeId: value } })}
               options={[
                 { value: "", label: "不转发（客户端直连本节点）" },
-                ...egressNodes.map(item => ({ value: item.id, label: `${item.displayName} · ${item.publicIpv4 ?? '未知 IP'}` }))
+                ...relayNodes.map(item => ({ value: item.id, label: `${item.displayName} · ${item.publicIpv4 ?? '未知 IP'}` }))
               ]} />
             {form.values.relayNodeId && <label>
               转发端口（在入口节点监听）
               <input type="number" min="1" max="65535" value={form.values.relayPort ?? ""}
                 onInput={event => setForm({ ...form, values: { ...form.values, relayPort: event.currentTarget.value } })} />
             </label>}
-            <p className="field-help">服务仍运行在本节点，由入口节点的 Agent 把该 TCP 端口转发到这里；订阅自动使用入口节点的地址和转发端口。
-              请在入口节点放行转发端口，并在本节点放行入口节点的访问。用户流量统计在本节点，本节点看到的来源 IP 是入口节点。</p>
+            <p className="field-help">服务仍运行在本节点，由入口节点的 Agent 把该 TCP 端口转发到这里；订阅自动使用入口节点的地址和转发端口，网站看到的是本节点的出口 IP。
+              入口节点的 Agent 会自动放行转发端口（云厂商安全组除外）；请在本节点放行入口节点的访问。用户流量统计在本节点，本节点看到的来源 IP 是入口节点。</p>
           </div>}
         </fieldset>
         <fieldset>

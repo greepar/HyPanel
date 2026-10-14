@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 25;
+    public const long CurrentSchemaVersion = 26;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -624,6 +624,22 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             await ExecuteAsync(connection, transaction, """
                 ALTER TABLE node_egress ADD COLUMN udp_port INTEGER NOT NULL DEFAULT 0;
                 INSERT INTO schema_migrations (version, applied_at_utc) VALUES (25, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                """, cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, 26, cancellationToken))
+        {
+            // Exit forwarding was removed: forget its tables and strip the exit reference from service configs (the
+            // Agent rejects unknown members), bumping the revision of every node whose services changed.
+            await ExecuteAsync(connection, transaction, """
+                UPDATE nodes SET desired_revision = desired_revision + 1
+                WHERE id IN (SELECT node_id FROM service_instances
+                             WHERE json_valid(config_json) AND json_type(config_json, '$.exitNodeId') IS NOT NULL);
+                UPDATE service_instances SET config_json = json_remove(config_json, '$.exitNodeId')
+                WHERE json_valid(config_json) AND json_type(config_json, '$.exitNodeId') IS NOT NULL;
+                DROP TABLE IF EXISTS service_egress;
+                DROP TABLE IF EXISTS node_egress;
+                INSERT INTO schema_migrations (version, applied_at_utc) VALUES (26, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
                 """, cancellationToken);
         }
 

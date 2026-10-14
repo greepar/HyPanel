@@ -1,4 +1,4 @@
-import type { EgressTransportDefinition, EgressNode, BackendDefinition, Backup, BackupValidation, Certificate, CertificateRequest, GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Usage, User, UserGroup } from './domain'
+import type { BackendDefinition, Backup, BackupValidation, Certificate, CertificateRequest, GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Usage, User, UserGroup } from './domain'
 
 
 export type InstallPlatform = 'unix' | 'powershell' | 'docker'
@@ -23,9 +23,6 @@ export class ApiClient {
     }
     return (response.status === 204 ? undefined : await response.json()) as T
   }
-  egressNodes() { return this.request<EgressNode[]>('/api/admin/v1/egress-nodes') }
-  egressBackends() { return this.request<EgressTransportDefinition[]>('/api/admin/v1/egress-backends') }
-  setEgressEnabled(nodeId: string, enabled: boolean, transport: string = 'gre', udpPort?: number) { return this.request<void>(`/api/admin/v1/nodes/${nodeId}/egress`, { method: 'PUT', body: JSON.stringify({ enabled, transport, udpPort }) }) }
   private async authenticatedFetch(path: string, init: RequestInit = {}) {
     const bearer = this.token()
     const response = await fetch(path, { ...init, headers: { ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}), ...init.headers } })
@@ -77,7 +74,6 @@ export class ApiClient {
       badge: string
       defaultVersion: string | null
       fields: BackendDefinition['fields']
-      supportsEgress: boolean
     }[]>('/api/admin/v1/backends')
     return raw.map(item => ({
       backendType: item.backendType,
@@ -88,7 +84,6 @@ export class ApiClient {
       badge: item.badge,
       defaultVersion: item.defaultVersion,
       fields: item.fields,
-      supportsEgress: item.supportsEgress,
     }))
   }
   generateBackendDefaults = (backendType: string, nodeId?: string) => this.request<{ backendType: string; values: Record<string, string> }>(`/api/admin/v1/backends/${encodeURIComponent(backendType)}/defaults${nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`, { method: 'POST' })

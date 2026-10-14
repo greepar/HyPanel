@@ -15,137 +15,45 @@ namespace HyPanel.Server.Tests.Persistence;
 public sealed class SqliteServerRepositoryTests
 {
     [TestMethod]
-    public async Task WireGuard_CustomPortAndKeysAreConsistentAcrossSourceAndExit()
-    {
-        await using var fixture = await TestDatabase.CreateAsync();
-        var source = Guid.NewGuid(); var exit = Guid.NewGuid();
-        await CreateAgentAsync(fixture, source, "wg-source-token", "wg-source-secret");
-        await CreateAgentAsync(fixture, exit, "wg-exit-token", "wg-exit-secret");
-        Assert.IsTrue(await fixture.Repository.SetEgressEnabledAsync(exit, true, CancellationToken.None, EgressTransports.WireGuard, 4433));
-        foreach (var backend in new[] { "xray", "xray-ss" })
-            await fixture.Repository.CreateServiceAsync(CreateService(source, Guid.NewGuid(), backend) with
-            { BackendType = backend, ConfigJson = $"{{\"exitNodeId\":\"{exit}\"}}" }, CancellationToken.None);
-        var a = await fixture.Repository.GetEgressNetworkAsync(source, CancellationToken.None);
-        var b = await fixture.Repository.GetEgressNetworkAsync(exit, CancellationToken.None);
-        var context = HyPanel.Shared.Serialization.HyPanelJsonSerializerContext.Default.WireGuardEgressOptions;
-        var ownA = JsonSerializer.Deserialize(a.Tunnels[0].TransportOptionsJson!, context)!;
-        var ownB = JsonSerializer.Deserialize(b.Tunnels[0].TransportOptionsJson!, context)!;
-        Assert.AreEqual(4433, ownA.Port); Assert.AreEqual(4433, ownB.Port);
-        Assert.AreEqual("hpwx", ownB.InterfaceName);
-        Assert.AreEqual(a.Tunnels[0].TransportOptionsJson, a.Tunnels[1].TransportOptionsJson);
-        Assert.AreNotEqual(ownA.PrivateKey, ownB.PrivateKey);
-        var pubA = new byte[32]; var pubB = new byte[32];
-        Org.BouncyCastle.Math.EC.Rfc7748.X25519.GeneratePublicKey(Convert.FromBase64String(ownA.PrivateKey), 0, pubA, 0);
-        Org.BouncyCastle.Math.EC.Rfc7748.X25519.GeneratePublicKey(Convert.FromBase64String(ownB.PrivateKey), 0, pubB, 0);
-        Assert.AreEqual(Convert.ToBase64String(pubA), ownB.PeerPublicKey);
-        Assert.AreEqual(Convert.ToBase64String(pubB), ownA.PeerPublicKey);
-        Assert.IsFalse(await fixture.Repository.SetEgressEnabledAsync(exit, true, CancellationToken.None, EgressTransports.WireGuard, 4434));
-        await fixture.Repository.RecordEgressReportAsync(exit, new(true, true, null,
-            [EgressTransports.WireGuard], EgressTransports.WireGuard, 4434), CancellationToken.None);
-        Assert.IsFalse((await fixture.Repository.GetEgressNodesAsync(CancellationToken.None)).Single(n => n.Id == exit).Ready);
-        foreach (var service in await fixture.Repository.GetServicesForNodeAsync(source, CancellationToken.None))
-            await fixture.Repository.UpdateServiceAsync(service.Service with { ConfigJson = "{}" }, CancellationToken.None);
-        Assert.IsTrue(await fixture.Repository.SetEgressEnabledAsync(exit, false, CancellationToken.None, EgressTransports.WireGuard, 4433));
-        await fixture.Repository.RecordEgressReportAsync(exit, new(false, false, null,
-            [EgressTransports.WireGuard], EgressTransports.WireGuard), CancellationToken.None);
-        Assert.IsTrue((await fixture.Repository.GetEgressNodesAsync(CancellationToken.None)).Single(n => n.Id == exit).Supported);
-    }
-
-    [TestMethod]
-    public async Task EgressDiagnostics_QueuesBothAgentsAndRejectsUnrelatedNode()
-    {
-        await using var fixture = await TestDatabase.CreateAsync();
-        var source = Guid.NewGuid(); var exit = Guid.NewGuid(); var unrelated = Guid.NewGuid();
-        await CreateAgentAsync(fixture, source, "a-token", "a-secret");
-        await CreateAgentAsync(fixture, exit, "b-token", "b-secret");
-        await CreateAgentAsync(fixture, unrelated, "c-token", "c-secret");
-        await fixture.Repository.SetEgressEnabledAsync(exit, true, CancellationToken.None);
-        var service = CreateService(source, Guid.NewGuid(), "egress") with { ConfigJson = $"{{\"exitNodeId\":\"{exit}\"}}" };
-        await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
-        var expiry = fixture.Time.GetUtcNow().AddMinutes(2);
-        Assert.IsNotNull(await fixture.Repository.CreateCollectServiceLogsCommandAsync(Guid.NewGuid(), source, service.Id, expiry, CancellationToken.None));
-        Assert.IsNotNull(await fixture.Repository.CreateCollectServiceLogsCommandAsync(Guid.NewGuid(), exit, service.Id, expiry, CancellationToken.None));
-        Assert.IsNull(await fixture.Repository.CreateCollectServiceLogsCommandAsync(Guid.NewGuid(), unrelated, service.Id, expiry, CancellationToken.None));
-        Assert.IsNull(await fixture.Repository.CreateCollectServiceLogsCommandAsync(Guid.NewGuid(), exit, service.Id, expiry, CancellationToken.None));
-        Assert.AreEqual(2, (await fixture.Repository.GetServiceDiagnosticsAsync(source, service.Id, CancellationToken.None)).Count);
-    }
-
-    [TestMethod]
-    public async Task Egress_ReportsCapabilitiesBeforeMatchingConfigurationAck()
+    public async Task Migration26_StripsTheRemovedExitReferenceBumpsTheNodeAndDropsEgressTables()
     {
         await using var fixture = await TestDatabase.CreateAsync();
         var node = Guid.NewGuid();
-        var agent = await CreateAgentAsync(fixture, node, "exit-token", "exit-secret");
-        await fixture.Repository.TryUpdateAgentReportAsync(agent, "0.5.18", "linux-x64", 0, null, CancellationToken.None);
-        await fixture.Repository.SetEgressEnabledAsync(node, true, CancellationToken.None, EgressTransports.GreUdp, 47541);
-        await fixture.Repository.RecordEgressReportAsync(node, new(false, false, null,
-            [EgressTransports.Gre, EgressTransports.GreUdp, EgressTransports.WireGuard]), CancellationToken.None);
-        var exit = (await fixture.Repository.GetEgressNodesAsync(CancellationToken.None)).Single(n => n.Id == node);
-        Assert.IsTrue(exit.Supported);
-        Assert.IsFalse(exit.Ready);
-        Assert.IsTrue(exit.SupportedTransports.Contains(EgressTransports.WireGuard));
-        Assert.IsTrue(await fixture.Repository.SetEgressEnabledAsync(node, false, CancellationToken.None, EgressTransports.GreUdp, 47541));
-    }
+        await fixture.Repository.CreateNodeAsync(node, "node", CancellationToken.None);
+        var service = XrayService(CreateService(node, Guid.NewGuid(), "exit-user"));
+        await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
+        var before = (await fixture.Repository.GetNodeAsync(node, CancellationToken.None))!.DesiredRevision;
 
-    [TestMethod]
-    public async Task Egress_AllocatesTunnelsForXrayAndShadowsocks()
-    {
-        await using var fixture = await TestDatabase.CreateAsync();
-        var source = Guid.NewGuid(); var exit = Guid.NewGuid();
-        await CreateAgentAsync(fixture, source, "source-token", "source-secret");
-        await CreateAgentAsync(fixture, exit, "exit-token", "exit-secret");
-        Assert.IsTrue(await fixture.Repository.SetEgressEnabledAsync(exit, true, CancellationToken.None));
-
-        foreach (var backend in new[] { "xray", "xray-ss" })
+        await using (var connection = await fixture.OpenConnectionAsync())
+        await using (var setup = connection.CreateCommand())
         {
-            var service = CreateService(source, Guid.NewGuid(), backend) with
-            {
-                BackendType = backend,
-                ConfigJson = $"{{\"exitNodeId\":\"{exit}\"}}"
-            };
-            await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
+            // Rebuild the state of a panel that still has exit forwarding configured.
+            setup.CommandText = """
+                CREATE TABLE node_egress (node_id TEXT PRIMARY KEY);
+                CREATE TABLE service_egress (slot INTEGER PRIMARY KEY);
+                UPDATE service_instances SET config_json = json_set(config_json, '$.listenPort', 8443, '$.exitNodeId', 'ffffffff-ffff-ffff-ffff-ffffffffffff');
+                DELETE FROM schema_migrations WHERE version = 26;
+                """;
+            await setup.ExecuteNonQueryAsync();
         }
 
-        Assert.AreEqual(2, (await fixture.Repository.GetEgressNetworkAsync(source, CancellationToken.None)).Tunnels.Count);
-        Assert.AreEqual(2, (await fixture.Repository.GetEgressNetworkAsync(exit, CancellationToken.None)).Tunnels.Count);
-    }
+        await fixture.Migrations.MigrateAsync(CancellationToken.None);
 
-    [TestMethod]
-    public async Task EgressLifecycle_RequiresAgentAckAndProtectsReferencedExit()
-    {
-        await using var fixture = await TestDatabase.CreateAsync();
-        var source = Guid.NewGuid(); var exit = Guid.NewGuid();
-        var sourceAgent = await CreateAgentAsync(fixture, source, "source-token", "source-secret");
-        var exitAgent = await CreateAgentAsync(fixture, exit, "exit-token", "exit-secret");
-        await fixture.Repository.TryUpdateAgentReportAsync(sourceAgent, "1.0", "linux-x64", 0, null, CancellationToken.None);
-        await fixture.Repository.TryUpdateAgentReportAsync(exitAgent, "1.0", "linux-x64", 0, null, CancellationToken.None);
-        Assert.IsTrue(await fixture.Repository.SetEgressEnabledAsync(exit, true, CancellationToken.None));
-        Assert.IsFalse((await fixture.Repository.GetEgressNodesAsync(CancellationToken.None)).Single(n => n.Id == exit).Ready);
-        // An acknowledgement for a different backend cannot make this exit ready.
-        await fixture.Repository.RecordEgressReportAsync(exit,
-            new(true, true, null, [EgressTransports.WireGuard], EgressTransports.WireGuard), CancellationToken.None);
-        Assert.IsFalse((await fixture.Repository.GetEgressNodesAsync(CancellationToken.None)).Single(n => n.Id == exit).Ready);
-        await fixture.Repository.RecordEgressReportAsync(exit, new(true, true, null), CancellationToken.None);
-        var readyExit = (await fixture.Repository.GetEgressNodesAsync(CancellationToken.None)).Single(n => n.Id == exit);
-        Assert.IsTrue(readyExit.Ready);
-        Assert.AreEqual(EgressTransports.Gre, readyExit.Transport);
-        CollectionAssert.AreEqual(new[] { EgressTransports.Gre }, readyExit.SupportedTransports.ToArray());
-        var service = CreateService(source, Guid.NewGuid(), "egress") with { ConfigJson = $"{{\"exitNodeId\":\"{exit}\"}}" };
-        await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
-        var a = await fixture.Repository.GetEgressNetworkAsync(source, CancellationToken.None);
-        var b = await fixture.Repository.GetEgressNetworkAsync(exit, CancellationToken.None);
-        Assert.IsFalse(a.Tunnels.Single().IsExit); Assert.IsTrue(b.Tunnels.Single().IsExit);
-        Assert.AreEqual(a.Tunnels.Single().Slot, b.Tunnels.Single().Slot);
-        Assert.IsFalse(await fixture.Repository.SetEgressEnabledAsync(exit, false, CancellationToken.None));
-        await Assert.ThrowsExactlyAsync<SqliteException>(() => fixture.Repository.DeleteNodeAsync(exit, CancellationToken.None));
-        fixture.Time.Advance(TimeSpan.FromSeconds(31));
-        Assert.IsFalse((await fixture.Repository.GetEgressNodesAsync(CancellationToken.None)).Single(n => n.Id == exit).Ready);
-        await fixture.Repository.UpdateServiceAsync(service with { ConfigJson = "{}" }, CancellationToken.None);
-        Assert.AreEqual(0, (await fixture.Repository.GetEgressNetworkAsync(exit, CancellationToken.None)).Tunnels.Count);
-        Assert.IsTrue(await fixture.Repository.SetEgressEnabledAsync(exit, false, CancellationToken.None));
-        // A stale acknowledgement of the old enabled state cannot make a disabled node ready again.
-        await fixture.Repository.RecordEgressReportAsync(exit, new(true, true, null), CancellationToken.None);
-        Assert.IsFalse((await fixture.Repository.GetEgressNodesAsync(CancellationToken.None)).Single(n => n.Id == exit).Ready);
+        await using var verify = await fixture.OpenConnectionAsync();
+        await using var command = verify.CreateCommand();
+        command.CommandText = "SELECT json_type(config_json, '$.exitNodeId'), json_extract(config_json, '$.listenPort') FROM service_instances WHERE id=@id;";
+        command.Parameters.AddWithValue("@id", service.Id.ToString("D"));
+        await using (var reader = await command.ExecuteReaderAsync())
+        {
+            Assert.IsTrue(await reader.ReadAsync());
+            Assert.IsTrue(reader.IsDBNull(0), "the exit reference is gone");
+            Assert.IsFalse(reader.IsDBNull(1), "the rest of the config is untouched");
+        }
+        Assert.AreEqual(before + 1, (await fixture.Repository.GetNodeAsync(node, CancellationToken.None))!.DesiredRevision,
+            "Agents must resync");
+        await using var tables = verify.CreateCommand();
+        tables.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('node_egress','service_egress');";
+        Assert.AreEqual(0L, await tables.ExecuteScalarAsync());
     }
 
     [TestMethod]
@@ -169,7 +77,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L), (22L, 1L), (23L, 1L), (24L, 1L), (25L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L), (22L, 1L), (23L, 1L), (24L, 1L), (25L, 1L), (26L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -769,11 +677,6 @@ public sealed class SqliteServerRepositoryTests
             assets.Select(pair => new AgentReleaseAsset(RidOf(pair.Key),
                 pair.Key, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(pair.Value)).ToLowerInvariant(),
                 pair.Value.Length)).ToArray());
-        var tools = assets.Where(pair => RidOf(pair.Key).StartsWith("linux-", StringComparison.Ordinal))
-            .Select(pair => new BackendArtifact("wireguard-tools", "1.0.20260223", RidOf(pair.Key),
-                $"wg-1.0.20260223-{RidOf(pair.Key)}", Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(pair.Value)).ToLowerInvariant(), pair.Value.Length, false)).ToArray();
-        manifest = manifest with { Tools = tools };
-        foreach (var tool in tools) assets[tool.FileName] = Encoding.UTF8.GetBytes(tool.Rid);
         var installSh = "sh"u8.ToArray();
         var installPs1 = "ps1"u8.ToArray();
         var handler = new RecordingReleaseHandler(new Dictionary<string, byte[]>(assets)
@@ -804,15 +707,6 @@ public sealed class SqliteServerRepositoryTests
             var mirrored = handler.Requests.Where(uri => uri.Host == "mirror.example").ToArray();
             Assert.AreEqual(2 + manifest.Assets.Count, mirrored.Length, "installers and Agent binaries go through the mirror");
             Assert.IsTrue(mirrored.All(uri => Uri.UnescapeDataString(uri.AbsolutePath).Contains("https://github.com/o/r/releases/latest/download/")));
-            Assert.IsFalse(handler.Requests.Any(uri => uri.AbsoluteUri.Contains("wg-")));
-            var cachedTool = await worker.EnsureToolCachedAsync(tools[0], CancellationToken.None);
-            Assert.AreEqual(cachedTool, await worker.EnsureToolCachedAsync(tools[0], CancellationToken.None));
-            Assert.AreEqual(1, handler.Requests.Count(uri => uri.AbsoluteUri.Contains("wg-")));
-            Assert.IsTrue(Uri.UnescapeDataString(handler.Requests[^1].AbsolutePath).Contains("/releases/download/v2.0.0/"));
-            await File.WriteAllTextAsync(cachedTool, "corrupt");
-            await worker.EnsureToolCachedAsync(tools[0], CancellationToken.None);
-            Assert.AreEqual(2, handler.Requests.Count(uri => uri.AbsoluteUri.Contains("wg-")));
-
         }
         finally
         {

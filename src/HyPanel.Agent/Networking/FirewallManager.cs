@@ -26,8 +26,7 @@ public delegate Task<FirewallCommandResult> FirewallCommandRunner(string file, I
 /// <item>Other hosts with iptables (ufw, Docker, plain iptables): a dedicated <c>HYPANEL-INPUT</c> chain jumped to
 /// first from INPUT. Needs only CAP_NET_ADMIN.</item>
 /// </list>
-/// Exit forwarding on firewalld additionally gets a zone for the tunnel address range and a policy that accepts
-/// forwarding from it. The zone has the default target, so the tunnel peer still cannot reach the host's services.
+/// Earlier versions also created a tunnel zone and forwarding policy for exit forwarding; those are removed when found.
 /// </summary>
 public sealed class FirewallManager(ILogger<FirewallManager> logger, AgentEnrollmentOptions? options = null,
     FirewallCommandRunner? runner = null, TimeProvider? time = null)
@@ -35,13 +34,12 @@ public sealed class FirewallManager(ILogger<FirewallManager> logger, AgentEnroll
     internal const string InputChain = "HYPANEL-INPUT";
     internal const string TunnelZone = "hypanel-tunnel";
     internal const string TunnelPolicy = "hypanel-egress";
-    internal const string TunnelRange = "169.254.0.0/16";
     private static readonly TimeSpan VerifyInterval = TimeSpan.FromMinutes(5);
     /// <summary>A failing reconcile is retried at this pace instead of on every sync, and is logged once per message.</summary>
     private static readonly TimeSpan RetryInterval = TimeSpan.FromMinutes(1);
 
     private readonly SemaphoreSlim gate = new(1, 1);
-    private readonly Dictionary<string, (HashSet<FirewallOpening> Openings, bool Forwarding)> owners = new();
+    private readonly Dictionary<string, HashSet<FirewallOpening>> owners = new();
     private readonly FirewallCommandRunner run = runner ?? RunProcessAsync;
     private readonly TimeProvider clock = time ?? TimeProvider.System;
     private State? applied;
@@ -57,14 +55,14 @@ public sealed class FirewallManager(ILogger<FirewallManager> logger, AgentEnroll
     private string StatePath => Path.Combine(options?.DataDirectory ?? Path.GetTempPath(), "firewall-rules.txt");
 
     /// <summary>Declares what <paramref name="owner"/> needs and reconciles the firewall. Returns the error, if any.</summary>
-    public async Task<string?> ApplyAsync(string owner, IReadOnlyCollection<FirewallOpening> openings, bool forwarding,
+    public async Task<string?> ApplyAsync(string owner, IReadOnlyCollection<FirewallOpening> openings,
         CancellationToken ct)
     {
         await gate.WaitAsync(ct);
         try
         {
-            if (openings.Count == 0 && !forwarding) owners.Remove(owner);
-            else owners[owner] = (openings.ToHashSet(), forwarding);
+            if (openings.Count == 0) owners.Remove(owner);
+            else owners[owner] = openings.ToHashSet();
             LastError = await ReconcileAsync(ct);
             return LastError;
         }
@@ -73,11 +71,10 @@ public sealed class FirewallManager(ILogger<FirewallManager> logger, AgentEnroll
 
     private async Task<string?> ReconcileAsync(CancellationToken ct)
     {
-        var desired = new HashSet<FirewallOpening>(owners.Values.SelectMany(o => o.Openings));
-        var forwarding = owners.Values.Any(o => o.Forwarding);
+        var desired = new HashSet<FirewallOpening>(owners.Values.SelectMany(o => o));
         applied ??= Load();
-        var wanted = Signature(desired, forwarding);
-        if (applied.Openings.Count == 0 && !applied.Forwarding && desired.Count == 0 && !forwarding)
+        var wanted = Signature(desired);
+        if (applied.Openings.Count == 0 && !applied.Forwarding && desired.Count == 0)
         {
             signature = wanted;
             return null;
@@ -88,18 +85,18 @@ public sealed class FirewallManager(ILogger<FirewallManager> logger, AgentEnroll
 
         // An injected runner (tests) stands in for the Linux tools.
         if (!OperatingSystem.IsLinux() && runner is null)
-            return desired.Count == 0 && !forwarding ? null : "防火墙自动放行仅支持 Linux 节点。";
+            return desired.Count == 0 && !applied.Forwarding ? null : "防火墙自动放行仅支持 Linux 节点。";
         try
         {
             var error = await DetectFirewalldAsync(ct)
-                ? await ReconcileFirewalldAsync(desired, forwarding, ct)
+                ? await ReconcileFirewalldAsync(desired, ct)
                 : await ReconcileIptablesAsync(desired, ct);
             if (error is null)
             {
                 signature = wanted;
                 verifiedAt = clock.GetUtcNow();
                 failedSignature = failedError = null;
-                applied = applied with { Openings = desired.Select(o => o.Key).ToHashSet(), Forwarding = forwarding };
+                applied = applied with { Openings = desired.Select(o => o.Key).ToHashSet(), Forwarding = false };
                 Save(applied);
                 return null;
             }
@@ -120,8 +117,8 @@ public sealed class FirewallManager(ILogger<FirewallManager> logger, AgentEnroll
         return error;
     }
 
-    private static string Signature(IEnumerable<FirewallOpening> desired, bool forwarding) =>
-        string.Join(';', desired.Select(o => o.Key).Order(StringComparer.Ordinal)) + (forwarding ? "+fwd" : "");
+    private static string Signature(IEnumerable<FirewallOpening> desired) =>
+        string.Join(';', desired.Select(o => o.Key).Order(StringComparer.Ordinal));
 
     // ---- firewalld ----------------------------------------------------------------------------------------
 
@@ -137,8 +134,7 @@ public sealed class FirewallManager(ILogger<FirewallManager> logger, AgentEnroll
         catch (Win32Exception) { return false; }
     }
 
-    private async Task<string?> ReconcileFirewalldAsync(HashSet<FirewallOpening> desired, bool forwarding,
-        CancellationToken ct)
+    private async Task<string?> ReconcileFirewalldAsync(HashSet<FirewallOpening> desired, CancellationToken ct)
     {
         var zone = await ResolveZoneAsync(ct);
         if (zone is null) return Unauthorized();
@@ -147,11 +143,8 @@ public sealed class FirewallManager(ILogger<FirewallManager> logger, AgentEnroll
             foreach (var key in current.Openings)
                 if (Parse(key) is { } stale && await FirewalldRuleAsync(stale, current.Zone, remove: true, ct) is { } failure)
                     return failure;
-        if (forwarding)
-        {
-            if (await EnsureForwardingAsync(ct) is { } forwardingError) return forwardingError;
-        }
-        else if (current.Forwarding && await RemoveForwardingAsync(ct) is { } removeError) return removeError;
+        // Clean up the zone and policy an earlier version created for exit forwarding.
+        if (current.Forwarding && await RemoveForwardingAsync(ct) is { } removeError) return removeError;
 
         foreach (var key in current.Openings)
             if (!desired.Any(o => o.Key == key) && Parse(key) is { } gone &&
@@ -210,48 +203,6 @@ public sealed class FirewallManager(ILogger<FirewallManager> logger, AgentEnroll
         ? $"rule family=\"ipv4\" source address=\"{opening.Source}\" protocol value=\"gre\" accept"
         : $"rule family=\"ipv4\" source address=\"{opening.Source}\" port port=\"{opening.Port}\" protocol=\"{opening.Protocol}\" accept";
 
-    /// <summary>Zone for the tunnel range plus a policy that accepts forwarding from it.</summary>
-    private async Task<string?> EnsureForwardingAsync(CancellationToken ct)
-    {
-        var zones = await run("firewall-cmd", ["--permanent", "--get-zones"], ct);
-        if (!Succeeded(zones)) return IsDenied(zones.Output) ? Unauthorized() : Trim(zones.Output);
-        var policies = await run("firewall-cmd", ["--permanent", "--get-policies"], ct);
-        if (!Succeeded(policies))
-            return policies.Output.Contains("usage", StringComparison.OrdinalIgnoreCase) ||
-                   policies.Output.Contains("unrecognized", StringComparison.OrdinalIgnoreCase)
-                ? null // Pre-policy firewalld (iptables backend): the HYPANEL-EGRESS chain already covers FORWARD.
-                : IsDenied(policies.Output) ? Unauthorized() : Trim(policies.Output);
-        var created = false;
-        var commands = new List<string[]>();
-        if (!Tokens(zones.Output).Contains(TunnelZone))
-        {
-            commands.Add(["--permanent", $"--new-zone={TunnelZone}"]);
-            commands.Add(["--permanent", $"--zone={TunnelZone}", $"--add-source={TunnelRange}"]);
-            created = true;
-        }
-        if (!Tokens(policies.Output).Contains(TunnelPolicy))
-        {
-            commands.Add(["--permanent", $"--new-policy={TunnelPolicy}"]);
-            commands.Add(["--permanent", $"--policy={TunnelPolicy}", $"--add-ingress-zone={TunnelZone}"]);
-            commands.Add(["--permanent", $"--policy={TunnelPolicy}", "--add-egress-zone=ANY"]);
-            commands.Add(["--permanent", $"--policy={TunnelPolicy}", "--set-target=ACCEPT"]);
-            created = true;
-        }
-        foreach (var command in commands)
-        {
-            var result = await run("firewall-cmd", command, ct);
-            if (!Succeeded(result)) return IsDenied(result.Output) ? Unauthorized() : $"firewalld 转发策略设置失败：{Trim(result.Output)}";
-        }
-        // New permanent zones and policies only take effect after a reload. Reloading drops runtime-only
-        // rules, so it is limited to the first time; every opening is also written to the permanent config.
-        if (created)
-        {
-            var reload = await run("firewall-cmd", ["--reload"], ct);
-            if (!Succeeded(reload)) return $"firewalld 重新加载失败：{Trim(reload.Output)}";
-        }
-        return null;
-    }
-
     private async Task<string?> RemoveForwardingAsync(CancellationToken ct)
     {
         foreach (var command in new[]
@@ -274,9 +225,6 @@ public sealed class FirewallManager(ILogger<FirewallManager> logger, AgentEnroll
         result.Output.Contains("ALREADY_ENABLED", StringComparison.Ordinal) ||
         result.Output.Contains("NOT_ENABLED", StringComparison.Ordinal) ||
         result.Output.Contains("NAME_CONFLICT", StringComparison.Ordinal);
-
-    private static HashSet<string> Tokens(string output) =>
-        output.Split([' ', '\n', '\r', '\t'], StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
 
     // ---- iptables ------------------------------------------------------------------------------------------
 

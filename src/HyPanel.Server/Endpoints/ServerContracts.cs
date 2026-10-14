@@ -2,9 +2,7 @@ namespace HyPanel.Server.Endpoints;
 
 using HyPanel.Shared.Contracts;
 
-internal sealed record EgressErrorResponse(string Error);
-
-internal sealed record SetEgressRequest(bool Enabled, string Transport = EgressTransports.Gre, int? UdpPort = null);
+internal sealed record ApiErrorResponse(string Error);
 
 internal sealed record CreateNodeRequest(string DisplayName);
 

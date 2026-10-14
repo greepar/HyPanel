@@ -60,7 +60,7 @@ public sealed class FirewallManagerTests
     public async Task Firewalld_OpensSourceRestrictedUdpPortInRuntimeAndPermanentConfig()
     {
         var (manager, host) = Create();
-        var error = await manager.ApplyAsync("egress", [new("udp", 47541, "203.0.113.7")], false, CancellationToken.None);
+        var error = await manager.ApplyAsync("tunnels", [new("udp", 47541, "203.0.113.7")], CancellationToken.None);
         Assert.IsNull(error);
         const string rule = "rule family=\"ipv4\" source address=\"203.0.113.7\" port port=\"47541\" protocol=\"udp\" accept";
         CollectionAssert.Contains(host.Commands, $"firewall-cmd --zone=public --add-rich-rule={rule}");
@@ -73,8 +73,8 @@ public sealed class FirewallManagerTests
     public async Task Firewalld_PlainTcpPortAndGreProtocolUseNativeForms()
     {
         var (manager, host) = Create();
-        await manager.ApplyAsync("relay", [new("tcp", 21114, null)], false, CancellationToken.None);
-        await manager.ApplyAsync("egress", [new("gre", null, "203.0.113.7")], false, CancellationToken.None);
+        await manager.ApplyAsync("relay", [new("tcp", 21114, null)], CancellationToken.None);
+        await manager.ApplyAsync("tunnels", [new("gre", null, "203.0.113.7")], CancellationToken.None);
         CollectionAssert.Contains(host.Commands, "firewall-cmd --zone=public --add-port=21114/tcp");
         CollectionAssert.Contains(host.Commands,
             "firewall-cmd --permanent --zone=public --add-rich-rule=rule family=\"ipv4\" source address=\"203.0.113.7\" protocol value=\"gre\" accept");
@@ -84,8 +84,8 @@ public sealed class FirewallManagerTests
     public async Task Firewalld_RemovesOpeningsWhenAnOwnerStopsNeedingThem()
     {
         var (manager, host) = Create();
-        await manager.ApplyAsync("relay", [new("tcp", 21114, null)], false, CancellationToken.None);
-        await manager.ApplyAsync("relay", [], false, CancellationToken.None);
+        await manager.ApplyAsync("relay", [new("tcp", 21114, null)], CancellationToken.None);
+        await manager.ApplyAsync("relay", [], CancellationToken.None);
         CollectionAssert.Contains(host.Commands, "firewall-cmd --zone=public --remove-port=21114/tcp");
         CollectionAssert.Contains(host.Commands, "firewall-cmd --permanent --zone=public --remove-port=21114/tcp");
     }
@@ -95,41 +95,26 @@ public sealed class FirewallManagerTests
     {
         var (manager, host) = Create();
         var shared = new FirewallOpening("udp", 51820, "203.0.113.7");
-        await manager.ApplyAsync("a", [shared], false, CancellationToken.None);
-        await manager.ApplyAsync("b", [shared], false, CancellationToken.None);
-        await manager.ApplyAsync("a", [], false, CancellationToken.None);
+        await manager.ApplyAsync("a", [shared], CancellationToken.None);
+        await manager.ApplyAsync("b", [shared], CancellationToken.None);
+        await manager.ApplyAsync("a", [], CancellationToken.None);
         Assert.IsFalse(host.Commands.Any(c => c.Contains("--remove-rich-rule")));
     }
 
     [TestMethod]
-    public async Task Firewalld_CreatesTunnelZoneAndForwardingPolicyOnceThenRemovesThem()
+    public async Task Firewalld_RemovesTheTunnelZoneAndPolicyAnEarlierVersionCreated()
     {
-        var (manager, host) = Create();
-        Assert.IsNull(await manager.ApplyAsync("egress", [], true, CancellationToken.None));
-        CollectionAssert.Contains(host.Commands, "firewall-cmd --permanent --new-zone=hypanel-tunnel");
-        CollectionAssert.Contains(host.Commands, "firewall-cmd --permanent --zone=hypanel-tunnel --add-source=169.254.0.0/16");
-        CollectionAssert.Contains(host.Commands, "firewall-cmd --permanent --new-policy=hypanel-egress");
-        CollectionAssert.Contains(host.Commands, "firewall-cmd --permanent --policy=hypanel-egress --add-ingress-zone=hypanel-tunnel");
-        CollectionAssert.Contains(host.Commands, "firewall-cmd --permanent --policy=hypanel-egress --add-egress-zone=ANY");
-        CollectionAssert.Contains(host.Commands, "firewall-cmd --permanent --policy=hypanel-egress --set-target=ACCEPT");
-        Assert.AreEqual(1, host.Commands.Count(c => c == "firewall-cmd --reload"));
-        // The tunnel zone must stay out of trusted: the peer may forward through the host but not reach its services.
-        Assert.IsFalse(host.Commands.Any(c => c.Contains("--zone=trusted")));
-
-        host.Commands.Clear();
-        await manager.ApplyAsync("egress", [], false, CancellationToken.None);
+        var directory = Directory.CreateTempSubdirectory("hypanel-fw").FullName;
+        File.WriteAllText(Path.Combine(directory, "firewall-rules.txt"), "zone=public\nforwarding\n");
+        var (manager, host) = Create(directory);
+        Assert.IsNull(await manager.ApplyAsync("relay", [], CancellationToken.None));
         CollectionAssert.Contains(host.Commands, "firewall-cmd --permanent --delete-policy=hypanel-egress");
         CollectionAssert.Contains(host.Commands, "firewall-cmd --permanent --delete-zone=hypanel-tunnel");
-    }
+        CollectionAssert.Contains(host.Commands, "firewall-cmd --reload");
 
-    [TestMethod]
-    public async Task Firewalld_DoesNotRecreateExistingTunnelZoneOrReload()
-    {
-        var (manager, host) = Create();
-        host.PermanentZones += " hypanel-tunnel";
-        host.Policies += " hypanel-egress";
-        await manager.ApplyAsync("egress", [], true, CancellationToken.None);
-        Assert.IsFalse(host.Commands.Any(c => c.Contains("--new-") || c.Contains("--reload")));
+        host.Commands.Clear(); // Done once: the state file no longer remembers it.
+        await manager.ApplyAsync("relay", [], CancellationToken.None);
+        Assert.AreEqual(0, host.Commands.Count);
     }
 
     [TestMethod]
@@ -137,7 +122,7 @@ public sealed class FirewallManagerTests
     {
         var (manager, host) = Create();
         host.ActiveZones = "hypanel-tunnel\n  sources: 169.254.0.0/16\nFedoraServer\n  interfaces: eth0\n";
-        await manager.ApplyAsync("relay", [new("tcp", 9, null)], false, CancellationToken.None);
+        await manager.ApplyAsync("relay", [new("tcp", 9, null)], CancellationToken.None);
         CollectionAssert.Contains(host.Commands, "firewall-cmd --zone=FedoraServer --add-port=9/tcp");
     }
 
@@ -146,7 +131,7 @@ public sealed class FirewallManagerTests
     {
         var (manager, host) = Create();
         host.ActiveZones = "public (default)\n  interfaces: eth0\n";
-        await manager.ApplyAsync("relay", [new("tcp", 9, null)], false, CancellationToken.None);
+        await manager.ApplyAsync("relay", [new("tcp", 9, null)], CancellationToken.None);
         CollectionAssert.Contains(host.Commands, "firewall-cmd --zone=public --add-port=9/tcp");
     }
 
@@ -155,7 +140,7 @@ public sealed class FirewallManagerTests
     {
         var (manager, host) = Create();
         host.ActiveZones = "hypanel-tunnel\n  sources: 169.254.0.0/16\npublic (default)\n";
-        await manager.ApplyAsync("relay", [new("tcp", 9, null)], false, CancellationToken.None);
+        await manager.ApplyAsync("relay", [new("tcp", 9, null)], CancellationToken.None);
         CollectionAssert.Contains(host.Commands, "firewall-cmd --zone=public --add-port=9/tcp");
     }
 
@@ -164,7 +149,7 @@ public sealed class FirewallManagerTests
     {
         var (manager, host) = Create();
         host.Denied = "Authorization failed.\n    Make sure polkit agent is running or run the application as superuser.";
-        var error = await manager.ApplyAsync("relay", [new("tcp", 21114, null)], false, CancellationToken.None);
+        var error = await manager.ApplyAsync("relay", [new("tcp", 21114, null)], CancellationToken.None);
         StringAssert.Contains(error, "polkit");
         Assert.AreEqual(error, manager.LastError);
     }
@@ -197,18 +182,18 @@ public sealed class FirewallManagerTests
             Directory.CreateTempSubdirectory("hypanel-fw").FullName), host.Run, clock);
         var openings = new FirewallOpening[] { new("tcp", 21114, null) };
 
-        Assert.IsNotNull(await manager.ApplyAsync("relay", openings, false, CancellationToken.None));
+        Assert.IsNotNull(await manager.ApplyAsync("relay", openings, CancellationToken.None));
         var first = host.Commands.Count;
         for (var i = 0; i < 5; i++) // The Agent syncs every few seconds.
         {
             clock.Now += TimeSpan.FromSeconds(8);
-            Assert.IsNotNull(await manager.ApplyAsync("relay", openings, false, CancellationToken.None));
+            Assert.IsNotNull(await manager.ApplyAsync("relay", openings, CancellationToken.None));
         }
         Assert.AreEqual(first, host.Commands.Count, "no firewall commands while backing off");
         Assert.AreEqual(1, logger.Warnings);
 
         clock.Now += TimeSpan.FromMinutes(1);
-        Assert.IsNotNull(await manager.ApplyAsync("relay", openings, false, CancellationToken.None));
+        Assert.IsNotNull(await manager.ApplyAsync("relay", openings, CancellationToken.None));
         Assert.IsTrue(host.Commands.Count > first, "retries after the interval");
         Assert.AreEqual(1, logger.Warnings, "the same message is not logged again");
     }
@@ -221,11 +206,11 @@ public sealed class FirewallManagerTests
         var manager = new FirewallManager(NullLogger<FirewallManager>.Instance, new AgentEnrollmentOptions(null, null,
             Directory.CreateTempSubdirectory("hypanel-fw").FullName), host.Run, clock);
         var openings = new FirewallOpening[] { new("tcp", 21114, null) };
-        Assert.IsNotNull(await manager.ApplyAsync("relay", openings, false, CancellationToken.None));
+        Assert.IsNotNull(await manager.ApplyAsync("relay", openings, CancellationToken.None));
 
         host.Denied = null; // The administrator installed the polkit rule.
         clock.Now += TimeSpan.FromMinutes(1);
-        Assert.IsNull(await manager.ApplyAsync("relay", openings, false, CancellationToken.None));
+        Assert.IsNull(await manager.ApplyAsync("relay", openings, CancellationToken.None));
         CollectionAssert.Contains(host.Commands, "firewall-cmd --zone=public --add-port=21114/tcp");
     }
 
@@ -236,9 +221,9 @@ public sealed class FirewallManagerTests
         var clock = new FakeClock(DateTimeOffset.Parse("2026-10-14T12:00:00Z"));
         var manager = new FirewallManager(NullLogger<FirewallManager>.Instance, new AgentEnrollmentOptions(null, null,
             Directory.CreateTempSubdirectory("hypanel-fw").FullName), host.Run, clock);
-        Assert.IsNotNull(await manager.ApplyAsync("relay", [new("tcp", 21114, null)], false, CancellationToken.None));
+        Assert.IsNotNull(await manager.ApplyAsync("relay", [new("tcp", 21114, null)], CancellationToken.None));
         host.Denied = null;
-        Assert.IsNull(await manager.ApplyAsync("relay", [new("tcp", 21115, null)], false, CancellationToken.None));
+        Assert.IsNull(await manager.ApplyAsync("relay", [new("tcp", 21115, null)], CancellationToken.None));
     }
 
     [TestMethod]
@@ -246,14 +231,14 @@ public sealed class FirewallManagerTests
     {
         var (manager, host) = Create();
         host.Firewalld = false;
-        Assert.IsNull(await manager.ApplyAsync("egress", [new("udp", 47541, "203.0.113.7"), new("gre", null, "203.0.113.7")], false,
+        Assert.IsNull(await manager.ApplyAsync("tunnels", [new("udp", 47541, "203.0.113.7"), new("gre", null, "203.0.113.7")],
             CancellationToken.None));
         CollectionAssert.Contains(host.Commands, "iptables -w -A HYPANEL-INPUT -s 203.0.113.7 -p udp --dport 47541 -j ACCEPT");
         CollectionAssert.Contains(host.Commands, "iptables -w -A HYPANEL-INPUT -s 203.0.113.7 -p gre -j ACCEPT");
         CollectionAssert.Contains(host.Commands, "iptables -w -I INPUT 1 -j HYPANEL-INPUT");
 
         host.Commands.Clear();
-        await manager.ApplyAsync("egress", [], false, CancellationToken.None);
+        await manager.ApplyAsync("tunnels", [], CancellationToken.None);
         CollectionAssert.Contains(host.Commands, "iptables -w -X HYPANEL-INPUT");
     }
 
@@ -263,8 +248,8 @@ public sealed class FirewallManagerTests
         var (manager, host) = Create();
         host.Firewalld = false;
         host.HasIptables = false;
-        Assert.IsNull(await manager.ApplyAsync("relay", [], false, CancellationToken.None));
-        Assert.IsNotNull(await manager.ApplyAsync("relay", [new("tcp", 21114, null)], false, CancellationToken.None));
+        Assert.IsNull(await manager.ApplyAsync("relay", [], CancellationToken.None));
+        Assert.IsNotNull(await manager.ApplyAsync("relay", [new("tcp", 21114, null)], CancellationToken.None));
     }
 
     [TestMethod]
@@ -272,9 +257,9 @@ public sealed class FirewallManagerTests
     {
         var (manager, host) = Create();
         var openings = new FirewallOpening[] { new("tcp", 21114, null) };
-        await manager.ApplyAsync("relay", openings, false, CancellationToken.None);
+        await manager.ApplyAsync("relay", openings, CancellationToken.None);
         host.Commands.Clear();
-        await manager.ApplyAsync("relay", openings, false, CancellationToken.None);
+        await manager.ApplyAsync("relay", openings, CancellationToken.None);
         Assert.AreEqual(0, host.Commands.Count);
     }
 
@@ -282,7 +267,7 @@ public sealed class FirewallManagerTests
     public async Task NothingDesiredAndNothingAppliedRunsNoCommandsAtAll()
     {
         var (manager, host) = Create();
-        await manager.ApplyAsync("egress", [], false, CancellationToken.None);
+        await manager.ApplyAsync("tunnels", [], CancellationToken.None);
         Assert.AreEqual(0, host.Commands.Count);
     }
 
@@ -291,10 +276,10 @@ public sealed class FirewallManagerTests
     {
         var directory = Directory.CreateTempSubdirectory("hypanel-fw").FullName;
         var (first, _) = Create(directory);
-        await first.ApplyAsync("relay", [new("tcp", 21114, null)], false, CancellationToken.None);
+        await first.ApplyAsync("relay", [new("tcp", 21114, null)], CancellationToken.None);
 
         var (second, host) = Create(directory); // A new process: only the state file remembers the rule.
-        await second.ApplyAsync("relay", [], false, CancellationToken.None);
+        await second.ApplyAsync("relay", [], CancellationToken.None);
         CollectionAssert.Contains(host.Commands, "firewall-cmd --zone=public --remove-port=21114/tcp");
     }
 }

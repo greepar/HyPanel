@@ -15,8 +15,7 @@ internal sealed record BackendDefinitionResponse(
     string Description,
     string Badge,
     string? DefaultVersion,
-    BackendFieldDefinition[] Fields,
-    bool SupportsEgress);
+    BackendFieldDefinition[] Fields);
 
 internal sealed record BackendDefaultsResponse(string BackendType, Dictionary<string, string> Values);
 
@@ -41,8 +40,7 @@ internal static class AdminBackendEndpoints
             item.Description,
             item.Badge,
             catalog.GetLatestVersion(item.BackendType) ?? item.FallbackVersion,
-            item.Fields,
-            item.SupportsEgress)).ToArray();
+            item.Fields)).ToArray();
         return Results.Json(response, ServerJsonSerializerContext.Default.BackendDefinitionResponseArray);
     }
 
@@ -100,7 +98,6 @@ internal static class AdminBackendEndpoints
             {
             }
         }
-        used.UnionWith(await repository.GetEgressUdpPortsAsync(nodeId, ct));
         return used;
     }
 
@@ -110,12 +107,11 @@ internal static class AdminBackendEndpoints
         {
             var port = RandomNumberGenerator.GetInt32(MinimumSuggestedPort, MaximumSuggestedPort);
             if (port is >= ReservedControlPortStart and <= ReservedControlPortEnd
-                || port == HyPanel.Shared.Contracts.EgressTransports.GreUdpPort || port == HyPanel.Shared.Contracts.EgressTransports.WireGuardPort || used.Contains(port)) continue;
+                || used.Contains(port)) continue;
             return port;
         }
         for (var port = MinimumSuggestedPort; port < MaximumSuggestedPort; port++)
-            if (port is not (>= ReservedControlPortStart and <= ReservedControlPortEnd)
-                && port != HyPanel.Shared.Contracts.EgressTransports.GreUdpPort && port != HyPanel.Shared.Contracts.EgressTransports.WireGuardPort && !used.Contains(port))
+            if (port is not (>= ReservedControlPortStart and <= ReservedControlPortEnd) && !used.Contains(port))
                 return port;
         return 443;
     }

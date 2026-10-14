@@ -19,7 +19,6 @@ export function backendFor(value: string): BackendDefinition {
   const fallback = displayFallback[value]
   return {
     backendType: value,
-    supportsEgress: false,
     name: fallback?.name ?? value,
     core: fallback?.core ?? value,
     protocol: fallback?.protocol ?? '未知协议',
@@ -48,7 +47,6 @@ export function formFor(service: Service, definition: BackendDefinition): Servic
     const raw = config[field.configKey]
     values[field.key] = raw == null ? '' : String(raw)
   }
-  if (definition.supportsEgress) values.exitNodeId = typeof config.exitNodeId === 'string' ? config.exitNodeId : ''
   if (service.backendType === 'xray') {
     values.relayNodeId = typeof config.relayNodeId === 'string' ? config.relayNodeId : ''
     values.relayPort = config.relayPort == null ? '' : String(config.relayPort)
@@ -79,7 +77,6 @@ export function payloadFor(form: ServiceForm, definition: BackendDefinition): Se
     }
     config[field.configKey] = raw
   }
-  if (definition.supportsEgress && form.values.exitNodeId) config.exitNodeId = form.values.exitNodeId
   if (form.backendType === 'xray' && form.values.relayNodeId) {
     const port = Number((form.values.relayPort ?? '').trim())
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('请填写 1–65535 之间的转发端口。')

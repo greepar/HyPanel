@@ -21,7 +21,7 @@ internal static class AdminServiceBatchEndpoints
             .Select(item => requested.TryGetValue(item.Id, out var enabled) ? item with { Enabled = enabled } : item).ToArray();
         foreach (var item in after.Where(item => item.Enabled && requested.ContainsKey(item.Id)))
             if (ServicePortConflicts.Find(item, after) is { } conflict)
-                return Results.Json(new EgressErrorResponse(conflict), ServerJsonSerializerContext.Default.EgressErrorResponse,
+                return Results.Json(new ApiErrorResponse(conflict), ServerJsonSerializerContext.Default.ApiErrorResponse,
                     statusCode: StatusCodes.Status409Conflict);
         var result = await repository.SetServicesEnabledBatchAsync(request.Items.Select(static item =>
             new BatchServiceEnabledItemRecord(item.NodeId, item.ServiceId, item.Enabled)).ToArray(), ct);

@@ -4,21 +4,18 @@ using System.Text;
 using System.Text.Json;
 using HyPanel.Agent.Backends.Infrastructure;
 
-public sealed class ServiceLogCollector(BackendProcessSupervisor supervisor, BackendInstanceStore instanceStore,
-    EgressDiagnosticCollector? egressDiagnostics = null)
+public sealed class ServiceLogCollector(BackendProcessSupervisor supervisor, BackendInstanceStore instanceStore)
 {
     internal const int MaximumOutputBytes = 65536;
 
     public async Task<string?> CollectAsync(Guid serviceId, CancellationToken cancellationToken)
     {
         var metadata = await instanceStore.TryLoadAsync(serviceId, cancellationToken);
-        var network = egressDiagnostics is null ? null : await egressDiagnostics.CollectAsync(serviceId, cancellationToken);
-        if (metadata is null) return network;
+        if (metadata is null) return null;
 
         var secrets = ReadSecrets(metadata.DesiredState.ConfigJson);
         var entries = supervisor.GetStatus(serviceId).RecentLogs.Select(entry => Redact(entry, secrets));
-        var logs = CompleteEntryTail(entries, network is null ? MaximumOutputBytes : MaximumOutputBytes / 2);
-        return network is null ? logs : network + "\n=== 服务进程日志 ===\n" + logs;
+        return CompleteEntryTail(entries, MaximumOutputBytes);
     }
 
     public static IReadOnlyList<string> ReadSecrets(string configJson)

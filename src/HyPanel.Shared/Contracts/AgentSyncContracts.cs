@@ -12,8 +12,7 @@ public sealed record AgentSyncRequest(
     string? PublicIpv4 = null,
     string? CountryCode = null,
     bool SupportsAvx = false,
-    IReadOnlyList<BackendArtifact>? AppliedBackendArtifacts = null,
-    EgressNetworkReport? EgressNetwork = null);
+    IReadOnlyList<BackendArtifact>? AppliedBackendArtifacts = null);
 
 public sealed record AgentSyncResponse(
     long DesiredRevision,
@@ -64,8 +63,7 @@ public sealed record AgentUpdateReport(
 public sealed record NodeDesiredState(
     long Revision,
     IReadOnlyList<ServiceDesiredState> Services,
-    IReadOnlyList<BackendArtifact> BackendArtifacts,
-    EgressNetworkState? EgressNetwork = null);
+    IReadOnlyList<BackendArtifact> BackendArtifacts);
 
 public sealed record NodeMetrics(
     DateTimeOffset ObservedAt,
@@ -90,8 +88,7 @@ public sealed record ServiceDesiredState(
     string ConfigJson,
     IReadOnlyList<BackendUser>? Users = null,
     int? ControlPort = null,
-    TlsCertificateAsset? TlsCertificate = null,
-    ServiceEgressRoute? EgressRoute = null);
+    TlsCertificateAsset? TlsCertificate = null);
 
 /// <summary>
 /// TLS material for a service. <c>Upload</c> ships PEM from the Panel; <c>Path</c> points at files already on the

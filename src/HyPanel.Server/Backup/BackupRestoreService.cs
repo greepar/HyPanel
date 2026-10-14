@@ -397,22 +397,15 @@ internal sealed class BackupRestoreService
         if (version >= 14) requiredTables.Add("revoked_agents");
         if (version >= 17) requiredTables.AddRange(["user_groups", "user_group_services"]);
         if (version >= 21) requiredTables.Add("user_passkeys");
-        if (version >= 24) requiredTables.AddRange(["node_egress", "service_egress"]);
+        // Exit forwarding (schema 24 to 25) was removed in schema 26, which drops these tables.
+        if (version is >= 24 and < 26) requiredTables.AddRange(["node_egress", "service_egress"]);
         foreach (var table in requiredTables)
             if (!await TableExistsAsync(connection, table, cancellationToken))
                 throw new BackupException("candidate_repository_invalid");
-        var wireGuardKeys = false;
-        if (version >= 25)
-        {
-            await using var egress = connection.CreateCommand();
-            egress.CommandText = "SELECT EXISTS(SELECT 1 FROM node_egress WHERE enabled=1 AND transport='wireguard' AND udp_port BETWEEN 1 AND 65535);";
-            try { wireGuardKeys = (long)(await egress.ExecuteScalarAsync(cancellationToken) ?? 0L) != 0; }
-            catch (SqliteException exception) { throw new BackupException("candidate_repository_invalid", exception); }
-        }
         var credentials = version >= 9 && await HasRowsAsync(connection, "user_service_credentials", cancellationToken);
         var certificates = version >= 12 && await HasRowsAsync(connection, "certificates", cancellationToken);
         var tokens = version >= 15 && await HasEncryptedSubscriptionTokensAsync(connection, cancellationToken);
-        return new DatabaseInspection(version, credentials || certificates || tokens || wireGuardKeys);
+        return new DatabaseInspection(version, credentials || certificates || tokens);
     }
 
     private async Task ValidateSecretsAsync(string path, long schemaVersion, CancellationToken cancellationToken)

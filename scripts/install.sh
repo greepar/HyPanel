@@ -245,21 +245,21 @@ fi
 
 # Optional host preparation (Linux only).  Failures are reported but never abort the Agent installation.
 install_nftables() {
-    if command -v nft >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 ; then note "network tools already installed"; return 0; fi
-    note "installing nftables and GRE network tools"
+    if command -v nft >/dev/null 2>&1; then note "nftables already installed"; return 0; fi
+    note "installing nftables (port hopping)"
     if command -v apt-get >/dev/null 2>&1; then
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables iproute2 iputils-ping >/dev/null 2>&1 ||
-            { apt-get update -q >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables iproute2 iputils-ping >/dev/null 2>&1; } || true
-    elif command -v dnf >/dev/null 2>&1; then dnf install -y -q nftables iproute iputils >/dev/null 2>&1 || true
-    elif command -v yum >/dev/null 2>&1; then yum install -y -q nftables iproute iputils >/dev/null 2>&1 || true
-    elif command -v apk >/dev/null 2>&1; then apk add --no-cache nftables iproute2 iputils >/dev/null 2>&1 || true
-    elif command -v pacman >/dev/null 2>&1; then pacman -S --noconfirm --needed nftables iproute2 iputils >/dev/null 2>&1 || true
-    elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install nftables iproute2 iputils >/dev/null 2>&1 || true
-    elif command -v opkg >/dev/null 2>&1; then { opkg update >/dev/null 2>&1; opkg install nftables ip-full iputils-ping >/dev/null 2>&1; } || true
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables >/dev/null 2>&1 ||
+            { apt-get update -q >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y -q nftables >/dev/null 2>&1; } || true
+    elif command -v dnf >/dev/null 2>&1; then dnf install -y -q nftables >/dev/null 2>&1 || true
+    elif command -v yum >/dev/null 2>&1; then yum install -y -q nftables >/dev/null 2>&1 || true
+    elif command -v apk >/dev/null 2>&1; then apk add --no-cache nftables >/dev/null 2>&1 || true
+    elif command -v pacman >/dev/null 2>&1; then pacman -S --noconfirm --needed nftables >/dev/null 2>&1 || true
+    elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install nftables >/dev/null 2>&1 || true
+    elif command -v opkg >/dev/null 2>&1; then { opkg update >/dev/null 2>&1; opkg install nftables >/dev/null 2>&1; } || true
     else note "no supported package manager found; install nftables manually for port hopping"; return 0
     fi
-    if command -v nft >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 ; then note "network tools installed"
-    else note "some network tools are missing; install iproute2 and nftables before enabling exit forwarding"
+    if command -v nft >/dev/null 2>&1; then note "nftables installed"
+    else note "nftables is missing; install it before enabling port hopping"
     fi
 }
 
@@ -641,9 +641,9 @@ RestartSec=10
 KillSignal=SIGTERM
 KillMode=control-group
 TimeoutStopSec=30
-# NET_ADMIN lets the Agent manage port hopping and GRE exit routes.
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_ADMIN CAP_NET_RAW
-AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN CAP_NET_RAW
+# NET_ADMIN lets the Agent manage port hopping and its firewall openings.
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
 NoNewPrivileges=true
 PrivateTmp=true
 UMask=0077
@@ -682,7 +682,7 @@ respawn_max=0
 directory="$DATA_DIR"
 pidfile=/run/hypanel-agent.pid
 command_user="$AGENT_USER:$AGENT_GROUP"
-capabilities="^cap_net_bind_service,^cap_net_admin,^cap_net_raw"
+capabilities="^cap_net_bind_service,^cap_net_admin"
 output_log=/var/log/hypanel-agent.log
 error_log=/var/log/hypanel-agent.log
 depend() { need net; after firewall; }

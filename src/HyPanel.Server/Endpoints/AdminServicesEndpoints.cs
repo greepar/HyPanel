@@ -32,25 +32,14 @@ internal static class AdminServicesEndpoints
         endpoints.MapGet("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}/secrets", GetSecretsAsync);
     }
 
-    internal static async Task<bool> HasValidEgressAsync(Guid nodeId, string backend, string config,
-        SqliteServerRepository repository, CancellationToken ct, string? previousConfig = null)
+    /// <summary>
+    /// Exit nodes were removed in favour of relaying; the Agent rejects the field, so refuse it at the Panel instead of
+    /// saving a service that cannot start.
+    /// </summary>
+    internal static bool HasNoExitNode(string config)
     {
         using var json = JsonDocument.Parse(config);
-        if (!json.RootElement.TryGetProperty("exitNodeId", out var field) || field.ValueKind == JsonValueKind.Null)
-            return true;
-        if (!BackendDefinitionCatalog.TryGet(backend, out var definition) || !definition!.SupportsEgress
-            || field.ValueKind != JsonValueKind.String
-            || !field.TryGetGuid(out var exit) || exit == Guid.Empty || exit == nodeId) return false;
-        var exits = await repository.GetEgressNodesAsync(ct);
-        var target = exits.FirstOrDefault(n => n.Id == exit);
-        // Preserve an existing selection while either node is offline; the Agent still fails closed.
-        if (previousConfig is not null && SqliteServerRepository.ExitNode(previousConfig) == exit)
-            return target is { Enabled: true };
-        var source = (await repository.GetNodeObservationsAsync(ct)).FirstOrDefault(n => n.Id == nodeId);
-        if (source?.ReportedPlatform?.StartsWith("linux-", StringComparison.Ordinal) != true
-            || source.PublicIpv4 is null) return false;
-        return target is { Enabled: true, Ready: true }
-            && exits.Any(n => n.Id == nodeId && n.Supported && n.SupportedTransports.Contains(target.Transport));
+        return json.RootElement.ValueKind != JsonValueKind.Object || !json.RootElement.TryGetProperty("exitNodeId", out _);
     }
 
     /// <summary>
@@ -74,7 +63,7 @@ internal static class AdminServicesEndpoints
     }
 
     private static IResult PortConflict(string message) =>
-        Results.Json(new EgressErrorResponse(message), ServerJsonSerializerContext.Default.EgressErrorResponse,
+        Results.Json(new ApiErrorResponse(message), ServerJsonSerializerContext.Default.ApiErrorResponse,
             statusCode: StatusCodes.Status409Conflict);
 
     private static async Task<IResult> ListAsync(Guid nodeId, HttpRequest request,
@@ -121,7 +110,7 @@ internal static class AdminServicesEndpoints
             return Results.BadRequest();
         if (!await HasValidCertificateAsync(backendType, configJson, repository, cancellationToken) ||
             !HasValidPortHopping(backendType, configJson) ||
-            !await HasValidEgressAsync(nodeId, backendType, configJson, repository, cancellationToken) ||
+            !HasNoExitNode(configJson) ||
             !await HasValidRelayAsync(nodeId, Guid.Empty, backendType, configJson, repository, cancellationToken))
             return Results.BadRequest();
         if (ServicePortConflicts.Find(new(Guid.NewGuid(), nodeId, name, backendType, true, configJson),
@@ -154,7 +143,7 @@ internal static class AdminServicesEndpoints
         if (!TryMergeRedactedSecrets(existing.ConfigJson, configJson, out configJson)) return Results.BadRequest();
         if (!await HasValidCertificateAsync(existing.BackendType, configJson, repository, cancellationToken) ||
             !HasValidPortHopping(existing.BackendType, configJson) ||
-            !await HasValidEgressAsync(nodeId, existing.BackendType, configJson, repository, cancellationToken, existing.ConfigJson) ||
+            !HasNoExitNode(configJson) ||
             !await HasValidRelayAsync(nodeId, serviceId, existing.BackendType, configJson, repository, cancellationToken))
             return Results.BadRequest();
         if (ServicePortConflicts.Find(new(serviceId, nodeId, name, existing.BackendType, request.Enabled, configJson),

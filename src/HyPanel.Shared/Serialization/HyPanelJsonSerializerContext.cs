@@ -38,6 +38,4 @@ using HyPanel.Shared.Contracts;
 [JsonSerializable(typeof(AgentReleaseAsset[]))]
 [JsonSerializable(typeof(AgentUpdateDescriptor))]
 [JsonSerializable(typeof(AgentUpdateReport))]
-[JsonSerializable(typeof(EgressUdpOptions))]
-[JsonSerializable(typeof(WireGuardEgressOptions))]
 public sealed partial class HyPanelJsonSerializerContext : JsonSerializerContext;

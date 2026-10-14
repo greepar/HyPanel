@@ -33,29 +33,6 @@ public sealed class ReconciliationInfrastructureTests
     }
 
     [TestMethod]
-    public async Task ExitFailure_StopsPreviousLocalServiceAndPersistsExitIntent()
-    {
-        if (OperatingSystem.IsWindows()) return;
-        await using var fixture = await ReconcilerFixture.CreateAsync(dataDirectory, new FakeProvider());
-        var initial = Service("exit-test", "tcp");
-        Assert.IsTrue((await fixture.Reconciler.ApplyAsync(Desired(1, [initial]), fixture.Credentials, CancellationToken.None)).Succeeded);
-        var requested = initial with { EgressRoute = new ServiceEgressRoute(1) };
-        var result = await fixture.Reconciler.ApplyAsync(Desired(2, [requested]), fixture.Credentials, CancellationToken.None);
-        Assert.IsFalse(result.Succeeded);
-        var failure = fixture.Reconciler.GetRuntimeStates().Single(state => state.ServiceId == initial.ServiceId);
-        Assert.AreEqual("egress_unavailable", failure.ErrorCode);
-        StringAssert.Contains(failure.ErrorMessage!, "出口转发管理器不可用");
-        Assert.AreNotEqual(ServiceRuntimeStatus.Running, fixture.Supervisor.GetStatus(initial.ServiceId).Status);
-        await fixture.Reconciler.RefreshRuntimeStatesAsync(CancellationToken.None);
-        StringAssert.Contains(fixture.Reconciler.GetRuntimeStates().Single().ErrorMessage!, "出口转发管理器不可用");
-        Assert.AreNotEqual(ServiceRuntimeStatus.Running, fixture.Supervisor.GetStatus(initial.ServiceId).Status);
-        var saved = await fixture.StateStore.LoadAsync(CancellationToken.None);
-        Assert.AreEqual(new ServiceEgressRoute(1), saved.DesiredState!.Services.Single().EgressRoute);
-        await fixture.Reconciler.RestoreAsync(fixture.Credentials, CancellationToken.None);
-        Assert.AreNotEqual(ServiceRuntimeStatus.Running, fixture.Supervisor.GetStatus(initial.ServiceId).Status);
-    }
-
-    [TestMethod]
     public void BackendProviderRegistry_DuplicateBackendType_Throws()
     {
         var exception = Assert.ThrowsExactly<InvalidOperationException>(() =>
@@ -112,36 +89,6 @@ public sealed class ReconciliationInfrastructureTests
         Assert.AreEqual(firstPath, secondPath);
         CollectionAssert.AreEqual(payload, await File.ReadAllBytesAsync(firstPath));
         Assert.AreEqual(1, handler.RequestCount);
-    }
-
-    [TestMethod]
-    public async Task WireGuardTool_IsDownloadedOnDemand_AndRepairsCorruptCache()
-    {
-        var payload = Encoding.UTF8.GetBytes("verified wg tool");
-        using var handler = new RecordingHandler(request =>
-        {
-            Assert.AreEqual("https://panel.example/api/releases/v1/tools/backend.bin", request.RequestUri!.AbsoluteUri);
-            Assert.AreEqual("agent-secret", request.Headers.Authorization!.Parameter);
-            return new HttpResponseMessage(HttpStatusCode.OK) { RequestMessage = request,
-                Content = new ByteArrayContent(payload) };
-        });
-        using var client = new HttpClient(handler);
-        var manager = await CreateBinaryManagerAsync(client);
-        var artifact = Artifact(payload) with { BackendType = "wireguard-tools" };
-        Assert.AreEqual(0, handler.RequestCount);
-        var path = await manager.EnsureToolAsync(artifact, CancellationToken.None);
-        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-        Assert.AreEqual(path, await manager.EnsureToolAsync(artifact, CancellationToken.None));
-        Assert.AreEqual(1, handler.RequestCount);
-        if (!OperatingSystem.IsWindows()) Assert.IsTrue(File.GetUnixFileMode(path).HasFlag(UnixFileMode.UserExecute));
-        await manager.PruneUnusedAsync([], CancellationToken.None);
-        Assert.IsTrue(File.Exists(path));
-        await File.WriteAllTextAsync(path, "corrupt");
-        await manager.EnsureToolAsync(artifact, CancellationToken.None);
-        Assert.AreEqual(2, handler.RequestCount);
-        CollectionAssert.AreEqual(payload, await File.ReadAllBytesAsync(path));
-        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => manager.EnsureToolAsync(
-            artifact with { Sha256 = new string('0', 64) }, CancellationToken.None));
     }
 
     [TestMethod]

@@ -26,8 +26,6 @@ internal sealed class Hysteria2TrafficCounter
 
 internal sealed class Hysteria2Config
 {
-    public Guid? ExitNodeId { get; init; }
-
     public string? ListenHost { get; init; }
 
     public int ListenPort { get; init; }

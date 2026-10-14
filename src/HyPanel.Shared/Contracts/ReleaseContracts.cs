@@ -4,8 +4,7 @@ public sealed record AgentReleaseManifest(
     int SchemaVersion,
     string Version,
     DateTimeOffset PublishedAt,
-    IReadOnlyList<AgentReleaseAsset> Assets,
-    IReadOnlyList<BackendArtifact>? Tools = null);
+    IReadOnlyList<AgentReleaseAsset> Assets);
 
 public sealed record AgentReleaseAsset(
     string Rid,

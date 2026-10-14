@@ -51,10 +51,6 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
             return ValueTask.FromResult(Invalid("invalid_config", "Invalid Hysteria2 configuration."));
         }
 
-        if (config.ExitNodeId is not null && (desiredState.EgressRoute is null
-            || !EgressAddressing.IsValidSlot(desiredState.EgressRoute.Slot)))
-            return ValueTask.FromResult(Invalid("egress_unavailable", "出口网络配置缺失。"));
-
         if (!TryGetUsers(desiredState, out _))
         {
             return ValueTask.FromResult(Invalid("invalid_users", "Invalid Hysteria2 user list."));
@@ -99,12 +95,8 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
             throw new InvalidOperationException("Hysteria2 user list is invalid.");
         }
 
-        if (config.ExitNodeId is not null && (desiredState.EgressRoute is null
-            || !EgressAddressing.IsValidSlot(desiredState.EgressRoute.Slot)))
-            throw new InvalidOperationException("出口网络配置缺失。");
-
         var yaml = RenderYaml(config, desiredState.TlsCertificate, users, desiredState.ControlPort,
-            StatsSecret(desiredState), desiredState.EgressRoute);
+            StatsSecret(desiredState));
         var content = Encoding.UTF8.GetBytes(yaml);
         var sha256 = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
 
@@ -332,7 +324,7 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
         !string.IsNullOrEmpty(uri.Host);
 
     private static string RenderYaml(Hysteria2Config config, TlsCertificateAsset? tls,
-        IReadOnlyList<BackendUser> users, int? controlPort, string statsSecret, ServiceEgressRoute? route)
+        IReadOnlyList<BackendUser> users, int? controlPort, string statsSecret)
     {
         var listenAddress = config.ListenHost!.Contains(':')
             ? $"[{config.ListenHost}]:{config.ListenPort}"
@@ -413,15 +405,6 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
             yaml.Append("    password: ").Append(QuoteYaml(config.ObfsPassword)).AppendLine();
         }
 
-        if (route is not null)
-        {
-            yaml.AppendLine("outbounds:");
-            yaml.AppendLine("  - name: egress");
-            yaml.AppendLine("    type: direct");
-            yaml.AppendLine("    direct:");
-            yaml.AppendLine("      mode: 4");
-            yaml.Append("      bindIPv4: ").Append(QuoteYaml(EgressAddressing.Source(route.Slot))).AppendLine();
-        }
         return yaml.ToString();
     }
 

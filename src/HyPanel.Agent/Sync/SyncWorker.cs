@@ -107,7 +107,7 @@ public sealed class SyncWorker(
                     // The relay listens in user space, so the host firewall has to let the port in.
                     await firewall.ApplyAsync("relay", response.Relays.Where(rule => !unbound.ContainsKey(rule.ListenPort))
                         .Select(rule => new FirewallOpening("tcp", rule.ListenPort, null)).Distinct().ToArray(),
-                        false, stoppingToken);
+                        stoppingToken);
                 }
 
                 if (pendingResults.Length > 0)
@@ -231,7 +231,7 @@ public sealed class SyncWorker(
         var request = new AgentSyncRequest(BuildInfo.Version, BuildInfo.RuntimeIdentifier, appliedRevision,
             metricsCollector.Collect(), services, usageBatches, results, updateReport, publicIpv4,
             publicIpv4Resolver.CountryCode, CpuFeatures.SupportsX86_64V3,
-            (await stateStore.LoadAsync(cancellationToken)).DesiredState?.BackendArtifacts ?? [], reconciler.EgressReport);
+            (await stateStore.LoadAsync(cancellationToken)).DesiredState?.BackendArtifacts ?? []);
         using var message =
             new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(credentials.PanelBaseUrl), SyncPath));
         message.Headers.Add("X-HyPanel-Agent-Id", credentials.AgentId.ToString("D"));
@@ -408,7 +408,6 @@ public sealed class SyncWorker(
         logger.LogCritical("This Agent's Node was deleted from the Panel; stopping managed services and standing down.");
         try { await processSupervisor.StopAllAsync(CancellationToken.None); }
         catch (Exception exception) { logger.LogError(exception, "Some managed services could not be stopped."); }
-        await reconciler.CleanupEgressAsync(CancellationToken.None);
         var dataDirectory = enrollmentOptions.DataDirectory;
         try
         {

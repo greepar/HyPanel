@@ -65,13 +65,6 @@ public sealed class BackendBinaryManager(
     public Task<string> EnsureAsync(BackendArtifact artifact, CancellationToken cancellationToken) =>
         EnsureArtifactAsync(artifact, "backends", "/api/backend-releases/v1/assets/", cancellationToken);
 
-    public Task<string> EnsureToolAsync(BackendArtifact artifact, CancellationToken cancellationToken)
-    {
-        if (artifact.BackendType != "wireguard-tools" || artifact.RequiresAvx || artifact.Size > 4 * 1024 * 1024)
-            throw new InvalidDataException("WireGuard 工具发布信息无效。");
-        return EnsureArtifactAsync(artifact, "tools", "/api/releases/v1/tools/", cancellationToken);
-    }
-
     private async Task<string> EnsureArtifactAsync(BackendArtifact artifact, string directoryName, string assetPath,
         CancellationToken cancellationToken)
     {
