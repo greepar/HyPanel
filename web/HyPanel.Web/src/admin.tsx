@@ -1124,7 +1124,7 @@ const loadInstallOptions = (): InstallOptions => {
 const withInstallOptions = (command: string, options: InstallOptions) => {
   const env = [
     options.nftables && "HYPANEL_INSTALL_NFT=1",
-    options.tuneNetwork && "HYPANEL_TUNE_NETWORK=1",
+    !options.tuneNetwork && "HYPANEL_TUNE_NETWORK=0",
   ].filter(Boolean);
   return env.length ? command.replace(/\| bash$/, `| ${env.join(" ")} bash`) : command;
 };

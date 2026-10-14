@@ -48,6 +48,7 @@ uninstall_agent() {
             rm -f /etc/systemd/system/hypanel-agent.service /etc/init.d/hypanel-agent /run/hypanel-agent.pid /var/log/hypanel-agent.log
             # Network tuning is reverted on the next boot; live values are left alone.
             rm -f /etc/sysctl.d/99-hypanel-network.conf /etc/modules-load.d/hypanel-bbr.conf
+            rm -f /etc/polkit-1/rules.d/50-hypanel-agent-firewalld.rules
             command -v systemctl >/dev/null 2>&1 && { systemctl daemon-reload >/dev/null 2>&1 || true; systemctl reset-failed hypanel-agent.service >/dev/null 2>&1 || true; }
             ;;
         Darwin)
@@ -304,7 +305,7 @@ tune_network() {
 
 if [ "$STAGING_INSTALL" = 0 ] && [ "$OS" = Linux ]; then
     if [ "${HYPANEL_INSTALL_NFT:-}" = 1 ]; then install_nftables; fi
-    if [ "${HYPANEL_TUNE_NETWORK:-}" = 1 ]; then tune_network; fi
+    if [ "${HYPANEL_TUNE_NETWORK:-1}" != 0 ]; then tune_network; fi
 fi
 
 command -v curl >/dev/null 2>&1 || fail "curl is required"
@@ -651,6 +652,21 @@ Group=$AGENT_GROUP
 [Install]
 WantedBy=multi-user.target
 EOF
+            # firewalld rejects what its own rules do not allow, and an nft accept elsewhere cannot override that, so
+            # the Agent opens the ports forwarding needs through firewalld itself. firewalld only lets root change
+            # its rules unless polkit says otherwise; allow just this user to manage firewalld.
+            if command -v firewall-cmd >/dev/null 2>&1 && [ -d /etc/polkit-1/rules.d ]; then
+                cat > /etc/polkit-1/rules.d/50-hypanel-agent-firewalld.rules <<EOF
+// Installed by the HyPanel Agent installer: lets the Agent user open the ports its forwarding features need.
+polkit.addRule(function(action, subject) {
+    if (subject.user == "$AGENT_USER" && action.id.indexOf("org.fedoraproject.FirewallD1.") == 0) {
+        return polkit.Result.YES;
+    }
+});
+EOF
+                chmod 644 /etc/polkit-1/rules.d/50-hypanel-agent-firewalld.rules
+                note "allowed $AGENT_USER to manage firewalld rules (polkit)"
+            fi
         elif command -v rc-service >/dev/null 2>&1; then
             # OpenRC discards a supervised daemon's output unless it is sent to a log file.
             touch /var/log/hypanel-agent.log
