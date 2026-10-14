@@ -55,7 +55,7 @@ internal static class AdminServicesEndpoints
 
     /// <summary>
     /// A relayed service runs on its own node while another node's Agent forwards a TCP port to it. Only Xray
-    /// (TCP) is supported, the relay must be another existing node, and its port must be free there.
+    /// (TCP) is supported and the relay must be another existing node.
     /// </summary>
     internal static async Task<bool> HasValidRelayAsync(Guid nodeId, Guid serviceId, string backend, string config,
         SqliteServerRepository repository, CancellationToken ct)
@@ -69,9 +69,13 @@ internal static class AdminServicesEndpoints
         if (!hasNode && !hasPort) return true;
         if (SqliteServerRepository.Relay(config) is not { } relay || backend != "xray"
             || relay.NodeId == Guid.Empty || relay.NodeId == nodeId || relay.Port is < 1 or > 65535) return false;
-        return await repository.GetNodeAsync(relay.NodeId, ct) is not null
-            && !await repository.IsRelayPortTakenAsync(relay.NodeId, relay.Port, serviceId, ct);
+        // Port collisions are checked per protocol, against enabled services only, by ServicePortConflicts.
+        return await repository.GetNodeAsync(relay.NodeId, ct) is not null;
     }
+
+    private static IResult PortConflict(string message) =>
+        Results.Json(new EgressErrorResponse(message), ServerJsonSerializerContext.Default.EgressErrorResponse,
+            statusCode: StatusCodes.Status409Conflict);
 
     private static async Task<IResult> ListAsync(Guid nodeId, HttpRequest request,
         AdminAuthorization authorization, SqliteServerRepository repository, BackendArtifactCatalog releaseCatalog,
@@ -120,6 +124,9 @@ internal static class AdminServicesEndpoints
             !await HasValidEgressAsync(nodeId, backendType, configJson, repository, cancellationToken) ||
             !await HasValidRelayAsync(nodeId, Guid.Empty, backendType, configJson, repository, cancellationToken))
             return Results.BadRequest();
+        if (ServicePortConflicts.Find(new(Guid.NewGuid(), nodeId, name, backendType, true, configJson),
+                await repository.GetServiceBindingSourcesAsync(cancellationToken)) is { } conflict)
+            return PortConflict(conflict);
         var now = timeProvider.GetUtcNow();
         var result = await repository.CreateServiceAsync(
             new ServiceInstanceRecord(Guid.NewGuid(), nodeId, name, backendType, version, true,
@@ -150,6 +157,9 @@ internal static class AdminServicesEndpoints
             !await HasValidEgressAsync(nodeId, existing.BackendType, configJson, repository, cancellationToken, existing.ConfigJson) ||
             !await HasValidRelayAsync(nodeId, serviceId, existing.BackendType, configJson, repository, cancellationToken))
             return Results.BadRequest();
+        if (ServicePortConflicts.Find(new(serviceId, nodeId, name, existing.BackendType, request.Enabled, configJson),
+                await repository.GetServiceBindingSourcesAsync(cancellationToken)) is { } conflict)
+            return PortConflict(conflict);
         var now = timeProvider.GetUtcNow();
         var result = await repository.UpdateServiceAsync(
             new ServiceInstanceRecord(serviceId, nodeId, name, existing.BackendType, version, request.Enabled,
@@ -178,6 +188,13 @@ internal static class AdminServicesEndpoints
     {
         var access = await authorization.AuthorizeAsync(httpRequest, cancellationToken);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        if (request.Enabled)
+        {
+            var sources = await repository.GetServiceBindingSourcesAsync(cancellationToken);
+            if (sources.FirstOrDefault(item => item.Id == serviceId && item.NodeId == nodeId) is { } target &&
+                ServicePortConflicts.Find(target with { Enabled = true }, sources) is { } conflict)
+                return PortConflict(conflict);
+        }
         var revision = await repository.SetServiceEnabledAsync(nodeId, serviceId, request.Enabled, cancellationToken);
         return revision is null
             ? Results.NotFound()

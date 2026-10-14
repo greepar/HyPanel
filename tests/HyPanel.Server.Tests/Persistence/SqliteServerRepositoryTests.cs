@@ -1366,6 +1366,8 @@ public sealed class SqliteServerRepositoryTests
 
         await fixture.Repository.SetServiceEnabledAsync(home, service.Id, false, CancellationToken.None);
         Assert.AreEqual(0, (await fixture.Repository.GetPortRelaysAsync(relay, CancellationToken.None)).Count);
+        // A disabled service holds no port, so it must not keep another service from using it.
+        Assert.IsFalse(await fixture.Repository.IsRelayPortTakenAsync(relay, 9443, Guid.NewGuid(), CancellationToken.None));
     }
 
     [TestMethod]

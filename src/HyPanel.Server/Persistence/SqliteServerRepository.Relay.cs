@@ -51,15 +51,16 @@ internal sealed partial class SqliteServerRepository
     }
 
     /// <summary>
-    /// True when <paramref name="port"/> on the relay node collides with a service listening there or with another
-    /// service relayed through the same node. <paramref name="serviceId"/> is the service being saved.
+    /// True when <paramref name="port"/> on the relay node collides with an enabled service listening there or with
+    /// another enabled service relayed through the same node. A disabled service holds no port.
+    /// <paramref name="serviceId"/> is the service being saved.
     /// </summary>
     public async Task<bool> IsRelayPortTakenAsync(Guid relayNodeId, int port, Guid serviceId, CancellationToken ct)
     {
         await using var connection = await connectionFactory.OpenAsync(ct);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT 1 FROM service_instances s WHERE s.id<>@service AND (
+            SELECT 1 FROM service_instances s WHERE s.id<>@service AND s.enabled=1 AND (
                 (s.node_id=@node AND CAST(json_extract(s.config_json,'$.listenPort') AS INTEGER)=@port)
                 OR (lower(json_extract(s.config_json,'$.relayNodeId'))=@node
                     AND CAST(json_extract(s.config_json,'$.relayPort') AS INTEGER)=@port))
@@ -69,5 +70,19 @@ internal sealed partial class SqliteServerRepository
         command.Parameters.AddWithValue("@port", port);
         command.Parameters.AddWithValue("@service", serviceId.ToString("D"));
         return await command.ExecuteScalarAsync(ct) is not null;
+    }
+
+    /// <summary>Every service's binding-relevant fields, for the port-conflict check.</summary>
+    internal async Task<IReadOnlyList<ServiceBindingSource>> GetServiceBindingSourcesAsync(CancellationToken ct)
+    {
+        await using var connection = await connectionFactory.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT id,node_id,name,backend_type,enabled,config_json FROM service_instances;";
+        var sources = new List<ServiceBindingSource>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            sources.Add(new(SqliteValue.ToGuid(reader.GetString(0)), SqliteValue.ToGuid(reader.GetString(1)),
+                reader.GetString(2), reader.GetString(3), reader.GetInt32(4) != 0, reader.GetString(5)));
+        return sources;
     }
 }
