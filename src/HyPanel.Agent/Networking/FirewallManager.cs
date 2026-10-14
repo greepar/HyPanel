@@ -37,6 +37,8 @@ public sealed class FirewallManager(ILogger<FirewallManager> logger, AgentEnroll
     internal const string TunnelPolicy = "hypanel-egress";
     internal const string TunnelRange = "169.254.0.0/16";
     private static readonly TimeSpan VerifyInterval = TimeSpan.FromMinutes(5);
+    /// <summary>A failing reconcile is retried at this pace instead of on every sync, and is logged once per message.</summary>
+    private static readonly TimeSpan RetryInterval = TimeSpan.FromMinutes(1);
 
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly Dictionary<string, (HashSet<FirewallOpening> Openings, bool Forwarding)> owners = new();
@@ -45,6 +47,9 @@ public sealed class FirewallManager(ILogger<FirewallManager> logger, AgentEnroll
     private State? applied;
     private string? signature;
     private DateTimeOffset verifiedAt;
+    private string? failedSignature;
+    private string? failedError;
+    private DateTimeOffset failedAt;
 
     /// <summary>Why the last reconcile failed; null when firewall rules are in place or none are needed.</summary>
     public string? LastError { get; private set; }
@@ -78,6 +83,8 @@ public sealed class FirewallManager(ILogger<FirewallManager> logger, AgentEnroll
             return null;
         }
         if (wanted == signature && clock.GetUtcNow() - verifiedAt < VerifyInterval) return null;
+        if (wanted == failedSignature && failedError is not null && clock.GetUtcNow() - failedAt < RetryInterval)
+            return failedError;
 
         // An injected runner (tests) stands in for the Linux tools.
         if (!OperatingSystem.IsLinux() && runner is null)
@@ -91,17 +98,26 @@ public sealed class FirewallManager(ILogger<FirewallManager> logger, AgentEnroll
             {
                 signature = wanted;
                 verifiedAt = clock.GetUtcNow();
+                failedSignature = failedError = null;
                 applied = applied with { Openings = desired.Select(o => o.Key).ToHashSet(), Forwarding = forwarding };
                 Save(applied);
+                return null;
             }
-            else logger.LogWarning("Could not update firewall rules: {Error}", error);
-            return error;
+            return Fail(wanted, error);
         }
         catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or IOException)
         {
-            logger.LogWarning("Could not update firewall rules: {Error}", exception.Message);
-            return exception.Message;
+            return Fail(wanted, exception.Message);
         }
+    }
+
+    private string Fail(string wanted, string error)
+    {
+        if (error != failedError) logger.LogWarning("Could not update firewall rules: {Error}", error);
+        failedSignature = wanted;
+        failedError = error;
+        failedAt = clock.GetUtcNow();
+        return error;
     }
 
     private static string Signature(IEnumerable<FirewallOpening> desired, bool forwarding) =>
