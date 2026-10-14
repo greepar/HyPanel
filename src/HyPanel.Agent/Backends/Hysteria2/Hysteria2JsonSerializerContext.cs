@@ -24,8 +24,18 @@ internal sealed class Hysteria2TrafficCounter
     public long Rx { get; init; }
 }
 
-internal sealed class Hysteria2Config
+internal sealed class Hysteria2Config : HyPanel.Agent.Backends.IUpstreamProxyConfig
 {
+    public string? UpstreamProxyType { get; init; }
+
+    public string? UpstreamProxyHost { get; init; }
+
+    public int? UpstreamProxyPort { get; init; }
+
+    public string? UpstreamProxyUsername { get; init; }
+
+    public string? UpstreamProxyPassword { get; init; }
+
     public string? ListenHost { get; init; }
 
     public int ListenPort { get; init; }

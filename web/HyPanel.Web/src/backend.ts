@@ -39,6 +39,9 @@ export function emptyService(definition: BackendDefinition): ServiceForm {
   return { backendType: definition.backendType, name: '', version: definition.defaultVersion ?? '', values }
 }
 
+/** Flat config keys of the optional upstream proxy every backend supports. */
+const upstreamProxyKeys = ['upstreamProxyType', 'upstreamProxyHost', 'upstreamProxyPort', 'upstreamProxyUsername', 'upstreamProxyPassword']
+
 export function formFor(service: Service, definition: BackendDefinition): ServiceForm {
   const config = parseConfig(service.configJson)
   const values: Record<string, string> = {}
@@ -47,6 +50,7 @@ export function formFor(service: Service, definition: BackendDefinition): Servic
     const raw = config[field.configKey]
     values[field.key] = raw == null ? '' : String(raw)
   }
+  for (const key of upstreamProxyKeys) values[key] = config[key] == null ? '' : String(config[key])
   if (service.backendType === 'xray') {
     values.relayNodeId = typeof config.relayNodeId === 'string' ? config.relayNodeId : ''
     values.relayPort = config.relayPort == null ? '' : String(config.relayPort)
@@ -82,6 +86,21 @@ export function payloadFor(form: ServiceForm, definition: BackendDefinition): Se
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('请填写 1–65535 之间的转发端口。')
     config.relayNodeId = form.values.relayNodeId
     config.relayPort = port
+  }
+  const proxyType = (form.values.upstreamProxyType ?? '').trim()
+  if (proxyType) {
+    const host = (form.values.upstreamProxyHost ?? '').trim()
+    const port = Number((form.values.upstreamProxyPort ?? '').trim())
+    if (!host) throw new Error('请填写上游代理地址。')
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('请填写 1–65535 之间的上游代理端口。')
+    const username = (form.values.upstreamProxyUsername ?? '').trim()
+    const password = form.values.upstreamProxyPassword ?? ''
+    if (password && !username) throw new Error('填写了上游代理密码时，还需要填写用户名。')
+    config.upstreamProxyType = proxyType
+    config.upstreamProxyHost = host
+    config.upstreamProxyPort = port
+    if (username) config.upstreamProxyUsername = username
+    if (password) config.upstreamProxyPassword = password
   }
   return { name: form.name.trim(), backendType: form.backendType, backendVersion: form.version.trim(), configSchemaVersion: 1, configJson: JSON.stringify(config) }
 }

@@ -2359,6 +2359,8 @@ function ServiceEditor({
         for (const field of fields)
           if (field.configKey && values[field.key] === REDACTED && secrets[field.configKey] != null)
             values[field.key] = secrets[field.configKey];
+        if (values.upstreamProxyPassword === REDACTED && secrets.upstreamProxyPassword != null)
+          values.upstreamProxyPassword = secrets.upstreamProxyPassword;
         return { ...current, values };
       });
       return true;
@@ -2601,6 +2603,36 @@ function ServiceEditor({
             </div>
           )}
           <div className="form-grid">{protocolFields.map(renderField)}</div>
+          <div className="relay-field">
+            <span>上游代理（可选）</span>
+            <Select value={form.values.upstreamProxyType ?? ""} onChange={value => change("upstreamProxyType", value)}
+              options={[
+                { value: "", label: "不使用（本节点直接出网）" },
+                { value: "http", label: "HTTP 代理" },
+                { value: "https", label: "HTTPS 代理（与代理服务器之间走 TLS）" },
+                { value: "socks5", label: "SOCKS5 代理" }
+              ]} />
+            {form.values.upstreamProxyType && <div className="form-grid">
+              <label>代理地址
+                <input placeholder="如 p.webshare.io" autoComplete="off" value={form.values.upstreamProxyHost ?? ""}
+                  onInput={event => change("upstreamProxyHost", event.currentTarget.value)} />
+              </label>
+              <label>代理端口
+                <input type="number" min="1" max="65535" value={form.values.upstreamProxyPort ?? ""}
+                  onInput={event => change("upstreamProxyPort", event.currentTarget.value)} />
+              </label>
+              <label>用户名（可选）
+                <input autoComplete="off" value={form.values.upstreamProxyUsername ?? ""}
+                  onInput={event => change("upstreamProxyUsername", event.currentTarget.value)} />
+              </label>
+              <label>密码（可选）
+                <PasswordInput value={form.values.upstreamProxyPassword ?? ""}
+                  onValue={(value) => change("upstreamProxyPassword", value)} beforeReveal={revealSecrets} />
+              </label>
+            </div>}
+            <p className="field-help">服务的所有出站流量都会经这个代理发出，网站看到的是代理的 IP。代理不可用时连接会失败，不会回退到本机直连。
+              HTTP 和 HTTPS 代理只支持 TCP，UDP 流量（QUIC、部分游戏和 DNS）会被丢弃；SOCKS5 是否支持 UDP取决于代理服务器。</p>
+          </div>
           {form.backendType === "xray" && <div className="relay-field">
             <span>转发入口节点</span>
             <Select value={form.values.relayNodeId ?? ""} onChange={value => setForm({ ...form, values: { ...form.values, relayNodeId: value } })}

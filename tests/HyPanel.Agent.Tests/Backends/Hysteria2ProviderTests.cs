@@ -16,6 +16,51 @@ public sealed class Hysteria2ProviderTests
     private const string ObfsPassword = "obfs-secret-123";
     private readonly Hysteria2Provider provider = new();
 
+    private static string WithProxy(string config, string type, string host = "p.webshare.io", int port = 80,
+        string? user = "user", string? password = "p@ss") =>
+        config.TrimEnd('}') + $",\"upstreamProxyType\":\"{type}\",\"upstreamProxyHost\":\"{host}\",\"upstreamProxyPort\":{port}" +
+        (user is null ? "" : $",\"upstreamProxyUsername\":\"{user}\"") +
+        (password is null ? "" : $",\"upstreamProxyPassword\":\"{password}\"") + "}";
+
+    private async Task<string> RenderYamlAsync(string config)
+    {
+        var desired = CreateDesiredState(configJson: config);
+        Assert.IsTrue((await provider.ValidateAsync(desired, CancellationToken.None)).IsValid);
+        return Encoding.UTF8.GetString((await provider.RenderConfigAsync(desired, CancellationToken.None)).Content.Span);
+    }
+
+    [TestMethod]
+    public async Task WithoutAnUpstreamProxyThereAreNoOutbounds() =>
+        Assert.IsFalse((await RenderYamlAsync(CreateConfigJson())).Contains("outbounds:"));
+
+    [TestMethod]
+    public async Task Socks5UpstreamProxyBecomesTheOnlyOutbound()
+    {
+        var yaml = await RenderYamlAsync(WithProxy(CreateConfigJson(), "socks5", port: 1080));
+        StringAssert.Contains(yaml, "outbounds:\n  - name: upstream\n    type: socks5\n    socks5:\n");
+        StringAssert.Contains(yaml, "      addr: \"p.webshare.io:1080\"");
+        StringAssert.Contains(yaml, "      username: \"user\"");
+        StringAssert.Contains(yaml, "      password: \"p@ss\"");
+    }
+
+    [TestMethod]
+    [DataRow("http", "http://user:p%40ss@p.webshare.io:80")]
+    [DataRow("https", "https://user:p%40ss@p.webshare.io:80")]
+    public async Task HttpFamilyUpstreamProxyUsesAnEncodedUrlAndVerifiesTls(string type, string url)
+    {
+        var yaml = await RenderYamlAsync(WithProxy(CreateConfigJson(), type));
+        StringAssert.Contains(yaml, "    type: http\n    http:\n");
+        StringAssert.Contains(yaml, $"      url: \"{url}\"");
+        StringAssert.Contains(yaml, "      insecure: false");
+    }
+
+    [TestMethod]
+    public async Task AHalfFilledUpstreamProxyIsRejected()
+    {
+        var config = CreateConfigJson().TrimEnd('}') + ",\"upstreamProxyHost\":\"p.webshare.io\"}";
+        Assert.IsFalse((await provider.ValidateAsync(CreateDesiredState(configJson: config), CancellationToken.None)).IsValid);
+    }
+
     [TestMethod]
     public async Task ValidateAsync_ValidConfig_ReturnsUdpPortOnly()
     {

@@ -77,11 +77,7 @@ public sealed class XrayShadowsocksProvider(TimeProvider timeProvider) : IBacken
                     }
                 }
             ],
-            Outbounds =
-            [
-                new XrayOutbound { Protocol = "freedom", Tag = "direct" },
-                new XrayOutbound { Protocol = "blackhole", Tag = "blocked" }
-            ]
+            Outbounds = XrayOutbound.Create(config.ProxyOrNull())
         };
         var content = JsonSerializer.SerializeToUtf8Bytes(runtime,
             XrayRuntimeJsonSerializerContext.Default.XrayShadowsocksRuntimeConfig);
@@ -111,7 +107,7 @@ public sealed class XrayShadowsocksProvider(TimeProvider timeProvider) : IBacken
         }
         return config is not null && IPAddress.TryParse(config.ListenHost, out _) &&
                config.ListenPort is >= 1 and <= 65_535 &&
-               config.Method is null or Method && IsKey16(config.Password);
+               config.Method is null or Method && IsKey16(config.Password) && config.TryGetProxy(out _);
     }
 
     private static bool IsKey16(string? value)

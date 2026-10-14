@@ -42,6 +42,29 @@ internal static class AdminServicesEndpoints
         return json.RootElement.ValueKind != JsonValueKind.Object || !json.RootElement.TryGetProperty("exitNodeId", out _);
     }
 
+    /// <summary>The message to show when the upstream proxy settings are incomplete or invalid; null when they are fine.</summary>
+    internal static string? UpstreamProxyError(string config)
+    {
+        using var json = JsonDocument.Parse(config);
+        if (json.RootElement.ValueKind != JsonValueKind.Object) return null;
+        var root = json.RootElement;
+        string? Text(string name) => root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() : null;
+        int? port = null;
+        if (root.TryGetProperty("upstreamProxyPort", out var portValue) && portValue.ValueKind != JsonValueKind.Null)
+        {
+            if (portValue.ValueKind != JsonValueKind.Number || !portValue.TryGetInt32(out var number))
+                return "上游代理端口必须是 1 到 65535 之间的整数。";
+            port = number;
+        }
+        return HyPanel.Shared.Networking.UpstreamProxy.TryCreate(Text("upstreamProxyType"), Text("upstreamProxyHost"), port,
+            Text("upstreamProxyUsername"), Text("upstreamProxyPassword"), out _, out var error) ? null : error;
+    }
+
+    private static IResult InvalidConfig(string message) =>
+        Results.Json(new ApiErrorResponse(message), ServerJsonSerializerContext.Default.ApiErrorResponse,
+            statusCode: StatusCodes.Status400BadRequest);
+
     /// <summary>
     /// A relayed service runs on its own node while another node's Agent forwards a TCP port to it. Only Xray
     /// (TCP) is supported and the relay must be another existing node.
@@ -113,6 +136,7 @@ internal static class AdminServicesEndpoints
             !HasNoExitNode(configJson) ||
             !await HasValidRelayAsync(nodeId, Guid.Empty, backendType, configJson, repository, cancellationToken))
             return Results.BadRequest();
+        if (UpstreamProxyError(configJson) is { } createProxyError) return InvalidConfig(createProxyError);
         if (ServicePortConflicts.Find(new(Guid.NewGuid(), nodeId, name, backendType, true, configJson),
                 await repository.GetServiceBindingSourcesAsync(cancellationToken)) is { } conflict)
             return PortConflict(conflict);
@@ -146,6 +170,7 @@ internal static class AdminServicesEndpoints
             !HasNoExitNode(configJson) ||
             !await HasValidRelayAsync(nodeId, serviceId, existing.BackendType, configJson, repository, cancellationToken))
             return Results.BadRequest();
+        if (UpstreamProxyError(configJson) is { } updateProxyError) return InvalidConfig(updateProxyError);
         if (ServicePortConflicts.Find(new(serviceId, nodeId, name, existing.BackendType, request.Enabled, configJson),
                 await repository.GetServiceBindingSourcesAsync(cancellationToken)) is { } conflict)
             return PortConflict(conflict);

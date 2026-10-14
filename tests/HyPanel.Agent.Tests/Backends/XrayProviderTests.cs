@@ -16,6 +16,75 @@ public sealed class XrayProviderTests
     private const string PublicKey = "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8";
     private readonly XrayProvider provider = new(TimeProvider.System);
 
+    private static string WithProxy(string config, string type, string host = "p.webshare.io", int port = 80,
+        string? user = "user", string? password = "p@ss") =>
+        config.TrimEnd('}') + $",\"upstreamProxyType\":\"{type}\",\"upstreamProxyHost\":\"{host}\",\"upstreamProxyPort\":{port}" +
+        (user is null ? "" : $",\"upstreamProxyUsername\":\"{user}\"") +
+        (password is null ? "" : $",\"upstreamProxyPassword\":\"{password}\"") + "}";
+
+    private async Task<JsonElement> RenderOutboundsAsync(string config)
+    {
+        var desired = CreateDesiredState(configJson: config);
+        Assert.IsTrue((await provider.ValidateAsync(desired, CancellationToken.None)).IsValid);
+        var document = JsonDocument.Parse((await provider.RenderConfigAsync(desired, CancellationToken.None)).Content);
+        return document.RootElement.GetProperty("outbounds").Clone();
+    }
+
+    [TestMethod]
+    public async Task WithoutAnUpstreamProxyTheServiceConnectsDirectly()
+    {
+        var outbounds = await RenderOutboundsAsync(CreateConfigJson());
+        Assert.AreEqual("freedom", outbounds[0].GetProperty("protocol").GetString());
+        Assert.AreEqual("direct", outbounds[0].GetProperty("tag").GetString());
+    }
+
+    [TestMethod]
+    public async Task Socks5UpstreamProxyIsTheDefaultOutboundWithCredentials()
+    {
+        var outbounds = await RenderOutboundsAsync(WithProxy(CreateConfigJson(), "socks5", port: 1080));
+        Assert.AreEqual("socks", outbounds[0].GetProperty("protocol").GetString());
+        Assert.AreEqual("upstream", outbounds[0].GetProperty("tag").GetString());
+        var server = outbounds[0].GetProperty("settings").GetProperty("servers")[0];
+        Assert.AreEqual("p.webshare.io", server.GetProperty("address").GetString());
+        Assert.AreEqual(1080, server.GetProperty("port").GetInt32());
+        Assert.AreEqual("user", server.GetProperty("users")[0].GetProperty("user").GetString());
+        Assert.AreEqual("p@ss", server.GetProperty("users")[0].GetProperty("pass").GetString());
+        Assert.IsFalse(outbounds[0].TryGetProperty("streamSettings", out _));
+        Assert.AreEqual("blackhole", outbounds[1].GetProperty("protocol").GetString(), "blocked stays available but is not the default");
+    }
+
+    [TestMethod]
+    public async Task HttpUpstreamProxyWithoutCredentialsOmitsUsers()
+    {
+        var outbounds = await RenderOutboundsAsync(WithProxy(CreateConfigJson(), "http", user: null, password: null));
+        Assert.AreEqual("http", outbounds[0].GetProperty("protocol").GetString());
+        Assert.IsFalse(outbounds[0].GetProperty("settings").GetProperty("servers")[0].TryGetProperty("users", out _));
+        Assert.IsFalse(outbounds[0].TryGetProperty("streamSettings", out _));
+    }
+
+    [TestMethod]
+    public async Task HttpsUpstreamProxyWrapsTheConnectionInTls()
+    {
+        var outbounds = await RenderOutboundsAsync(WithProxy(CreateConfigJson(), "https", port: 443));
+        Assert.AreEqual("http", outbounds[0].GetProperty("protocol").GetString());
+        var stream = outbounds[0].GetProperty("streamSettings");
+        Assert.AreEqual("tls", stream.GetProperty("security").GetString());
+        Assert.AreEqual("p.webshare.io", stream.GetProperty("tlsSettings").GetProperty("serverName").GetString());
+    }
+
+    [TestMethod]
+    [DataRow("{\"upstreamProxyHost\":\"p.webshare.io\",\"upstreamProxyPort\":80}")]
+    [DataRow("{\"upstreamProxyType\":\"http\"}")]
+    [DataRow("{\"upstreamProxyType\":\"ftp\",\"upstreamProxyHost\":\"p.webshare.io\",\"upstreamProxyPort\":80}")]
+    [DataRow("{\"upstreamProxyType\":\"http\",\"upstreamProxyHost\":\"p.webshare.io\",\"upstreamProxyPort\":99999}")]
+    public async Task AnIncompleteOrInvalidUpstreamProxyIsRejectedInsteadOfConnectingDirectly(string extra)
+    {
+        var config = CreateConfigJson().TrimEnd('}') + "," + extra.TrimStart('{');
+        var result = await provider.ValidateAsync(CreateDesiredState(configJson: config), CancellationToken.None);
+        Assert.IsFalse(result.IsValid);
+        Assert.AreEqual("invalid_config", result.ErrorCode);
+    }
+
     [TestMethod]
     public async Task ValidateAsync_RejectsTheRemovedExitNodeField()
     {

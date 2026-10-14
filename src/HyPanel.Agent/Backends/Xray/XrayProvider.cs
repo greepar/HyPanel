@@ -161,7 +161,8 @@ public sealed class XrayProvider : IBackendProvider
         IsShortId(config.ShortId) &&
         IsDnsHostname(config.ServerName) &&
         IsDestination(config.Destination) &&
-        config.Fingerprint is "chrome" or "firefox" or "safari" or "edge" or "randomized";
+        config.Fingerprint is "chrome" or "firefox" or "safari" or "edge" or "randomized" &&
+        config.TryGetProxy(out _);
 
     private static bool IsCanonicalIpAddress(string? value)
     {
@@ -311,11 +312,7 @@ public sealed class XrayProvider : IBackendProvider
                 }
             }
         ],
-        Outbounds =
-        [
-            new XrayOutbound { Protocol = "freedom", Tag = "direct" },
-            new XrayOutbound { Protocol = "blackhole", Tag = "blocked" }
-        ]
+        Outbounds = XrayOutbound.Create(config.ProxyOrNull())
     };
 
     internal static IReadOnlyList<BackendUserTraffic> ParseStats(string json, IReadOnlyList<BackendUser>? desiredUsers,

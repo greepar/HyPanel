@@ -11,8 +11,18 @@ using System.Text.Json.Serialization;
 [JsonSerializable(typeof(XrayShadowsocksConfig))]
 internal sealed partial class XrayJsonSerializerContext : JsonSerializerContext;
 
-internal sealed class XrayConfig
+internal sealed class XrayConfig : HyPanel.Agent.Backends.IUpstreamProxyConfig
 {
+    public string? UpstreamProxyType { get; init; }
+
+    public string? UpstreamProxyHost { get; init; }
+
+    public int? UpstreamProxyPort { get; init; }
+
+    public string? UpstreamProxyUsername { get; init; }
+
+    public string? UpstreamProxyPassword { get; init; }
+
     public string? ListenHost { get; init; }
 
     public int ListenPort { get; init; }
@@ -42,8 +52,18 @@ internal sealed class XrayConfig
     public int? RelayPort { get; init; }
 }
 
-internal sealed class XrayShadowsocksConfig
+internal sealed class XrayShadowsocksConfig : HyPanel.Agent.Backends.IUpstreamProxyConfig
 {
+    public string? UpstreamProxyType { get; init; }
+
+    public string? UpstreamProxyHost { get; init; }
+
+    public int? UpstreamProxyPort { get; init; }
+
+    public string? UpstreamProxyUsername { get; init; }
+
+    public string? UpstreamProxyPassword { get; init; }
+
     public string? ListenHost { get; init; }
 
     public int ListenPort { get; init; }

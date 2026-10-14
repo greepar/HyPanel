@@ -236,7 +236,8 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
         (config.ObfsPassword is null || HasValidSecretLength(config.ObfsPassword)) &&
         config.UpMbps is >= 1 and <= MaximumBandwidthMbps &&
         config.DownMbps is >= 1 and <= MaximumBandwidthMbps &&
-        (string.IsNullOrWhiteSpace(config.PortHopping) || HyPanel.Shared.Networking.PortSpec.TryParse(config.PortHopping, out _));
+        (string.IsNullOrWhiteSpace(config.PortHopping) || HyPanel.Shared.Networking.PortSpec.TryParse(config.PortHopping, out _)) &&
+        config.TryGetProxy(out _);
 
     /// <summary>Port-hopping ports of a Hysteria2 service config, or null when none are configured.</summary>
     internal static (int ListenPort, HyPanel.Shared.Networking.PortSpec Ports)? PortHopping(string configJson) =>
@@ -403,6 +404,32 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
             yaml.Append("  type: ").Append(QuoteYaml("salamander")).AppendLine();
             yaml.AppendLine("  salamander:");
             yaml.Append("    password: ").Append(QuoteYaml(config.ObfsPassword)).AppendLine();
+        }
+
+        // With no ACL the first outbound carries everything, so the upstream proxy is the only one and fails closed.
+        if (config.ProxyOrNull() is { } proxy)
+        {
+            yaml.AppendLine("outbounds:");
+            yaml.AppendLine("  - name: upstream");
+            if (proxy.Type == HyPanel.Shared.Networking.UpstreamProxy.Socks5)
+            {
+                yaml.AppendLine("    type: socks5");
+                yaml.AppendLine("    socks5:");
+                yaml.Append("      addr: ").Append(QuoteYaml(proxy.Host.Contains(':') ? $"[{proxy.Host}]:{proxy.Port}" : $"{proxy.Host}:{proxy.Port}")).AppendLine();
+                if (proxy.Username is not null)
+                {
+                    yaml.Append("      username: ").Append(QuoteYaml(proxy.Username)).AppendLine();
+                    if (proxy.Password is not null)
+                        yaml.Append("      password: ").Append(QuoteYaml(proxy.Password)).AppendLine();
+                }
+            }
+            else
+            {
+                yaml.AppendLine("    type: http");
+                yaml.AppendLine("    http:");
+                yaml.Append("      url: ").Append(QuoteYaml(proxy.ToUrl())).AppendLine();
+                yaml.AppendLine("      insecure: false");
+            }
         }
 
         return yaml.ToString();

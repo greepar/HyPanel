@@ -119,6 +119,69 @@ internal sealed class XrayOutbound
 {
     public required string Protocol { get; init; }
     public required string Tag { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public XrayProxyOutboundSettings? Settings { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public XrayOutboundStream? StreamSettings { get; init; }
+
+    /// <summary>
+    /// Xray sends everything through the first outbound: the upstream proxy when one is configured (it fails closed,
+    /// there is no fallback to a direct connection), otherwise a direct connection.
+    /// </summary>
+    public static XrayOutbound[] Create(HyPanel.Shared.Networking.UpstreamProxy? proxy)
+    {
+        var blocked = new XrayOutbound { Protocol = "blackhole", Tag = "blocked" };
+        if (proxy is null) return [new XrayOutbound { Protocol = "freedom", Tag = "direct" }, blocked];
+        var server = new XrayProxyServer
+        {
+            Address = proxy.Host,
+            Port = proxy.Port,
+            Users = proxy.Username is null ? null : [new XrayProxyUser { User = proxy.Username, Pass = proxy.Password ?? "" }]
+        };
+        return
+        [
+            new XrayOutbound
+            {
+                Protocol = proxy.Type == HyPanel.Shared.Networking.UpstreamProxy.Socks5 ? "socks" : "http",
+                Tag = "upstream",
+                Settings = new XrayProxyOutboundSettings { Servers = [server] },
+                StreamSettings = proxy.Type == HyPanel.Shared.Networking.UpstreamProxy.Https
+                    ? new XrayOutboundStream { Security = "tls", TlsSettings = new XrayTlsSettings { ServerName = proxy.Host } }
+                    : null
+            },
+            blocked
+        ];
+    }
+}
+
+internal sealed class XrayProxyOutboundSettings
+{
+    public required XrayProxyServer[] Servers { get; init; }
+}
+
+internal sealed class XrayProxyServer
+{
+    public required string Address { get; init; }
+    public required int Port { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public XrayProxyUser[]? Users { get; init; }
+}
+
+internal sealed class XrayProxyUser
+{
+    public required string User { get; init; }
+    public required string Pass { get; init; }
+}
+
+internal sealed class XrayOutboundStream
+{
+    public required string Security { get; init; }
+    public required XrayTlsSettings TlsSettings { get; init; }
+}
+
+internal sealed class XrayTlsSettings
+{
+    public required string ServerName { get; init; }
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]

@@ -12,6 +12,24 @@ public sealed class XrayShadowsocksProviderTests
     private const string ServerKey = "AAECAwQFBgcICQoLDA0ODw==";
     private readonly XrayShadowsocksProvider provider = new(TimeProvider.System);
 
+    [TestMethod]
+    public async Task UpstreamProxyReplacesTheDirectOutboundAndPartialConfigIsRejected()
+    {
+        var alice = new BackendUser(Guid.NewGuid(), Guid.NewGuid().ToString("D"));
+        var desired = Desired([alice]);
+        desired = desired with { ConfigJson = desired.ConfigJson.TrimEnd('}') +
+            ",\"upstreamProxyType\":\"socks5\",\"upstreamProxyHost\":\"p.webshare.io\",\"upstreamProxyPort\":1080,\"upstreamProxyUsername\":\"u\",\"upstreamProxyPassword\":\"p\"}" };
+        Assert.IsTrue((await provider.ValidateAsync(desired, CancellationToken.None)).IsValid);
+        using var document = JsonDocument.Parse((await provider.RenderConfigAsync(desired, CancellationToken.None)).Content);
+        var outbound = document.RootElement.GetProperty("outbounds")[0];
+        Assert.AreEqual("socks", outbound.GetProperty("protocol").GetString());
+        Assert.AreEqual("p.webshare.io", outbound.GetProperty("settings").GetProperty("servers")[0].GetProperty("address").GetString());
+
+        var partial = Desired([alice]);
+        partial = partial with { ConfigJson = partial.ConfigJson.TrimEnd('}') + ",\"upstreamProxyHost\":\"p.webshare.io\"}" };
+        Assert.IsFalse((await provider.ValidateAsync(partial, CancellationToken.None)).IsValid);
+    }
+
     private static ServiceDesiredState Desired(IReadOnlyList<BackendUser> users, string password = ServerKey) =>
         new(Guid.NewGuid(), "ss", "xray-ss", "26.3.27", true, 1,
             $$"""{"listenHost":"0.0.0.0","listenPort":8388,"password":"{{password}}","method":"2022-blake3-aes-128-gcm","udp":true}""",
