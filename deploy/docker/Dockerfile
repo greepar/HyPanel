@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-alpine-aot AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.402-alpine3.24-aot AS build
 
 ARG TARGETARCH
 ARG VERSION=0.0.0-local
@@ -24,7 +24,7 @@ RUN case "$TARGETARCH" in \
     && rm -f /publish/*.dbg /publish/*.pdb /publish/*.json \
     && mv /publish/HyPanel.Server /publish/hypanel-server
 
-FROM mcr.microsoft.com/dotnet/runtime-deps:10.0-alpine
+FROM mcr.microsoft.com/dotnet/runtime-deps:10.0.13-alpine3.24
 
 RUN apk add --no-cache wget \
     && addgroup -S -g 10001 hypanel \
