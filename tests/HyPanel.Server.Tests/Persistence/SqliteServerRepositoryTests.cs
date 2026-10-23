@@ -1347,6 +1347,7 @@ public sealed class SqliteServerRepositoryTests
         StringAssert.Contains(mihomo, "type: vless");
         StringAssert.Contains(mihomo, "public-key: \"public-key-value\"");
         StringAssert.Contains(mihomo, "short-id: \"a1b2\"");
+        StringAssert.Contains(mihomo, "      support-x25519mlkem768: true\n");
         StringAssert.Contains(mihomo, $"uuid: \"{clientId}\"");
         StringAssert.Contains(mihomo, "server: \"2001:db8::10\"\n    port: 24445");
         StringAssert.Contains(mihomo, "sni: \"hy.example\"");

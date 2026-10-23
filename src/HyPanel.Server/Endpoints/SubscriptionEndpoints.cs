@@ -169,7 +169,9 @@ internal static class SubscriptionEndpoints
                     .Append("\n    tls: true\n    servername: ").Append(Yaml(xray.ServerName))
                     .Append("\n    client-fingerprint: ").Append(Yaml(xray.Fingerprint))
                     .Append("\n    reality-opts:\n      public-key: ").Append(Yaml(xray.PublicKey))
-                    .Append("\n      short-id: ").Append(Yaml(xray.ShortId)).Append('\n');
+                    .Append("\n      short-id: ").Append(Yaml(xray.ShortId))
+                    // Recent REALITY servers require a hybrid key share; Mihomo removes it by default.
+                    .Append("\n      support-x25519mlkem768: true\n");
             }
             else if (proxy is ShadowsocksProxy shadowsocks)
             {
