@@ -101,8 +101,7 @@ internal static class BackendDefinitionCatalog
     };
 
     /// <summary>
-    /// REALITY camouflage targets: large sites that serve TLS 1.3 + HTTP/2 and are reachable from mainland China.
-    /// Microsoft endpoints and visa.com are avoided because they can break REALITY handshakes.
+    /// Built-in REALITY camouflage candidates. Reachability depends on the node and client networks.
     /// </summary>
     internal static readonly string[] RealityTargets =
     [

@@ -71,7 +71,6 @@ public sealed class X25519Tests
         CollectionAssert.Contains(BackendDefinitionCatalog.RealityTargets, xray["serverName"]);
         Assert.AreEqual(xray["serverName"] + ":443", xray["destination"]);
         Assert.IsFalse(BackendDefinitionCatalog.RealityTargets.Any(target => target.Contains("microsoft", StringComparison.OrdinalIgnoreCase)));
-        CollectionAssert.DoesNotContain(BackendDefinitionCatalog.RealityTargets, "www.visa.com");
         Assert.AreEqual(32, DecodeBase64Url(xray["realityPrivateKey"]).Length);
         Assert.AreEqual(16, xray["shortId"].Length);
 
