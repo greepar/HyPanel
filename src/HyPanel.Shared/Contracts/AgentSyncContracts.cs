@@ -160,7 +160,8 @@ public sealed record ServiceRuntimeState(
     BackendTrafficSnapshot? Traffic,
     DateTimeOffset ObservedAt,
     string? ErrorCode,
-    string? ErrorMessage);
+    string? ErrorMessage,
+    string? ExitCountryCode = null);
 
 public sealed record BackendTrafficSnapshot(
     long UploadBytes,

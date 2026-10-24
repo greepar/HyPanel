@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 27;
+    public const long CurrentSchemaVersion = 28;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -648,6 +648,15 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             await ExecuteAsync(connection, transaction, """
                 ALTER TABLE agents ADD COLUMN public_ipv6 TEXT NULL;
                 INSERT INTO schema_migrations (version, applied_at_utc) VALUES (27, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                """, cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, 28, cancellationToken))
+        {
+            // Country a service's traffic exits from through its upstream proxy; it flags the subscription entry.
+            await ExecuteAsync(connection, transaction, """
+                ALTER TABLE service_runtime_states ADD COLUMN exit_country_code TEXT NULL;
+                INSERT INTO schema_migrations (version, applied_at_utc) VALUES (28, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
                 """, cancellationToken);
         }
 

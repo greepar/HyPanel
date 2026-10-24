@@ -291,7 +291,8 @@ internal static class AgentSyncEndpoints
         state.ServiceId != Guid.Empty && Enum.IsDefined(state.Status) && state.ObservedAt <= nowUtc + MaximumFutureClockSkew
         && HasMaximumLength(state.BackendVersion, MaximumAgentVersionLength) && IsOptionalSha256(state.AppliedConfigSha256)
         && HasMaximumLength(state.ErrorCode, MaximumErrorCodeLength) && HasMaximumLength(state.ErrorMessage, MaximumErrorMessageLength)
-        && (state.Traffic is null || (state.Traffic.UploadBytes >= 0 && state.Traffic.DownloadBytes >= 0 && state.Traffic.ObservedAt <= nowUtc + MaximumFutureClockSkew));
+        && (state.Traffic is null || (state.Traffic.UploadBytes >= 0 && state.Traffic.DownloadBytes >= 0 && state.Traffic.ObservedAt <= nowUtc + MaximumFutureClockSkew))
+        && (state.ExitCountryCode is null || IsCountryCode(state.ExitCountryCode));
 
     internal static bool IsValidMetrics(NodeMetrics metrics, DateTimeOffset nowUtc) =>
         metrics.ObservedAt > nowUtc + MaximumFutureClockSkew

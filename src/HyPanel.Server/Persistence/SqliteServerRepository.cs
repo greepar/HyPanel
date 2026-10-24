@@ -1261,10 +1261,10 @@ internal sealed partial class SqliteServerRepository(
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-                              INSERT INTO service_runtime_states (service_id, status, backend_version, applied_config_sha256, traffic_upload_bytes, traffic_download_bytes, traffic_observed_at_utc, observed_at_utc, error_code, error_message)
-                              SELECT @serviceId, @status, @backendVersion, @appliedConfigSha256, @trafficUploadBytes, @trafficDownloadBytes, @trafficObservedAtUtc, @observedAtUtc, @errorCode, @errorMessage
+                              INSERT INTO service_runtime_states (service_id, status, backend_version, applied_config_sha256, traffic_upload_bytes, traffic_download_bytes, traffic_observed_at_utc, observed_at_utc, error_code, error_message, exit_country_code)
+                              SELECT @serviceId, @status, @backendVersion, @appliedConfigSha256, @trafficUploadBytes, @trafficDownloadBytes, @trafficObservedAtUtc, @observedAtUtc, @errorCode, @errorMessage, @exitCountryCode
                               WHERE EXISTS (SELECT 1 FROM service_instances s INNER JOIN agents a ON a.node_id = s.node_id WHERE s.id = @serviceId AND a.id = @agentId)
-                              ON CONFLICT(service_id) DO UPDATE SET status = excluded.status, backend_version = excluded.backend_version, applied_config_sha256 = excluded.applied_config_sha256, traffic_upload_bytes = excluded.traffic_upload_bytes, traffic_download_bytes = excluded.traffic_download_bytes, traffic_observed_at_utc = excluded.traffic_observed_at_utc, observed_at_utc = excluded.observed_at_utc, error_code = excluded.error_code, error_message = excluded.error_message;
+                              ON CONFLICT(service_id) DO UPDATE SET status = excluded.status, backend_version = excluded.backend_version, applied_config_sha256 = excluded.applied_config_sha256, traffic_upload_bytes = excluded.traffic_upload_bytes, traffic_download_bytes = excluded.traffic_download_bytes, traffic_observed_at_utc = excluded.traffic_observed_at_utc, observed_at_utc = excluded.observed_at_utc, error_code = excluded.error_code, error_message = excluded.error_message, exit_country_code = excluded.exit_country_code;
                               """;
         command.Parameters.AddWithValue("@serviceId", state.ServiceId.ToString("D"));
         command.Parameters.AddWithValue("@agentId", agentId.ToString("D"));
@@ -1280,6 +1280,7 @@ internal sealed partial class SqliteServerRepository(
         command.Parameters.AddWithValue("@observedAtUtc", SqliteValue.ToUtcText(state.ObservedAt));
         command.Parameters.AddWithValue("@errorCode", SqliteValue.ToDbValue(state.ErrorCode));
         command.Parameters.AddWithValue("@errorMessage", SqliteValue.ToDbValue(state.ErrorMessage));
+        command.Parameters.AddWithValue("@exitCountryCode", SqliteValue.ToDbValue(state.ExitCountryCode));
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
