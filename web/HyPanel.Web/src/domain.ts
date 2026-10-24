@@ -58,6 +58,10 @@ export type Node = {
   agentUpdateError: string | null
   publicIpv4?: string | null
   publicIpv6?: string | null
+  trafficUploadBytes?: number
+  trafficDownloadBytes?: number
+  trafficResetDay?: number | null
+  trafficPeriodStart?: string | null
 }
 
 export type Runtime = {

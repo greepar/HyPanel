@@ -77,7 +77,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L), (22L, 1L), (23L, 1L), (24L, 1L), (25L, 1L), (26L, 1L), (27L, 1L), (28L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L), (22L, 1L), (23L, 1L), (24L, 1L), (25L, 1L), (26L, 1L), (27L, 1L), (28L, 1L), (29L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -784,6 +784,49 @@ public sealed class SqliteServerRepositoryTests
         Assert.IsTrue(await fixture.Repository.ResetTrafficAsync(user.User.Id, CancellationToken.None));
         Assert.AreEqual(0, (await fixture.Repository.GetUsageTotalsAsync(user.User.Id, null, CancellationToken.None)).Count);
         Assert.IsFalse(await fixture.Repository.ResetTrafficAsync(Guid.NewGuid(), CancellationToken.None));
+    }
+
+    [TestMethod]
+    public async Task NodeTraffic_CountsUsageAndResetsSeparatelyFromUsers()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        var agentId = await CreateAgentAsync(fixture, nodeId, "node-traffic-token", "node-traffic-secret");
+        var user = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Nina", "nina", "password-hash", "User",
+            true, null, null, "node-traffic-sub", CancellationToken.None);
+        var service = XrayService(CreateService(nodeId, Guid.NewGuid(), "counted"));
+        await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
+        Assert.IsTrue(await fixture.Repository.BindServiceAsync(user.User.Id, service.Id, CancellationToken.None));
+        async Task Use(long up, long down) => Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId,
+            "2.0", "linux-x64", 1, null, [], [], CancellationToken.None,
+            [new UsageBatch(Guid.NewGuid(), fixture.Time.GetUtcNow(), [new UserUsageDelta(user.User.Id, service.Id, up, down)])]));
+        async Task<NodeObservationRecord> Node() =>
+            (await fixture.Repository.GetNodeObservationsAsync(CancellationToken.None)).Single();
+
+        await Use(10, 90);
+        Assert.AreEqual((10L, 90L, (int?)1), ((await Node()).TrafficUploadBytes, (await Node()).TrafficDownloadBytes,
+            (await Node()).TrafficResetDay), "new nodes reset on the 1st by default");
+
+        // A user's reset leaves the node's counter alone.
+        Assert.IsTrue(await fixture.Repository.ResetTrafficAsync(user.User.Id, CancellationToken.None));
+        Assert.AreEqual(90L, (await Node()).TrafficDownloadBytes);
+
+        // Nothing is due within the period; crossing the reset day clears the node.
+        Assert.AreEqual(0, await fixture.Repository.ResetDueNodeTrafficAsync(CancellationToken.None));
+        Assert.IsTrue(await fixture.Repository.SetNodeTrafficResetDayAsync(nodeId, 15, CancellationToken.None));
+        fixture.Time.Advance(TimeSpan.FromDays(32));
+        Assert.AreEqual(1, await fixture.Repository.ResetDueNodeTrafficAsync(CancellationToken.None));
+        Assert.AreEqual(0L, (await Node()).TrafficDownloadBytes);
+        Assert.AreEqual(fixture.Time.GetUtcNow(), (await Node()).TrafficPeriodStartUtc);
+        Assert.AreEqual(0, await fixture.Repository.ResetDueNodeTrafficAsync(CancellationToken.None));
+
+        await Use(5, 5);
+        Assert.IsTrue(await fixture.Repository.SetNodeTrafficResetDayAsync(nodeId, null, CancellationToken.None));
+        fixture.Time.Advance(TimeSpan.FromDays(62));
+        Assert.AreEqual(0, await fixture.Repository.ResetDueNodeTrafficAsync(CancellationToken.None), "no reset day, no reset");
+        Assert.IsTrue(await fixture.Repository.ResetNodeTrafficAsync(nodeId, CancellationToken.None));
+        Assert.AreEqual(0L, (await Node()).TrafficUploadBytes);
+        Assert.IsFalse(await fixture.Repository.ResetNodeTrafficAsync(Guid.NewGuid(), CancellationToken.None));
     }
 
     [TestMethod]

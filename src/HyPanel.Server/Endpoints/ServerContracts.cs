@@ -28,7 +28,13 @@ internal sealed record AdminNodeObservationResponse(
     string? AgentUpdateError,
     string? PublicIpv4,
     string? CountryCode = null,
-    string? PublicIpv6 = null);
+    string? PublicIpv6 = null,
+    long TrafficUploadBytes = 0,
+    long TrafficDownloadBytes = 0,
+    int? TrafficResetDay = null,
+    DateTimeOffset? TrafficPeriodStart = null);
+
+internal sealed record SetNodeTrafficResetDayRequest(int? Day);
 
 internal sealed record SetAgentUpdatePolicyRequest(string Policy);
 internal sealed record RequestAgentUpdateResponse(Guid UpdateId, string Version);

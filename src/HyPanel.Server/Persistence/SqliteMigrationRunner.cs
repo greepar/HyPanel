@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 28;
+    public const long CurrentSchemaVersion = 29;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -657,6 +657,26 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             await ExecuteAsync(connection, transaction, """
                 ALTER TABLE service_runtime_states ADD COLUMN exit_country_code TEXT NULL;
                 INSERT INTO schema_migrations (version, applied_at_utc) VALUES (28, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                """, cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, 29, cancellationToken))
+        {
+            // Node traffic gets its own counter, so it no longer drops when a user's usage is reset and can restart
+            // on the node's own monthly reset day (the 1st unless changed; NULL never resets). The counter starts
+            // from what users have used on the node so far.
+            await ExecuteAsync(connection, transaction, """
+                ALTER TABLE nodes ADD COLUMN traffic_upload_bytes INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE nodes ADD COLUMN traffic_download_bytes INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE nodes ADD COLUMN traffic_reset_day INTEGER NULL DEFAULT 1 CHECK (traffic_reset_day BETWEEN 1 AND 28);
+                ALTER TABLE nodes ADD COLUMN traffic_reset_at_utc TEXT NULL;
+                UPDATE nodes SET
+                    traffic_upload_bytes = COALESCE((SELECT SUM(t.upload_bytes) FROM usage_totals t
+                        JOIN service_instances s ON s.id = t.service_id WHERE s.node_id = nodes.id), 0),
+                    traffic_download_bytes = COALESCE((SELECT SUM(t.download_bytes) FROM usage_totals t
+                        JOIN service_instances s ON s.id = t.service_id WHERE s.node_id = nodes.id), 0),
+                    traffic_reset_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now');
+                INSERT INTO schema_migrations (version, applied_at_utc) VALUES (29, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
                 """, cancellationToken);
         }
 

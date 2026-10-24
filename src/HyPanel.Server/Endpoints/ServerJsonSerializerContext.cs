@@ -63,6 +63,7 @@ using HyPanel.Shared.Contracts;
 [JsonSerializable(typeof(BatchServiceEnabledResponse))]
 [JsonSerializable(typeof(HealthSummaryResponse))]
 [JsonSerializable(typeof(SetAgentUpdatePolicyRequest))]
+[JsonSerializable(typeof(SetNodeTrafficResetDayRequest))]
 [JsonSerializable(typeof(RequestAgentUpdateResponse))]
 [JsonSerializable(typeof(BatchAgentUpdateRequest))]
 [JsonSerializable(typeof(BatchAgentUpdateResponse))]

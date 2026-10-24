@@ -1357,9 +1357,8 @@ function NodeDetailPage({
 
 function NodeOverview({ api, node, services }: { api: ApiClient; node: Node; services: Service[] }) {
   const metrics = node.metrics;
-  const { usage } = useNodeUsage(api, services);
-  const proxyUp = usage?.reduce((total, row) => total + row.uploadBytes, 0) ?? 0;
-  const proxyDown = usage?.reduce((total, row) => total + row.downloadBytes, 0) ?? 0;
+  const proxyUp = node.trafficUploadBytes ?? 0;
+  const proxyDown = node.trafficDownloadBytes ?? 0;
   return (
     <>
       <div className="stats-grid node-stats">
@@ -1391,8 +1390,8 @@ function NodeOverview({ api, node, services }: { api: ApiClient; node: Node; ser
         />
         <Stat
           label="代理流量"
-          value={usage ? formatBytes(proxyUp + proxyDown) : "…"}
-          note={`↑ ${formatBytes(proxyUp)} · ↓ ${formatBytes(proxyDown)}`}
+          value={formatBytes(proxyUp + proxyDown)}
+          note={`↑ ${formatBytes(proxyUp)} · ↓ ${formatBytes(proxyDown)} · ${node.trafficResetDay ? `每月 ${node.trafficResetDay} 日重置` : "不重置"}`}
         />
         <Stat
           label="运行时间"
@@ -1615,11 +1614,59 @@ function NodeSettings({
       setError(messageFor(reason, "无法修改自动更新策略"));
     }
   };
+  const resetDay = async (value: string) => {
+    try {
+      await api.setNodeTrafficResetDay(node.id, value ? Number(value) : null);
+      setError(value ? `节点流量将在每月 ${value} 日重置。` : "节点流量不再自动重置。");
+      reload();
+    } catch (reason) {
+      setError(messageFor(reason, "无法修改流量重置日"));
+    }
+  };
+  const resetTraffic = async () => {
+    if (!confirm(`清零 ${node.displayName} 的代理流量统计？用户的已用流量不受影响。`)) return;
+    try {
+      await api.resetNodeTraffic(node.id);
+      setError("节点流量统计已清零。");
+      reload();
+    } catch (reason) {
+      setError(messageFor(reason, "无法重置节点流量"));
+    }
+  };
   const canUpdate =
     node.agentUpdateStatus === "Available" ||
     node.agentUpdateStatus === "Failed";
   return (
     <div className="detail-grid">
+      <section className="card panel">
+        <SectionTitle
+          title="流量统计"
+          description={`本期自 ${node.trafficPeriodStart ? formatDate(node.trafficPeriodStart) : "—"} 起：${formatBytes((node.trafficUploadBytes ?? 0) + (node.trafficDownloadBytes ?? 0))}`}
+        />
+        <div className="section-toolbar">
+          <label>
+            每月重置
+            <Select
+              ariaLabel="节点流量重置日"
+              value={node.trafficResetDay?.toString() ?? ""}
+              options={[
+                { value: "", label: "不重置" },
+                ...Array.from({ length: 28 }, (_, index) => ({
+                  value: String(index + 1),
+                  label: `每月 ${index + 1} 日`,
+                })),
+              ]}
+              onChange={(value) => void resetDay(value)}
+            />
+          </label>
+          <button className="button button-secondary" type="button" onClick={() => void resetTraffic()}>
+            立即清零
+          </button>
+        </div>
+        <p className="muted small">
+          只清零节点页显示的代理流量，用户的已用流量和限额按各自的重置日处理。重置时间为 UTC 0 点（北京时间 8 点）。
+        </p>
+      </section>
       <section className="card panel">
         <SectionTitle title="Agent 更新" description={agentUpdateLabel(node)} />
         <dl className="facts-list">

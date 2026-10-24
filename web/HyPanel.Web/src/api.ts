@@ -47,6 +47,8 @@ export class ApiClient {
   updateAgent = (nodeId: string) => this.request<{ updateId: string; version: string }>(`/api/admin/v1/nodes/${nodeId}/agent-update`, { method: 'POST' })
   updateAgents = (nodeIds: string[]) => this.request<{ version: string; updatedNodes: number }>('/api/admin/v1/nodes/agent-update', { method: 'POST', body: JSON.stringify({ nodeIds }) })
   setAgentUpdatePolicy = (nodeId: string, policy: 'Manual' | 'Auto') => this.request<void>(`/api/admin/v1/nodes/${nodeId}/agent-update-policy`, { method: 'PUT', body: JSON.stringify({ policy }) })
+  setNodeTrafficResetDay = (nodeId: string, day: number | null) => this.request<void>(`/api/admin/v1/nodes/${nodeId}/traffic-reset-day`, { method: 'PUT', body: JSON.stringify({ day }) })
+  resetNodeTraffic = (nodeId: string) => this.request<void>(`/api/admin/v1/nodes/${nodeId}/traffic-reset`, { method: 'POST' })
   services = (nodeId: string, signal?: AbortSignal) => this.request<Service[]>(`/api/admin/v1/nodes/${nodeId}/services`, { signal })
   endpoint = (nodeId: string, serviceId: string) => this.request<PublicEndpoint | undefined>(`/api/admin/v1/nodes/${nodeId}/services/${serviceId}/public-endpoint`)
   diagnostics = (nodeId: string, serviceId: string) => this.request<ServiceDiagnostic[]>(`/api/admin/v1/nodes/${nodeId}/services/${serviceId}/diagnostics`)

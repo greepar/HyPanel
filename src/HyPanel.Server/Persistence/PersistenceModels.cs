@@ -60,7 +60,11 @@ internal sealed record NodeObservationRecord(
     string? UpdateError = null,
     string? PublicIpv4 = null,
     string? CountryCode = null,
-    string? PublicIpv6 = null);
+    string? PublicIpv6 = null,
+    long TrafficUploadBytes = 0,
+    long TrafficDownloadBytes = 0,
+    int? TrafficResetDay = null,
+    DateTimeOffset? TrafficPeriodStartUtc = null);
 
 internal sealed record AgentUpdateTargetRecord(
     Guid NodeId,

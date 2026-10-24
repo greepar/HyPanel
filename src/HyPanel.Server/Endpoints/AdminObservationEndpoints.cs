@@ -53,7 +53,11 @@ internal static class AdminObservationEndpoints
                 observation.UpdateError,
                 observation.PublicIpv4,
                 observation.CountryCode,
-                observation.PublicIpv6);
+                observation.PublicIpv6,
+                observation.TrafficUploadBytes,
+                observation.TrafficDownloadBytes,
+                observation.TrafficResetDay,
+                observation.TrafficPeriodStartUtc);
         }
 
         return Results.Json(response, ServerJsonSerializerContext.Default.AdminNodeObservationResponseArray);

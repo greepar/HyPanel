@@ -303,7 +303,8 @@ internal sealed partial class SqliteServerRepository(
                                       a.latest_metric_snapshot_json, n.agent_update_policy, n.desired_agent_version,
                                       n.agent_update_id, a.update_status, a.update_target_version,
                                        a.update_started_at_utc, a.update_error, a.public_ipv4, a.country_code,
-                                       a.public_ipv6
+                                       a.public_ipv6, n.traffic_upload_bytes, n.traffic_download_bytes,
+                                       n.traffic_reset_day, COALESCE(n.traffic_reset_at_utc, n.created_at_utc)
                               FROM nodes n
                               LEFT JOIN agents a ON a.node_id = n.id
                               ORDER BY n.created_at_utc, n.id;
@@ -330,7 +331,11 @@ internal sealed partial class SqliteServerRepository(
                 reader.IsDBNull(15) ? null : reader.GetString(15),
                 reader.IsDBNull(16) ? null : reader.GetString(16),
                 reader.IsDBNull(17) ? null : reader.GetString(17),
-                reader.IsDBNull(18) ? null : reader.GetString(18)));
+                reader.IsDBNull(18) ? null : reader.GetString(18),
+                reader.GetInt64(19),
+                reader.GetInt64(20),
+                reader.IsDBNull(21) ? null : reader.GetInt32(21),
+                SqliteValue.ToDateTimeOffset(reader.GetString(22))));
         }
 
         return observations;
@@ -1344,6 +1349,22 @@ internal sealed partial class SqliteServerRepository(
             total.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
             total.Parameters.AddWithValue("@maximum", long.MaxValue);
             if (await total.ExecuteNonQueryAsync(cancellationToken) != 1) return false;
+
+            await using var node = connection.CreateCommand();
+            node.Transaction = transaction;
+            node.CommandText = """
+                               UPDATE nodes SET
+                                   traffic_upload_bytes = CASE WHEN traffic_upload_bytes > @maximum - @upload THEN @maximum
+                                                               ELSE traffic_upload_bytes + @upload END,
+                                   traffic_download_bytes = CASE WHEN traffic_download_bytes > @maximum - @download THEN @maximum
+                                                                 ELSE traffic_download_bytes + @download END
+                               WHERE id = (SELECT node_id FROM service_instances WHERE id = @service);
+                               """;
+            node.Parameters.AddWithValue("@service", record.ServiceId.ToString("D"));
+            node.Parameters.AddWithValue("@upload", record.UploadBytes);
+            node.Parameters.AddWithValue("@download", record.DownloadBytes);
+            node.Parameters.AddWithValue("@maximum", long.MaxValue);
+            await node.ExecuteNonQueryAsync(cancellationToken);
         }
 
         return true;

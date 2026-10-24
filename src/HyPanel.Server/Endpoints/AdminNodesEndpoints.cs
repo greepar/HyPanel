@@ -15,6 +15,27 @@ internal static class AdminNodesEndpoints
         endpoints.MapPost("/api/admin/v1/nodes/{nodeId:guid}/agent-update", RequestUpdateAsync);
         endpoints.MapPost("/api/admin/v1/nodes/agent-update", RequestBatchUpdateAsync);
         endpoints.MapDelete("/api/admin/v1/nodes/{nodeId:guid}", DeleteAsync);
+        endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/traffic-reset-day", SetTrafficResetDayAsync);
+        endpoints.MapPost("/api/admin/v1/nodes/{nodeId:guid}/traffic-reset", ResetTrafficAsync);
+    }
+
+    private static async Task<IResult> SetTrafficResetDayAsync(Guid nodeId, SetNodeTrafficResetDayRequest request,
+        HttpRequest httpRequest, AdminAuthorization authorization, SqliteServerRepository repository,
+        CancellationToken cancellationToken)
+    {
+        var access = await authorization.AuthorizeAsync(httpRequest, cancellationToken);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        if (request.Day is not (null or >= 1 and <= 28)) return Results.BadRequest();
+        return await repository.SetNodeTrafficResetDayAsync(nodeId, request.Day, cancellationToken)
+            ? Results.NoContent() : Results.NotFound();
+    }
+
+    private static async Task<IResult> ResetTrafficAsync(Guid nodeId, HttpRequest httpRequest,
+        AdminAuthorization authorization, SqliteServerRepository repository, CancellationToken cancellationToken)
+    {
+        var access = await authorization.AuthorizeAsync(httpRequest, cancellationToken);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        return await repository.ResetNodeTrafficAsync(nodeId, cancellationToken) ? Results.NoContent() : Results.NotFound();
     }
 
     private static async Task<IResult> DeleteAsync(Guid nodeId, HttpRequest httpRequest,
