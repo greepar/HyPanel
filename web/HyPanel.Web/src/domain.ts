@@ -85,6 +85,7 @@ export type Service = {
   runtime: Runtime | null
   backendUpdatePolicy: 'Manual' | 'Auto'
   latestBackendVersion: string | null
+  ipv6Entry?: boolean
 }
 
 export type Usage = {

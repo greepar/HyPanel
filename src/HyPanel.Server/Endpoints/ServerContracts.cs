@@ -104,7 +104,8 @@ internal sealed record AdminServiceResponse(
     DateTimeOffset UpdatedAtUtc,
     ServiceRuntimeResponse? Runtime,
     string BackendUpdatePolicy,
-    string? LatestBackendVersion);
+    string? LatestBackendVersion,
+    bool Ipv6Entry = true);
 
 internal sealed record LoginRequest(string Username, string Password);
 

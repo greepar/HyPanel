@@ -86,7 +86,8 @@ internal sealed record ServiceInstanceRecord(
     string ConfigJson,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc,
-    string BackendUpdatePolicy = "Manual");
+    string BackendUpdatePolicy = "Manual",
+    bool Ipv6Entry = true);
 
 internal sealed record BackendUpdateTargetRecord(Guid NodeId, Guid ServiceId, string BackendType,
     string DesiredVersion, string ReportedRid, string Policy);

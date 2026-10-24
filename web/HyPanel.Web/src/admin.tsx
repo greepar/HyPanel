@@ -1830,7 +1830,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
     return () => controller.abort();
   }, [nodeId]);
   useAutoRefresh(() => loadServices(nodeId, undefined, true), [nodeId, node.online]);
-  const save = async (form: ServiceForm, service: Service | null, address: PublicEndpoint | null) => {
+  const save = async (form: ServiceForm, service: Service | null, address: PublicEndpoint | null, ipv6Entry: boolean) => {
     const payload = payloadFor(form, backendFor(form.backendType));
     const path = `/api/admin/v1/nodes/${nodeId}/services${service ? `/${service.id}` : ""}`;
     const body = service
@@ -1852,6 +1852,11 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
       await api.request(endpointPath, address
         ? { method: "PUT", body: JSON.stringify(address) }
         : { method: "DELETE" });
+      if (ipv6Entry !== (service?.ipv6Entry ?? true))
+        await api.request(`/api/admin/v1/nodes/${nodeId}/services/${serviceId}/ipv6-entry`, {
+          method: "PUT",
+          body: JSON.stringify({ enabled: ipv6Entry }),
+        });
     }
     setEditor(null);
     await loadServices(nodeId, undefined, true);
@@ -2014,6 +2019,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
           nodeName={node.displayName}
           existingNames={services.map((item) => item.name)}
           publicIpv4={node.publicIpv4 ?? null}
+          publicIpv6={node.publicIpv6 ?? null}
           api={api}
           save={save}
           close={() => setEditor(null)}
@@ -2289,6 +2295,7 @@ function ServiceEditor({
   nodeName,
   existingNames,
   publicIpv4,
+  publicIpv6,
   api,
   save,
   close,
@@ -2299,13 +2306,15 @@ function ServiceEditor({
   nodeName: string;
   existingNames: string[];
   publicIpv4: string | null;
+  publicIpv6: string | null;
   api: ApiClient;
-  save: (form: ServiceForm, service: Service | null, address: PublicEndpoint | null) => Promise<void>;
+  save: (form: ServiceForm, service: Service | null, address: PublicEndpoint | null, ipv6Entry: boolean) => Promise<void>;
   close: () => void;
   setError: (value: string) => void;
 }) {
   // Optional subscription connection address; all fields empty means automatic (node IP + listen port).
   const [address, setAddress] = useState({ host: "", port: "", sni: "" });
+  const [ipv6Entry, setIpv6Entry] = useState(service?.ipv6Entry ?? true);
   useEffect(() => {
     if (!service) return;
     void api.endpoint(nodeId, service.id).then(
@@ -2448,7 +2457,7 @@ function ServiceEditor({
         setError("请填写连接地址的域名/IP 和端口，或全部留空使用自动地址。");
         return;
       }
-      await save(form, service, custom ? { host: host!, port: port!, tlsServerName: address.sni.trim() || null } : null);
+      await save(form, service, custom ? { host: host!, port: port!, tlsServerName: address.sni.trim() || null } : null, ipv6Entry);
     } catch (reason) {
       setError(messageFor(reason, "无法保存服务"));
     } finally {
@@ -2705,7 +2714,7 @@ function ServiceEditor({
           <legend>连接地址（可选）</legend>
           <p className="field-help">
             写进用户订阅的地址。全部留空即自动使用节点公网 IP 和监听端口
-            {form.backendType === "hysteria2" ? "，SNI 取证书域名" : ""}；节点有公网 IPv6 时订阅里会再多一条「IPv6」入口。只有通过域名、CDN 或端口转发访问时才需要填写，填写后只保留这一个入口。
+            {form.backendType === "hysteria2" ? "，SNI 取证书域名" : ""}。只有通过域名、CDN 或端口转发访问时才需要填写，填写后订阅里只保留这一个入口。
           </p>
           <div className="form-grid">
             <label>
@@ -2738,6 +2747,23 @@ function ServiceEditor({
               </label>
             )}
           </div>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={ipv6Entry}
+              disabled={Boolean(address.host.trim())}
+              onChange={(event) => setIpv6Entry(event.currentTarget.checked)}
+            />
+            <span />
+            订阅中提供 IPv6 入口
+          </label>
+          <p className="field-help">
+            {address.host.trim()
+              ? "已填写连接地址，订阅只使用该地址。"
+              : publicIpv6
+                ? `开启后订阅会多一条「IPv6」入口，连接 ${publicIpv6}。`
+                : "节点暂未检测到公网 IPv6；检测到后，开启此项会在订阅里多一条「IPv6」入口。"}
+          </p>
         </fieldset>
         <footer>
           <div className="row-actions">

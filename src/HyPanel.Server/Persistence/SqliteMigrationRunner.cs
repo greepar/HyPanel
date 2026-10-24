@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 29;
+    public const long CurrentSchemaVersion = 30;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -677,6 +677,16 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
                         JOIN service_instances s ON s.id = t.service_id WHERE s.node_id = nodes.id), 0),
                     traffic_reset_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now');
                 INSERT INTO schema_migrations (version, applied_at_utc) VALUES (29, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                """, cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, 30, cancellationToken))
+        {
+            // Whether subscriptions offer the node's IPv6 as a second entry for the service. Panel-only: the Agent
+            // never sees it, so toggling it neither changes the config nor restarts the service.
+            await ExecuteAsync(connection, transaction, """
+                ALTER TABLE service_instances ADD COLUMN ipv6_entry INTEGER NOT NULL DEFAULT 1;
+                INSERT INTO schema_migrations (version, applied_at_utc) VALUES (30, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
                 """, cancellationToken);
         }
 

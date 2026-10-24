@@ -631,7 +631,8 @@ internal sealed partial class SqliteServerRepository(
         await using var command = connection.CreateCommand();
         command.CommandText = """
                                SELECT s.id, s.node_id, s.name, s.backend_type, s.backend_version, s.enabled, s.config_schema_version, s.config_json, s.created_at_utc, s.updated_at_utc, s.backend_update_policy,
-                                     r.service_id, r.status, r.backend_version, r.applied_config_sha256, r.traffic_upload_bytes, r.traffic_download_bytes, r.traffic_observed_at_utc, r.observed_at_utc, r.error_code, r.error_message
+                                     r.service_id, r.status, r.backend_version, r.applied_config_sha256, r.traffic_upload_bytes, r.traffic_download_bytes, r.traffic_observed_at_utc, r.observed_at_utc, r.error_code, r.error_message,
+                                     s.ipv6_entry
                               FROM service_instances s
                               LEFT JOIN service_runtime_states r ON r.service_id = s.id
                               WHERE s.node_id = @nodeId
@@ -645,7 +646,7 @@ internal sealed partial class SqliteServerRepository(
                 SqliteValue.ToGuid(reader.GetString(1)), reader.GetString(2), reader.GetString(3), reader.GetString(4),
                 reader.GetInt64(5) != 0, reader.GetInt32(6), reader.GetString(7),
                 SqliteValue.ToDateTimeOffset(reader.GetString(8)), SqliteValue.ToDateTimeOffset(reader.GetString(9)),
-                reader.GetString(10));
+                reader.GetString(10), reader.GetInt64(21) != 0);
             ServiceRuntimeStateRecord? runtime = reader.IsDBNull(11)
                 ? null
                 : new ServiceRuntimeStateRecord(SqliteValue.ToGuid(reader.GetString(11)), reader.GetInt32(12),
@@ -804,6 +805,19 @@ internal sealed partial class SqliteServerRepository(
             await transaction.RollbackAsync(CancellationToken.None);
             throw;
         }
+    }
+
+    /// <summary>Whether subscriptions offer the node's IPv6 for this service. Panel-only, so no revision bump.</summary>
+    public async Task<bool> SetServiceIpv6EntryAsync(Guid nodeId, Guid serviceId, bool enabled,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE service_instances SET ipv6_entry=@enabled WHERE id=@id AND node_id=@node;";
+        command.Parameters.AddWithValue("@enabled", enabled ? 1 : 0);
+        command.Parameters.AddWithValue("@id", serviceId.ToString("D"));
+        command.Parameters.AddWithValue("@node", nodeId.ToString("D"));
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
 
     public async Task<long?> SetServiceEnabledAsync(Guid nodeId, Guid serviceId, bool enabled,

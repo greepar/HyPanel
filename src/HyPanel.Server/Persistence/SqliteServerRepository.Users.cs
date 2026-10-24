@@ -513,7 +513,7 @@ internal sealed partial class SqliteServerRepository
                                    k.nonce,k.ciphertext,k.tag,c.san,c.certificate_pem,n.display_name,
                                    COALESCE(CASE WHEN COALESCE(json_extract(s.config_json,'$.upstreamProxyType'),'')<>'' THEN rs.exit_country_code END,
                                             a.country_code),
-                                   CASE WHEN p.host IS NOT NULL THEN NULL WHEN rn.id IS NULL THEN a.public_ipv6 ELSE ra.public_ipv6 END
+                                   CASE WHEN p.host IS NOT NULL OR s.ipv6_entry=0 THEN NULL WHEN rn.id IS NULL THEN a.public_ipv6 ELSE ra.public_ipv6 END
                            FROM user_service_bindings b
                            JOIN service_instances s ON s.id=b.service_id
                            JOIN nodes n ON n.id=s.node_id
@@ -525,8 +525,9 @@ internal sealed partial class SqliteServerRepository
                            LEFT JOIN certificates c ON c.id=json_extract(s.config_json,'$.certificateId')
                            JOIN user_service_credentials k ON k.user_id=b.user_id AND k.service_id=b.service_id
                            WHERE b.user_id=@user AND s.enabled=1 AND k.status='Active'
-                             AND (p.host IS NOT NULL OR CASE WHEN rn.id IS NULL THEN COALESCE(a.public_ipv4,a.public_ipv6)
-                                                             ELSE COALESCE(ra.public_ipv4,ra.public_ipv6) END IS NOT NULL)
+                             AND (p.host IS NOT NULL OR CASE WHEN rn.id IS NULL
+                                                                 THEN COALESCE(a.public_ipv4,CASE WHEN s.ipv6_entry=1 THEN a.public_ipv6 END)
+                                                             ELSE COALESCE(ra.public_ipv4,CASE WHEN s.ipv6_entry=1 THEN ra.public_ipv6 END) END IS NOT NULL)
                              AND COALESCE(p.port,CASE WHEN rn.id IS NULL THEN NULL ELSE CAST(json_extract(s.config_json,'$.relayPort') AS INTEGER) END,
                                           CAST(json_extract(s.config_json,'$.listenPort') AS INTEGER)) BETWEEN 1 AND 65535
                            -- Grouped by node, then service, so a node's services sit together in the client.
@@ -547,7 +548,8 @@ internal sealed partial class SqliteServerRepository
             var serverName = r.IsDBNull(6) ? ServerNameFor(san, r.GetString(13)) : r.GetString(6);
             var name = r.IsDBNull(14) ? r.GetString(1) : $"{CountryFlag(r.GetString(14))} {r.GetString(1)}";
             var updated = SqliteValue.ToDateTimeOffset(r.GetString(7));
-            // A node with a public IPv6 gets a second entry dialling it; an explicit endpoint replaces both.
+            // A node with a public IPv6 gets a second entry dialling it unless the service turned that off; an explicit
+            // endpoint replaces both.
             var hosts = new List<(string Host, string Name)>(2);
             if (!r.IsDBNull(4)) hosts.Add((r.GetString(4), name));
             if (!r.IsDBNull(15)) hosts.Add((r.GetString(15), name + " · IPv6"));

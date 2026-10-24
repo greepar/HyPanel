@@ -20,6 +20,7 @@ internal static class AdminServicesEndpoints
         endpoints.MapPost("/api/admin/v1/nodes/{nodeId:guid}/services", CreateAsync);
         endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}", UpdateAsync);
         endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}/enabled", SetEnabledAsync);
+        endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}/ipv6-entry", SetIpv6EntryAsync);
         endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}/backend-update-policy", SetBackendUpdatePolicyAsync);
         endpoints.MapPost("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}/backend-update", RequestBackendUpdateAsync);
         endpoints.MapGet("/api/admin/v1/nodes/{nodeId:guid}/services/{serviceId:guid}/public-endpoint",
@@ -216,6 +217,16 @@ internal static class AdminServicesEndpoints
                 ServerJsonSerializerContext.Default.ServiceMutationResponse);
     }
 
+    private static async Task<IResult> SetIpv6EntryAsync(Guid nodeId, Guid serviceId, SetServiceEnabledRequest request,
+        HttpRequest httpRequest, AdminAuthorization authorization, SqliteServerRepository repository,
+        CancellationToken cancellationToken)
+    {
+        var access = await authorization.AuthorizeAsync(httpRequest, cancellationToken);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        return await repository.SetServiceIpv6EntryAsync(nodeId, serviceId, request.Enabled, cancellationToken)
+            ? Results.NoContent() : Results.NotFound();
+    }
+
     private static async Task<IResult> RequestBackendUpdateAsync(Guid nodeId, Guid serviceId, HttpRequest request,
         AdminAuthorization authorization, SqliteServerRepository repository, BackendArtifactCatalog catalog,
         BackendReleaseSyncWorker sync, CancellationToken ct)
@@ -396,7 +407,7 @@ internal static class AdminServicesEndpoints
                 : new ServiceRuntimeResponse(runtime.Status, runtime.BackendVersion, runtime.AppliedConfigSha256,
                     runtime.TrafficUploadBytes, runtime.TrafficDownloadBytes, runtime.TrafficObservedAtUtc,
                     runtime.ObservedAtUtc, runtime.ErrorCode, runtime.ErrorMessage), service.BackendUpdatePolicy,
-            catalog.GetLatestVersion(service.BackendType));
+            catalog.GetLatestVersion(service.BackendType), service.Ipv6Entry);
     }
 
     internal static string RedactPasswords(string configJson)
