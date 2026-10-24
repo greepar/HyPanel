@@ -53,17 +53,28 @@ public sealed class PublicIpResolverTests
     }
 
     [TestMethod]
-    [DataRow("2a01:4f8::9", "2a01:4f8::9")]
-    [DataRow("203.0.113.42", null)]
-    [DataRow("fe80::1", null)]
-    [DataRow("fd00::1", null)]
-    [DataRow("2A01:4F8::9", null)]
-    public async Task GetAsync_Ipv6AcceptsOnlyCanonicalGlobalUnicast(string address, string? expected)
+    public async Task GetAsync_Ipv6IsTheLocalAddressTheLookupHostSees()
     {
-        var resolver = new PublicIpv6Resolver(new HttpClient(new StubHandler(Detail(address, "\"DE\""),
-            "https://6.qwq.lu/?detail")), TimeProvider.System);
+        // Outgoing IPv6 normally leaves through WARP; only the native address, used as the source, sees itself.
+        var native = IPAddress.Parse("2a14:7dc0:102:11f6::4bc7");
+        var warp = IPAddress.Parse("2606:4700:110:8058:d4ac:b85d:c297:e61f");
+        var resolver = new PublicIpv6Resolver(TimeProvider.System,
+            () => [IPAddress.Parse("fe80::1"), warp, native],
+            source => new HttpClient(new StubHandler(
+                Detail(source.Equals(native) ? native.ToString() : "2a09:bac1:6500:8::3c4:17", "\"SG\""),
+                "https://6.qwq.lu/?detail")));
 
-        Assert.AreEqual(expected, await resolver.GetAsync(CancellationToken.None));
+        Assert.AreEqual("2a14:7dc0:102:11f6::4bc7", await resolver.GetAsync(CancellationToken.None));
+    }
+
+    [TestMethod]
+    public async Task GetAsync_Ipv6BehindATunnelOrNatIsNotReported()
+    {
+        var resolver = new PublicIpv6Resolver(TimeProvider.System,
+            () => [IPAddress.Parse("2606:4700:110:8058::1")],
+            _ => new HttpClient(new StubHandler(Detail("2a09:bac1:6500:8::3c4:17", "\"SG\""), "https://6.qwq.lu/?detail")));
+
+        Assert.IsNull(await resolver.GetAsync(CancellationToken.None));
     }
 
     [TestMethod]
@@ -71,7 +82,8 @@ public sealed class PublicIpResolverTests
     {
         var clock = new ManualClock(DateTimeOffset.Parse("2026-10-24T00:00:00Z"));
         var handler = new StubHandler(Detail("2a01:4f8::9", "\"DE\""), "https://6.qwq.lu/?detail");
-        var resolver = new PublicIpv6Resolver(new HttpClient(handler), clock);
+        var resolver = new PublicIpv6Resolver(clock, () => [IPAddress.Parse("2a01:4f8::9")],
+            _ => new HttpClient(handler, disposeHandler: false));
         Assert.AreEqual("2a01:4f8::9", await resolver.GetAsync(CancellationToken.None));
 
         handler.Fail = true;
