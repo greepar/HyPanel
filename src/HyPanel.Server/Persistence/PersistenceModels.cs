@@ -59,7 +59,8 @@ internal sealed record NodeObservationRecord(
     DateTimeOffset? UpdateStartedAtUtc = null,
     string? UpdateError = null,
     string? PublicIpv4 = null,
-    string? CountryCode = null);
+    string? CountryCode = null,
+    string? PublicIpv6 = null);
 
 internal sealed record AgentUpdateTargetRecord(
     Guid NodeId,

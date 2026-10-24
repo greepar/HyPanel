@@ -1,19 +1,34 @@
 namespace HyPanel.Agent;
 
 using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 
 /// <summary>Looks up this host's public IPv4 and its country (ISO code, shown as a flag in the Panel).</summary>
 public sealed class PublicIpv4Resolver(HttpClient httpClient, TimeProvider timeProvider)
+    : PublicIpResolver(httpClient, timeProvider, new Uri("https://4.qwq.lu/?detail", UriKind.Absolute),
+        AddressFamily.InterNetwork, forgetAfter: null);
+
+/// <summary>
+/// Looks up this host's public IPv6, offered to clients as a second entry for each service. The lookup host only
+/// has AAAA records, so it fails on hosts without IPv6; an address that keeps failing for a day is forgotten so the
+/// Panel stops handing out an entry that no longer works.
+/// </summary>
+public sealed class PublicIpv6Resolver(HttpClient httpClient, TimeProvider timeProvider)
+    : PublicIpResolver(httpClient, timeProvider, new Uri("https://6.qwq.lu/?detail", UriKind.Absolute),
+        AddressFamily.InterNetworkV6, forgetAfter: TimeSpan.FromDays(1));
+
+public abstract class PublicIpResolver(HttpClient httpClient, TimeProvider timeProvider, Uri lookupUri,
+    AddressFamily family, TimeSpan? forgetAfter)
 {
     private const int MaxResponseBytes = 8192;
-    private static readonly Uri LookupUri = new("https://4.qwq.lu/?detail", UriKind.Absolute);
     private static readonly TimeSpan SuccessLifetime = TimeSpan.FromHours(6);
     private static readonly TimeSpan FailureLifetime = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(3);
     private readonly SemaphoreSlim gate = new(1, 1);
     private string? cached;
     private string? cachedCountry;
+    private DateTimeOffset succeededAt;
 
     /// <summary>Country from the last successful lookup; call <see cref="GetAsync"/> first.</summary>
     public string? CountryCode => cachedCountry;
@@ -30,7 +45,7 @@ public sealed class PublicIpv4Resolver(HttpClient httpClient, TimeProvider timeP
             now = timeProvider.GetUtcNow();
             if (now < refreshAt) return cached;
 
-            using var request = new HttpRequestMessage(HttpMethod.Get, LookupUri);
+            using var request = new HttpRequestMessage(HttpMethod.Get, lookupUri);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(RequestTimeout);
             try
@@ -50,18 +65,19 @@ public sealed class PublicIpv4Resolver(HttpClient httpClient, TimeProvider timeP
                 }
                 if (read == buffer.Length) throw new InvalidDataException();
                 var (value, country) = Parse(buffer.AsSpan(0, read));
-                if (!IPAddress.TryParse(value, out var address) ||
-                    address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork ||
+                if (!IPAddress.TryParse(value, out var address) || !IsAcceptable(address) ||
                     !string.Equals(value, address.ToString(), StringComparison.Ordinal))
                     throw new InvalidDataException();
                 cached = value;
                 cachedCountry = country;
+                succeededAt = now;
                 refreshAt = now + SuccessLifetime;
             }
             catch (Exception exception) when (exception is HttpRequestException or InvalidDataException or JsonException or
                                                    OperationCanceledException && !cancellationToken.IsCancellationRequested)
             {
                 refreshAt = now + FailureLifetime;
+                if (forgetAfter is { } limit && now - succeededAt >= limit) cached = cachedCountry = null;
             }
 
             return cached;
@@ -71,6 +87,10 @@ public sealed class PublicIpv4Resolver(HttpClient httpClient, TimeProvider timeP
             gate.Release();
         }
     }
+
+    /// <summary>IPv4 of any kind (the Panel filters private ranges), or global unicast IPv6 (2000::/3).</summary>
+    private bool IsAcceptable(IPAddress address) => address.AddressFamily == family &&
+        (family == AddressFamily.InterNetwork || (address.GetAddressBytes()[0] & 0xE0) == 0x20);
 
     /// <summary>Reads <c>{"ip":"…","country":"GB",…}</c>; a missing or malformed country is ignored.</summary>
     private static (string Ip, string? Country) Parse(ReadOnlySpan<byte> body)

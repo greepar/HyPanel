@@ -302,7 +302,8 @@ internal sealed partial class SqliteServerRepository(
                                      a.id, a.last_seen_at_utc, a.reported_version, a.reported_platform, a.applied_revision,
                                       a.latest_metric_snapshot_json, n.agent_update_policy, n.desired_agent_version,
                                       n.agent_update_id, a.update_status, a.update_target_version,
-                                       a.update_started_at_utc, a.update_error, a.public_ipv4, a.country_code
+                                       a.update_started_at_utc, a.update_error, a.public_ipv4, a.country_code,
+                                       a.public_ipv6
                               FROM nodes n
                               LEFT JOIN agents a ON a.node_id = n.id
                               ORDER BY n.created_at_utc, n.id;
@@ -328,7 +329,8 @@ internal sealed partial class SqliteServerRepository(
                 reader.IsDBNull(14) ? null : SqliteValue.ToDateTimeOffset(reader.GetString(14)),
                 reader.IsDBNull(15) ? null : reader.GetString(15),
                 reader.IsDBNull(16) ? null : reader.GetString(16),
-                reader.IsDBNull(17) ? null : reader.GetString(17)));
+                reader.IsDBNull(17) ? null : reader.GetString(17),
+                reader.IsDBNull(18) ? null : reader.GetString(18)));
         }
 
         return observations;
@@ -522,7 +524,8 @@ internal sealed partial class SqliteServerRepository(
         CancellationToken cancellationToken,
         IReadOnlyList<UsageBatch>? usageBatches = null,
         string? publicIpv4 = null,
-        string? countryCode = null)
+        string? countryCode = null,
+        string? publicIpv6 = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(reportedVersion);
         ArgumentException.ThrowIfNullOrWhiteSpace(reportedPlatform);
@@ -545,7 +548,10 @@ internal sealed partial class SqliteServerRepository(
                                                applied_revision = @appliedRevision,
                                                latest_metric_snapshot_json = @latestMetricSnapshotJson,
                                                public_ipv4 = COALESCE(@publicIpv4, public_ipv4),
-                                               country_code = COALESCE(@countryCode, country_code)
+                                               country_code = COALESCE(@countryCode, country_code),
+                                               -- Not coalesced: the Agent forgets an IPv6 that stopped working, and
+                                               -- the Panel must stop handing out entries for it.
+                                               public_ipv6 = @publicIpv6
                                           WHERE id = @id;
                                           """;
                 updateAgent.Parameters.AddWithValue("@id", agentId.ToString("D"));
@@ -557,6 +563,7 @@ internal sealed partial class SqliteServerRepository(
                     SqliteValue.ToDbValue(latestMetricSnapshotJson));
                 updateAgent.Parameters.AddWithValue("@publicIpv4", SqliteValue.ToDbValue(publicIpv4));
                 updateAgent.Parameters.AddWithValue("@countryCode", SqliteValue.ToDbValue(countryCode));
+                updateAgent.Parameters.AddWithValue("@publicIpv6", SqliteValue.ToDbValue(publicIpv6));
                 if (await updateAgent.ExecuteNonQueryAsync(cancellationToken) != 1)
                 {
                     await transaction.RollbackAsync(cancellationToken);

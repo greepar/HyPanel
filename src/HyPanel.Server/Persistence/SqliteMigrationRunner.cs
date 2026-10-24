@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 26;
+    public const long CurrentSchemaVersion = 27;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -640,6 +640,14 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
                 DROP TABLE IF EXISTS service_egress;
                 DROP TABLE IF EXISTS node_egress;
                 INSERT INTO schema_migrations (version, applied_at_utc) VALUES (26, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                """, cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, 27, cancellationToken))
+        {
+            await ExecuteAsync(connection, transaction, """
+                ALTER TABLE agents ADD COLUMN public_ipv6 TEXT NULL;
+                INSERT INTO schema_migrations (version, applied_at_utc) VALUES (27, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
                 """, cancellationToken);
         }
 

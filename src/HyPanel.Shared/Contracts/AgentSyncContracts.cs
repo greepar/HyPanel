@@ -12,7 +12,8 @@ public sealed record AgentSyncRequest(
     string? PublicIpv4 = null,
     string? CountryCode = null,
     bool SupportsAvx = false,
-    IReadOnlyList<BackendArtifact>? AppliedBackendArtifacts = null);
+    IReadOnlyList<BackendArtifact>? AppliedBackendArtifacts = null,
+    string? PublicIpv6 = null);
 
 public sealed record AgentSyncResponse(
     long DesiredRevision,

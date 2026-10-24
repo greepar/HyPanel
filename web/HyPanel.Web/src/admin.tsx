@@ -968,7 +968,7 @@ function visibleNodes(nodes: Node[], filter: "all" | "online" | "offline", query
     .filter((node) => filter === "all" || (filter === "online") === node.online)
     .filter((node) =>
       !needle ||
-      [node.displayName, node.publicIpv4, node.platform, node.reportedVersion]
+      [node.displayName, node.publicIpv4, node.publicIpv6, node.platform, node.reportedVersion]
         .some((value) => value?.toLowerCase().includes(needle)),
     )
     .sort((left, right) => Number(right.online) - Number(left.online) || left.displayName.localeCompare(right.displayName));
@@ -1321,6 +1321,7 @@ function NodeDetailPage({
         <span className="meta-line">
           <span>{node.online ? "在线" : `离线 · ${formatRelative(node.lastSeenAt)}`}</span>
           {node.publicIpv4 && <span className="mono">{node.publicIpv4}</span>}
+          {node.publicIpv6 && <span className="mono">{node.publicIpv6}</span>}
           <span>{node.platform ?? "未知平台"}</span>
           <span>Agent {node.reportedVersion ?? "未上报"}</span>
           <AgentUpdatePill node={node} />
@@ -1426,6 +1427,10 @@ function NodeOverview({ api, node, services }: { api: ApiClient; node: Node; ser
           <div>
             <dt>公网 IPv4</dt>
             <dd className="mono">{node.publicIpv4 ?? "未知"}</dd>
+          </div>
+          <div>
+            <dt>公网 IPv6</dt>
+            <dd className="mono">{node.publicIpv6 ?? "无"}</dd>
           </div>
           <div>
             <dt>自动更新</dt>
@@ -2653,7 +2658,7 @@ function ServiceEditor({
           <legend>连接地址（可选）</legend>
           <p className="field-help">
             写进用户订阅的地址。全部留空即自动使用节点公网 IP 和监听端口
-            {form.backendType === "hysteria2" ? "，SNI 取证书域名" : ""}；只有通过域名、CDN 或端口转发访问时才需要填写。
+            {form.backendType === "hysteria2" ? "，SNI 取证书域名" : ""}；节点有公网 IPv6 时订阅里会再多一条「IPv6」入口。只有通过域名、CDN 或端口转发访问时才需要填写，填写后只保留这一个入口。
           </p>
           <div className="form-grid">
             <label>

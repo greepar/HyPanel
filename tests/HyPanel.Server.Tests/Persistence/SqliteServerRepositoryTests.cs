@@ -77,7 +77,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L), (22L, 1L), (23L, 1L), (24L, 1L), (25L, 1L), (26L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L), (22L, 1L), (23L, 1L), (24L, 1L), (25L, 1L), (26L, 1L), (27L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -811,6 +811,52 @@ public sealed class SqliteServerRepositoryTests
         Assert.IsFalse(AgentSyncEndpoints.IsCountryCode("sg"));
         Assert.IsFalse(AgentSyncEndpoints.IsCountryCode("GBR"));
     }
+
+    [TestMethod]
+    public async Task Subscription_NodeWithPublicIpv6GetsASecondEntry()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        var agentId = await CreateAgentAsync(fixture, nodeId, "v6-token", "v6-secret");
+        var user = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Six", "six", "hash", "User", true,
+            null, null, "six-token", CancellationToken.None);
+        var service = XrayService(CreateService(nodeId, Guid.NewGuid(), "svc")) with { ConfigJson = "{\"listenPort\":443}" };
+        await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
+        Assert.IsTrue(await fixture.Repository.BindServiceAsync(user.User.Id, service.Id, CancellationToken.None));
+        async Task<string[]> Entries() =>
+            (await fixture.Repository.GetSubscriptionServicesAsync("six-token", CancellationToken.None))!
+            .Select(item => $"{item.Name}@{item.PublicEndpoint.Host}").ToArray();
+
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "2.0", "linux-x64", 1, null, [], [],
+            CancellationToken.None, null, "203.0.113.9", null, "2a01:4f8::9"));
+        var node = (await fixture.Repository.GetNodeAsync(nodeId, CancellationToken.None))!.DisplayName;
+        CollectionAssert.AreEqual(new[] { $"{node} · svc@203.0.113.9", $"{node} · svc · IPv6@2a01:4f8::9" }, await Entries());
+        Assert.AreEqual("2a01:4f8::9", (await fixture.Repository.GetNodeObservationsAsync(CancellationToken.None)).Single().PublicIpv6);
+
+        // The Agent forgot its IPv6: the entry goes away instead of lingering.
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "2.0", "linux-x64", 1, null, [], [],
+            CancellationToken.None, null, "203.0.113.9"));
+        CollectionAssert.AreEqual(new[] { $"{node} · svc@203.0.113.9" }, await Entries());
+
+        // An explicit endpoint replaces both automatic entries.
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "2.0", "linux-x64", 1, null, [], [],
+            CancellationToken.None, null, null, null, "2a01:4f8::9"));
+        Assert.IsTrue(await fixture.Repository.SetServicePublicEndpointAsync(nodeId,
+            new ServicePublicEndpointRecord(service.Id, "edge.example.com", 443, null, fixture.Time.GetUtcNow()),
+            CancellationToken.None));
+        CollectionAssert.AreEqual(new[] { $"{node} · svc@edge.example.com" }, await Entries());
+    }
+
+    [TestMethod]
+    [DataRow("2a01:4f8::9", true)]
+    [DataRow("2001:db8::1", false)]
+    [DataRow("fe80::1", false)]
+    [DataRow("fd00::1", false)]
+    [DataRow("::ffff:203.0.113.9", false)]
+    [DataRow("2A01:4F8::9", false)]
+    [DataRow("203.0.113.9", false)]
+    public void IsValidPublicIpv6_AcceptsOnlyCanonicalGlobalUnicast(string value, bool expected) =>
+        Assert.AreEqual(expected, AgentSyncEndpoints.IsValidPublicIpv6(value));
 
     [TestMethod]
     [DataRow("DNS:*.greepar.uk", "uk", "uk.greepar.uk")]

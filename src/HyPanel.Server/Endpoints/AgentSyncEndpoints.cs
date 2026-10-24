@@ -64,7 +64,8 @@ internal static class AgentSyncEndpoints
                 cancellationToken,
                 request.UsageBatches,
                 publicIpv4,
-                request.CountryCode))
+                request.CountryCode,
+                request.PublicIpv6))
         {
             // Authentication already succeeded. Reject invalid payloads without claiming the secret is wrong.
             return Results.BadRequest();
@@ -208,6 +209,7 @@ internal static class AgentSyncEndpoints
             || request.UsageBatches.Count > 32
             || !IsValidMetrics(request.Metrics, nowUtc)
             || !IsValidPublicIpv4(request.PublicIpv4)
+            || !IsValidPublicIpv6(request.PublicIpv6)
             || request.CountryCode is not null && !IsCountryCode(request.CountryCode)
             || !IsValidUpdateReport(request.AgentUpdate, request.Platform, nowUtc))
         {
@@ -250,6 +252,17 @@ internal static class AgentSyncEndpoints
 
     internal static bool IsValidPublicIpv4(string? value) => value is null ||
         IPAddress.TryParse(value, out var address) && PublicIpv4From(address) == value;
+
+    /// <summary>Canonical global unicast IPv6 (2000::/3), excluding the documentation range 2001:db8::/32.</summary>
+    internal static bool IsValidPublicIpv6(string? value)
+    {
+        if (value is null) return true;
+        if (!IPAddress.TryParse(value, out var address) ||
+            address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetworkV6 ||
+            address.ToString() != value) return false;
+        var bytes = address.GetAddressBytes();
+        return (bytes[0] & 0xE0) == 0x20 && !(bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0x0d && bytes[3] == 0xb8);
+    }
 
     internal static string? PublicIpv4From(IPAddress? address)
     {

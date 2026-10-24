@@ -327,9 +327,12 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
     private static string RenderYaml(Hysteria2Config config, TlsCertificateAsset? tls,
         IReadOnlyList<BackendUser> users, int? controlPort, string statsSecret)
     {
-        var listenAddress = config.ListenHost!.Contains(':')
-            ? $"[{config.ListenHost}]:{config.ListenPort}"
-            : $"{config.ListenHost}:{config.ListenPort}";
+        // Hysteria binds 0.0.0.0 to IPv4 only; an empty host listens on both families, as Xray does for 0.0.0.0.
+        var listenAddress = config.ListenHost == "0.0.0.0"
+            ? $":{config.ListenPort}"
+            : config.ListenHost!.Contains(':')
+                ? $"[{config.ListenHost}]:{config.ListenPort}"
+                : $"{config.ListenHost}:{config.ListenPort}";
 
         var yaml = new StringBuilder();
         yaml.Append("listen: ").Append(QuoteYaml(listenAddress)).AppendLine();

@@ -21,6 +21,7 @@ public sealed class SyncWorker(
     AgentUpdater updater,
     NodeMetricsCollector metricsCollector,
     PublicIpv4Resolver publicIpv4Resolver,
+    PublicIpv6Resolver publicIpv6Resolver,
     ServiceLogCollector logCollector,
     ServiceReconciler reconciler,
     BackendProcessSupervisor processSupervisor,
@@ -228,10 +229,11 @@ public sealed class SyncWorker(
         CancellationToken cancellationToken)
     {
         var publicIpv4 = await publicIpv4Resolver.GetAsync(cancellationToken);
+        var publicIpv6 = await publicIpv6Resolver.GetAsync(cancellationToken);
         var request = new AgentSyncRequest(BuildInfo.Version, BuildInfo.RuntimeIdentifier, appliedRevision,
             metricsCollector.Collect(), services, usageBatches, results, updateReport, publicIpv4,
             publicIpv4Resolver.CountryCode, CpuFeatures.SupportsX86_64V3,
-            (await stateStore.LoadAsync(cancellationToken)).DesiredState?.BackendArtifacts ?? []);
+            (await stateStore.LoadAsync(cancellationToken)).DesiredState?.BackendArtifacts ?? [], publicIpv6);
         using var message =
             new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(credentials.PanelBaseUrl), SyncPath));
         message.Headers.Add("X-HyPanel-Agent-Id", credentials.AgentId.ToString("D"));

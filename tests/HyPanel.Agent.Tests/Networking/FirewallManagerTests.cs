@@ -19,17 +19,17 @@ public sealed class FirewallManagerTests
         public string ActiveZones = "public\n  interfaces: eth0\n";
         public string PermanentZones = "block dmz drop public trusted";
         public string Policies = "allow-host-ipv6";
-        private bool chainJumped;
+        private readonly HashSet<string> chainJumped = [];
 
         public Task<FirewallCommandResult> Run(string file, IReadOnlyList<string> args, CancellationToken _)
         {
             Commands.Add(file + " " + string.Join(' ', args));
-            if (file == "iptables")
+            if (file is "iptables" or "ip6tables")
             {
                 if (!HasIptables) throw new Win32Exception();
-                if (args.Contains("-C")) return Task.FromResult(new FirewallCommandResult(chainJumped ? 0 : 1, ""));
-                if (args.Contains("-I")) chainJumped = true;
-                if (args.Contains("-D")) { var was = chainJumped; chainJumped = false; return Task.FromResult(new FirewallCommandResult(was ? 0 : 1, "")); }
+                if (args.Contains("-C")) return Task.FromResult(new FirewallCommandResult(chainJumped.Contains(file) ? 0 : 1, ""));
+                if (args.Contains("-I")) chainJumped.Add(file);
+                if (args.Contains("-D")) return Task.FromResult(new FirewallCommandResult(chainJumped.Remove(file) ? 0 : 1, ""));
                 return Task.FromResult(new FirewallCommandResult(0, ""));
             }
             if (!Firewalld) throw new Win32Exception();
@@ -240,6 +240,22 @@ public sealed class FirewallManagerTests
         host.Commands.Clear();
         await manager.ApplyAsync("tunnels", [], CancellationToken.None);
         CollectionAssert.Contains(host.Commands, "iptables -w -X HYPANEL-INPUT");
+    }
+
+    [TestMethod]
+    public async Task Iptables_MirrorsOpeningsWithoutSourceIntoIp6tables()
+    {
+        var (manager, host) = Create();
+        host.Firewalld = false;
+        Assert.IsNull(await manager.ApplyAsync("relay", [new("tcp", 21114, null), new("udp", 47541, "203.0.113.7")],
+            CancellationToken.None));
+        CollectionAssert.Contains(host.Commands, "ip6tables -w -A HYPANEL-INPUT -p tcp --dport 21114 -j ACCEPT");
+        CollectionAssert.Contains(host.Commands, "ip6tables -w -I INPUT 1 -j HYPANEL-INPUT");
+        Assert.IsFalse(host.Commands.Any(c => c.StartsWith("ip6tables") && c.Contains("203.0.113.7")));
+
+        host.Commands.Clear();
+        await manager.ApplyAsync("relay", [], CancellationToken.None);
+        CollectionAssert.Contains(host.Commands, "ip6tables -w -X HYPANEL-INPUT");
     }
 
     [TestMethod]

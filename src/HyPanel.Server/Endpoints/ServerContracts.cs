@@ -27,7 +27,8 @@ internal sealed record AdminNodeObservationResponse(
     string AgentUpdateStatus,
     string? AgentUpdateError,
     string? PublicIpv4,
-    string? CountryCode = null);
+    string? CountryCode = null,
+    string? PublicIpv6 = null);
 
 internal sealed record SetAgentUpdatePolicyRequest(string Policy);
 internal sealed record RequestAgentUpdateResponse(Guid UpdateId, string Version);

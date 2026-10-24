@@ -24,7 +24,8 @@ public delegate Task<FirewallCommandResult> FirewallCommandRunner(string file, I
 /// root or a polkit rule for the Agent user (written by the installer). An nft accept in our own table cannot
 /// override firewalld's reject, so this is the only way through.</item>
 /// <item>Other hosts with iptables (ufw, Docker, plain iptables): a dedicated <c>HYPANEL-INPUT</c> chain jumped to
-/// first from INPUT. Needs only CAP_NET_ADMIN.</item>
+/// first from INPUT, mirrored in ip6tables for openings that are not limited to an IPv4 source. Needs only
+/// CAP_NET_ADMIN.</item>
 /// </list>
 /// Earlier versions also created a tunnel zone and forwarding policy for exit forwarding; those are removed when found.
 /// </summary>
@@ -232,33 +233,42 @@ public sealed class FirewallManager(ILogger<FirewallManager> logger, AgentEnroll
     {
         try
         {
-            if (desired.Count == 0)
-            {
-                // Best effort: the chain may never have existed.
-                while ((await run("iptables", ["-w", "-D", "INPUT", "-j", InputChain], ct)).ExitCode == 0) { }
-                await run("iptables", ["-w", "-F", InputChain], ct);
-                await run("iptables", ["-w", "-X", InputChain], ct);
-                return null;
-            }
-            await run("iptables", ["-w", "-N", InputChain], ct); // Fails harmlessly when it exists.
-            var flush = await run("iptables", ["-w", "-F", InputChain], ct);
-            if (flush.ExitCode != 0) return $"无法写入 iptables 放行规则：{Trim(flush.Output)}";
-            foreach (var opening in desired)
-            {
-                var result = await run("iptables", ["-w", "-A", InputChain, .. IptablesMatch(opening), "-j", "ACCEPT"], ct);
-                if (result.ExitCode != 0) return $"无法写入 iptables 放行规则：{Trim(result.Output)}";
-            }
-            if ((await run("iptables", ["-w", "-C", "INPUT", "-j", InputChain], ct)).ExitCode != 0)
-            {
-                var jump = await run("iptables", ["-w", "-I", "INPUT", "1", "-j", InputChain], ct);
-                if (jump.ExitCode != 0) return $"无法写入 iptables 放行规则：{Trim(jump.Output)}";
-            }
-            return null;
+            var error = await ReconcileChainAsync("iptables", desired, ct);
+            if (error is not null) return error;
         }
         catch (Win32Exception)
         {
             return desired.Count == 0 ? null : "节点没有 iptables 或 firewalld，无法自动放行端口；如有防火墙请手动放行所需端口。";
         }
+        // IPv6 entries reach the same ports; source-restricted openings name IPv4 peers and stay IPv4 only.
+        try { return await ReconcileChainAsync("ip6tables", desired.Where(o => o.Source is null).ToHashSet(), ct); }
+        catch (Win32Exception) { return null; }
+    }
+
+    private async Task<string?> ReconcileChainAsync(string tool, HashSet<FirewallOpening> desired, CancellationToken ct)
+    {
+        if (desired.Count == 0)
+        {
+            // Best effort: the chain may never have existed.
+            while ((await run(tool, ["-w", "-D", "INPUT", "-j", InputChain], ct)).ExitCode == 0) { }
+            await run(tool, ["-w", "-F", InputChain], ct);
+            await run(tool, ["-w", "-X", InputChain], ct);
+            return null;
+        }
+        await run(tool, ["-w", "-N", InputChain], ct); // Fails harmlessly when it exists.
+        var flush = await run(tool, ["-w", "-F", InputChain], ct);
+        if (flush.ExitCode != 0) return $"无法写入 {tool} 放行规则：{Trim(flush.Output)}";
+        foreach (var opening in desired)
+        {
+            var result = await run(tool, ["-w", "-A", InputChain, .. IptablesMatch(opening), "-j", "ACCEPT"], ct);
+            if (result.ExitCode != 0) return $"无法写入 {tool} 放行规则：{Trim(result.Output)}";
+        }
+        if ((await run(tool, ["-w", "-C", "INPUT", "-j", InputChain], ct)).ExitCode != 0)
+        {
+            var jump = await run(tool, ["-w", "-I", "INPUT", "1", "-j", InputChain], ct);
+            if (jump.ExitCode != 0) return $"无法写入 {tool} 放行规则：{Trim(jump.Output)}";
+        }
+        return null;
     }
 
     internal static string[] IptablesMatch(FirewallOpening opening)

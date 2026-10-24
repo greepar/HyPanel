@@ -110,6 +110,14 @@ public sealed class Hysteria2ProviderTests
     }
 
     [TestMethod]
+    public async Task RenderConfigAsync_AnyIpv4Address_ListensOnBothFamilies()
+    {
+        var rendered = await provider.RenderConfigAsync(CreateDesiredState(listenHost: "0.0.0.0"), CancellationToken.None);
+
+        StringAssert.Contains(Encoding.UTF8.GetString(rendered.Content.Span), "listen: \":443\"");
+    }
+
+    [TestMethod]
     public async Task RenderConfigAsync_LegacyPersistedPaths_RemainRestorable()
     {
         var json = CreateConfigJson().Replace($"\"certificateId\":\"{CertificateId:D}\"",
