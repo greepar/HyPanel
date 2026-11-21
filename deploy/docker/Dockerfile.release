@@ -1,0 +1,31 @@
+# Panel image for releases: packages the NativeAOT binary the release build already produced (the
+# linux-musl-<arch> artifact), so the image carries exactly the binary attached to the GitHub release and nothing is
+# compiled twice. The build context is a directory holding only that `hypanel-server` file.
+# For an image built from source (local development), use deploy/docker/Dockerfile instead.
+FROM mcr.microsoft.com/dotnet/runtime-deps:11.0.0-alpine3.24
+
+LABEL org.opencontainers.image.source="https://github.com/greepar/HyPanel" \
+      org.opencontainers.image.description="HyPanel Server" \
+      org.opencontainers.image.licenses="GPL-3.0-only"
+
+RUN apk add --no-cache wget \
+    && addgroup -S -g 10001 hypanel \
+    && adduser -S -D -H -u 10001 -G hypanel hypanel \
+    && mkdir -p /app /data \
+    && chown hypanel:hypanel /data
+
+COPY --chown=root:root --chmod=0755 hypanel-server /app/hypanel-server
+
+ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
+    HYPANEL_DATA_DIR=/data \
+    DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+
+WORKDIR /data
+VOLUME ["/data"]
+EXPOSE 8080
+USER 10001:10001
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -q -T 3 -O /dev/null http://127.0.0.1:8080/health || exit 1
+
+ENTRYPOINT ["/app/hypanel-server"]

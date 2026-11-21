@@ -42,11 +42,29 @@ internal sealed partial class SqliteServerRepository
     /// </summary>
     public async Task<int> PruneUsageReceiptsAsync(CancellationToken ct)
     {
-        await using var c = await connectionFactory.OpenAsync(ct);
-        await using var cmd = c.CreateCommand();
-        cmd.CommandText = "DELETE FROM usage_batches WHERE accepted_at_utc < @cutoff;";
-        cmd.Parameters.AddWithValue("@cutoff", SqliteValue.ToUtcText(timeProvider.GetUtcNow() - UsageReceiptRetention));
-        return await cmd.ExecuteNonQueryAsync(ct);
+        // Small batches, each its own transaction, with a pause between them: a large backlog (millions of rows after
+        // an upgrade) would otherwise hold the write lock for a minute and Agent syncs would fail with "locked".
+        const int batchSize = 2000;
+        var cutoff = SqliteValue.ToUtcText(timeProvider.GetUtcNow() - UsageReceiptRetention);
+        var total = 0;
+        while (true)
+        {
+            int deleted;
+            await using (var c = await connectionFactory.OpenAsync(ct))
+            await using (var cmd = c.CreateCommand())
+            {
+                cmd.CommandText = """
+                                  DELETE FROM usage_batches WHERE rowid IN (
+                                      SELECT rowid FROM usage_batches WHERE accepted_at_utc < @cutoff LIMIT @limit);
+                                  """;
+                cmd.Parameters.AddWithValue("@cutoff", cutoff);
+                cmd.Parameters.AddWithValue("@limit", batchSize);
+                deleted = await cmd.ExecuteNonQueryAsync(ct);
+            }
+            total += deleted;
+            if (deleted < batchSize) return total;
+            await Task.Delay(TimeSpan.FromMilliseconds(100), timeProvider, ct);
+        }
     }
 
     /// <summary>
