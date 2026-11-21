@@ -13,21 +13,36 @@ const storedTheme = (): Theme => {
   return ['light', 'dark', 'system'].includes(value) ? value : 'system'
 }
 
-const storedToken = () => sessionStorage.getItem('hypanel-token')
+// "Stay signed in" keeps the session in localStorage (survives closing the browser, 30-day server session);
+// otherwise it lives in sessionStorage and ends with the tab. Passwords are never stored by the page: the
+// browser's own password manager offers to save and fill them.
+const safeGet = (storage: Storage, key: string) => { try { return storage.getItem(key) } catch { return null } }
+const storedToken = () => safeGet(localStorage, 'hypanel-token')
+  ?? sessionStorage.getItem('hypanel-token')
   ?? sessionStorage.getItem('hypanel-session-token')
   ?? sessionStorage.getItem('hypanel-admin-token')
   ?? ''
 
 const storedUser = (): User | null => {
-  try { return JSON.parse(sessionStorage.getItem('hypanel-user') ?? sessionStorage.getItem('hypanel-session-user') ?? 'null') as User | null }
+  try { return JSON.parse(safeGet(localStorage, 'hypanel-user') ?? sessionStorage.getItem('hypanel-user') ?? sessionStorage.getItem('hypanel-session-user') ?? 'null') as User | null }
   catch { return null }
 }
 
-const storeAccountSession = (token: string, user: User) => {
-  sessionStorage.setItem('hypanel-token', token)
-  sessionStorage.setItem('hypanel-user', JSON.stringify(user))
-  for (const key of ['hypanel-bootstrap', 'hypanel-session-token', 'hypanel-session-user', 'hypanel-admin-token']) sessionStorage.removeItem(key)
+const sessionKeys = ['hypanel-token', 'hypanel-user', 'hypanel-bootstrap', 'hypanel-session-token', 'hypanel-session-user', 'hypanel-admin-token']
+const clearSessions = () => {
+  for (const key of sessionKeys) sessionStorage.removeItem(key)
+  try { localStorage.removeItem('hypanel-token'); localStorage.removeItem('hypanel-user') } catch { /* storage blocked */ }
 }
+
+const storeAccountSession = (token: string, user: User, remember: boolean) => {
+  clearSessions()
+  let storage: Storage = sessionStorage
+  if (remember) { try { localStorage.setItem('hypanel-probe', '1'); localStorage.removeItem('hypanel-probe'); storage = localStorage } catch { /* falls back to the tab */ } }
+  storage.setItem('hypanel-token', token)
+  storage.setItem('hypanel-user', JSON.stringify(user))
+}
+const rememberedChoice = () => safeGet(localStorage, 'hypanel-remember') !== '0'
+const remembered = () => safeGet(localStorage, 'hypanel-token') !== null
 
 export function App() {
   const [theme, setTheme] = useState<Theme>(storedTheme)
@@ -45,7 +60,7 @@ export function App() {
     document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#292a2d' : '#ffffff')
     localStorage.setItem('hypanel-theme', theme)
   }, [theme])
-  const endSession = () => { for (const key of ['hypanel-token', 'hypanel-user', 'hypanel-bootstrap', 'hypanel-session-token', 'hypanel-session-user', 'hypanel-admin-token']) sessionStorage.removeItem(key); setToken(''); setUser(null); setBootstrap(false) }
+  const endSession = () => { clearSessions(); setToken(''); setUser(null); setBootstrap(false) }
   const api = useMemo(() => new ApiClient(() => token, endSession), [token])
 
   useEffect(() => {
@@ -57,7 +72,7 @@ export function App() {
         else {
           const current = await api.request<User>('/api/user/v1/me')
           if (active) {
-            storeAccountSession(token, current)
+            storeAccountSession(token, current, remembered())
             setUser(current)
           }
         }
@@ -70,7 +85,7 @@ export function App() {
 
   if (checkingSession) return <div className="splash-screen"><Splash label="正在验证会话…" /></div>
 
-  if (!token || !role) return <Login theme={theme} setTheme={setTheme} api={api} onLogin={(nextToken, nextUser) => { storeAccountSession(nextToken, nextUser); setToken(nextToken); setUser(nextUser); setBootstrap(false) }} />
+  if (!token || !role) return <Login theme={theme} setTheme={setTheme} api={api} onLogin={(nextToken, nextUser, remember) => { storeAccountSession(nextToken, nextUser, remember); setToken(nextToken); setUser(nextUser); setBootstrap(false) }} />
 
   const logout = async () => { try { if (!bootstrap) await api.request<void>('/api/auth/v1/logout', { method: 'POST' }) } catch { /* local logout remains available */ } finally { endSession() } }
   return <AppShell theme={theme} setTheme={setTheme} route={route} navigate={navigate} identity={bootstrap ? '初始管理员' : user?.username} role={role ?? 'User'} logout={() => void logout()}>
@@ -80,8 +95,10 @@ export function App() {
   </AppShell>
 }
 
-function Login({ theme, setTheme, api, onLogin }: { theme: Theme; setTheme: (value: Theme) => void; api: ApiClient; onLogin: (token: string, user: User) => void }) {
+function Login({ theme, setTheme, api, onLogin }: { theme: Theme; setTheme: (value: Theme) => void; api: ApiClient; onLogin: (token: string, user: User, remember: boolean) => void }) {
   const [form, setForm] = useState({ username: '', password: '', token: '' })
+  const [remember, setRemember] = useState(rememberedChoice)
+  const chooseRemember = (value: boolean) => { setRemember(value); try { localStorage.setItem('hypanel-remember', value ? '1' : '0') } catch { /* not remembered */ } }
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   // A fresh install has no accounts: the first administrator is created with the install token instead.
@@ -92,16 +109,17 @@ function Login({ theme, setTheme, api, onLogin }: { theme: Theme; setTheme: (val
     try {
       const result = setup
         ? await api.request<{ token: string; user: User }>('/api/auth/v1/setup', { method: 'POST', body: JSON.stringify({ token: form.token.trim(), username: form.username, password: form.password }) })
-        : await api.login(form.username, form.password)
-      onLogin(result.token, result.user)
+        : await api.login(form.username, form.password, remember)
+      onLogin(result.token, result.user, remember && !setup)
     } catch (reason) { setError(messageFor(reason, setup ? '无法创建管理员，请检查安装令牌' : '登录失败')) } finally { setBusy(false) }
   }
-  const passkey = async () => { setBusy(true); setError(''); try { const result = await signInWithPasskey(api); if (result) onLogin(result.token, result.user) } catch (reason) { setError(messageFor(reason, '通行密钥登录失败')) } finally { setBusy(false) } }
+  const passkey = async () => { setBusy(true); setError(''); try { const result = await signInWithPasskey(api, remember); if (result) onLogin(result.token, result.user, remember) } catch (reason) { setError(messageFor(reason, '通行密钥登录失败')) } finally { setBusy(false) } }
   return <AppShell theme={theme} setTheme={setTheme}><div className="login-layout"><form className="card login-card" onSubmit={event => void submit(event)}>
     <div className="login-head"><BrandMark size={48} detail="full" /><h2>{setup ? '创建管理员' : '登录 HyPanel'}</h2><p className="muted">{setup ? '首次使用：用安装时生成的管理令牌创建第一个管理员账户。' : '使用账户密码或通行密钥继续。'}</p></div>
     {setup && <label>安装令牌<PasswordInput required value={form.token} onValue={token => setForm({ ...form, token })} /></label>}
-    <label>用户名<input required autoComplete="username webauthn" value={form.username} onInput={event => setForm({ ...form, username: event.currentTarget.value })} /></label>
-    <label>密码<PasswordInput required minLength={setup ? 6 : undefined} autoComplete={setup ? 'new-password' : 'current-password'} value={form.password} onValue={password => setForm({ ...form, password })} /></label>
+    <label>用户名<input required name="username" autoComplete="username webauthn" value={form.username} onInput={event => setForm({ ...form, username: event.currentTarget.value })} /></label>
+    <label>密码<PasswordInput required name="password" minLength={setup ? 6 : undefined} autoComplete={setup ? 'new-password' : 'current-password'} value={form.password} onValue={password => setForm({ ...form, password })} /></label>
+    {!setup && <label className="switch remember-switch"><input type="checkbox" checked={remember} onChange={event => chooseRemember(event.currentTarget.checked)} /><span />保持登录 30 天</label>}
     {error && <Notice kind="error">{error}</Notice>}
     <button className="button button-primary button-wide" disabled={busy}>{busy ? '正在验证…' : setup ? '创建并登录' : '登录'}</button>
     {!setup && passkeySupported() && <button className="button button-secondary button-wide" type="button" disabled={busy} onClick={() => void passkey()}>使用通行密钥登录</button>}

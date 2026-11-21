@@ -108,7 +108,8 @@ internal sealed record AdminServiceResponse(
     string? LatestBackendVersion,
     bool Ipv6Entry = true);
 
-internal sealed record LoginRequest(string Username, string Password);
+/// <summary><see cref="Remember"/> asks for a long-lived session ("stay signed in").</summary>
+internal sealed record LoginRequest(string Username, string Password, bool Remember = false);
 
 internal sealed record SetupStatusResponse(bool NeedsSetup);
 
@@ -135,7 +136,7 @@ internal sealed record PasskeyRegisterRequest(string ChallengeId, string? Name, 
     string ClientDataJson, string AuthenticatorData, string PublicKey, int Algorithm);
 
 internal sealed record PasskeyLoginRequest(string ChallengeId, string CredentialId, string ClientDataJson,
-    string AuthenticatorData, string Signature, string? UserHandle);
+    string AuthenticatorData, string Signature, string? UserHandle, bool Remember = false);
 
 internal sealed record PasskeyResponse(string Id, string Name, DateTimeOffset CreatedAtUtc, DateTimeOffset? LastUsedAtUtc);
 

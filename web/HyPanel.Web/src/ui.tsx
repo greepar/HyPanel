@@ -75,9 +75,9 @@ export function Toast({ message, kind, duration, dismiss }: { message: string; k
  * Password field with a show/hide eye button. `beforeReveal` runs before the first reveal, e.g. to load a secret the
  * server redacted; returning false keeps it hidden.
  */
-export function PasswordInput({ value, onValue, required, minLength, autoComplete = 'off', placeholder, beforeReveal }: {
+export function PasswordInput({ value, onValue, required, minLength, autoComplete = 'off', placeholder, beforeReveal, name }: {
   value: string; onValue: (value: string) => void; required?: boolean; minLength?: number; autoComplete?: string
-  placeholder?: string; beforeReveal?: () => Promise<boolean>
+  placeholder?: string; beforeReveal?: () => Promise<boolean>; name?: string
 }) {
   const [visible, setVisible] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -89,7 +89,7 @@ export function PasswordInput({ value, onValue, required, minLength, autoComplet
     setVisible(!visible)
   }
   return <span className="password-field">
-    <input type={visible ? 'text' : 'password'} value={value} required={required} minLength={minLength} autoComplete={autoComplete}
+    <input type={visible ? 'text' : 'password'} name={name} value={value} required={required} minLength={minLength} autoComplete={autoComplete}
       placeholder={placeholder} spellcheck={false} onInput={event => onValue(event.currentTarget.value)} />
     <button type="button" className="password-toggle" aria-label={visible ? '隐藏密码' : '显示密码'} title={visible ? '隐藏密码' : '显示密码'}
       aria-pressed={visible} disabled={busy} onClick={() => void toggle()}>

@@ -41,7 +41,7 @@ internal static class UserEndpoints
         var (user, hash) = await repository.GetLoginUserAsync(normalized, ct);
         if (user is null || hash is null || !user.Enabled || user.ExpiresAtUtc <= time.GetUtcNow() ||
             !passwords.Verify(request.Password, hash)) return Results.Unauthorized();
-        return await IssueSessionAsync(user, repository, time, ct);
+        return await IssueSessionAsync(user, repository, time, ct, request.Remember);
     }
 
     private static async Task<IResult> SetupStatusAsync(SqliteServerRepository repository, CancellationToken ct) =>
@@ -62,10 +62,14 @@ internal static class UserEndpoints
         return await IssueSessionAsync(issue.User, repository, time, ct);
     }
 
+    /// <summary>A normal sign-in lasts a day; "stay signed in" lasts 30 days.</summary>
+    internal static readonly TimeSpan SessionLifetime = TimeSpan.FromHours(24);
+    internal static readonly TimeSpan RememberedSessionLifetime = TimeSpan.FromDays(30);
+
     internal static async Task<IResult> IssueSessionAsync(UserRecord user, SqliteServerRepository repository,
-        TimeProvider time, CancellationToken ct)
+        TimeProvider time, CancellationToken ct, bool remember = false)
     {
-        var expiry = time.GetUtcNow().AddHours(24);
+        var expiry = time.GetUtcNow() + (remember ? RememberedSessionLifetime : SessionLifetime);
         var issue = await repository.CreateSessionAsync(user, NewToken(), expiry, ct);
         return Results.Json(new LoginResponse(issue.Token, issue.ExpiresAtUtc, ToResponse(issue.User)),
             ServerJsonSerializerContext.Default.LoginResponse);

@@ -115,7 +115,7 @@ internal static class PasskeyEndpoints
         var user = await repository.GetUserAsync(passkey.UserId, ct);
         if (user is null || !user.Enabled || user.ExpiresAtUtc <= time.GetUtcNow()) return Results.Unauthorized();
         await repository.MarkPasskeyUsedAsync(passkey.Id, signCount, ct);
-        return await UserEndpoints.IssueSessionAsync(user, repository, time, ct);
+        return await UserEndpoints.IssueSessionAsync(user, repository, time, ct, body.Remember);
     }
 
     private static IResult Error(string message) =>

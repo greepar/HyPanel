@@ -26,7 +26,7 @@ export const passkeySupported = () => typeof window !== 'undefined' && !!window.
 const cancelled = (reason: unknown) => reason instanceof DOMException && (reason.name === 'NotAllowedError' || reason.name === 'AbortError')
 
 /** Passwordless sign-in with a discoverable credential; returns null when the user dismisses the prompt. */
-export async function signInWithPasskey(api: ApiClient): Promise<{ token: string; expiresAtUtc: string; user: User } | null> {
+export async function signInWithPasskey(api: ApiClient, remember = false): Promise<{ token: string; expiresAtUtc: string; user: User } | null> {
   const options = await api.request<PasskeyOptions>('/api/auth/v1/passkey/options', { method: 'POST' })
   let credential: PublicKeyCredential
   try {
@@ -45,6 +45,7 @@ export async function signInWithPasskey(api: ApiClient): Promise<{ token: string
       authenticatorData: fromBytes(response.authenticatorData),
       signature: fromBytes(response.signature),
       userHandle: response.userHandle ? fromBytes(response.userHandle) : null,
+      remember,
     }),
   })
 }

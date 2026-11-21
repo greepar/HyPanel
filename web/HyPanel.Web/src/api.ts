@@ -33,7 +33,7 @@ export class ApiClient {
     }
     return response
   }
-  login = (username: string, password: string) => this.request<{ token: string; expiresAtUtc: string; user: User }>('/api/auth/v1/login', { method: 'POST', body: JSON.stringify({ username, password }) })
+  login = (username: string, password: string, remember = false) => this.request<{ token: string; expiresAtUtc: string; user: User }>('/api/auth/v1/login', { method: 'POST', body: JSON.stringify({ username, password, remember }) })
   async validateAdminToken(token: string): Promise<void> {
     const response = await fetch('/api/admin/v1/nodes', { headers: { Authorization: `Bearer ${token}` } })
     if (!response.ok) throw new ApiError(response.status, response.status === 401 ? '管理员令牌无效。' : `验证失败（${response.status}）`)

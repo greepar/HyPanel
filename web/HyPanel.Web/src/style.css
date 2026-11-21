@@ -747,3 +747,5 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 .file-drop-text { display: grid; min-width: 0 }
 .file-drop-text strong { overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap }
 .file-drop-text small { color: var(--muted); font-size: 12px }
+
+.login-card .remember-switch { justify-self: start; color: var(--muted); font-size: 13px; font-weight: 500 }

@@ -17,7 +17,7 @@ public static class Program
 {
     public static async Task Main(string[] args)
     {
-        if (args is ["--self-test"])
+        if (args is ["--self-test"] or ["--version"])
         {
             Console.Out.WriteLine($"{ServerBuildInfo.Version}\t{ServerBuildInfo.RuntimeIdentifier}");
             return;
