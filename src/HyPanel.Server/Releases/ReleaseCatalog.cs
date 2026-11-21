@@ -1,9 +1,9 @@
-namespace HyPanel.Server.Releases;
-
 using System.Text.Json;
 using HyPanel.Shared.Contracts;
 using HyPanel.Shared.Serialization;
 using HyPanel.Shared.Versioning;
+
+namespace HyPanel.Server.Releases;
 
 internal sealed class ReleaseCatalog
 {
@@ -12,7 +12,7 @@ internal sealed class ReleaseCatalog
         "win-x64", "win-arm64", "osx-x64", "osx-arm64",
         "linux-x64", "linux-arm64", "linux-musl-x64", "linux-musl-arm64"
     ];
-    private Snapshot _snapshot = new(null, [], new Dictionary<string, AgentReleaseManifest>(StringComparer.Ordinal));
+    private Snapshot snapshot = new(null, [], new Dictionary<string, AgentReleaseManifest>(StringComparer.Ordinal));
 
     public ReleaseCatalog(IConfiguration configuration)
     {
@@ -24,7 +24,7 @@ internal sealed class ReleaseCatalog
     }
 
     public string ReleasesDirectory { get; }
-    public AgentReleaseManifest? Manifest => Volatile.Read(ref _snapshot).Manifest;
+    public AgentReleaseManifest? Manifest => Volatile.Read(ref snapshot).Manifest;
 
     public void Reload()
     {
@@ -39,23 +39,23 @@ internal sealed class ReleaseCatalog
             Validate(item);
             manifests[item.Version] = item;
         }
-        var manifest = manifests.Values.MaxBy(item => HyPanel.Shared.Versioning.SemanticVersion.Parse(item.Version));
-        Volatile.Write(ref _snapshot, new Snapshot(manifest,
+        var manifest = manifests.Values.MaxBy(item => SemanticVersion.Parse(item.Version));
+        Volatile.Write(ref snapshot, new Snapshot(manifest,
             manifests.Values.SelectMany(item => item.Assets).Select(asset => asset.FileName).ToHashSet(StringComparer.Ordinal),
             manifests));
     }
 
     public AgentReleaseAsset? FindAsset(string version, string rid)
     {
-        var snapshot = Volatile.Read(ref _snapshot);
-        return snapshot.Manifests.TryGetValue(version, out var manifest)
+        var current = Volatile.Read(ref snapshot);
+        return current.Manifests.TryGetValue(version, out var manifest)
             ? manifest.Assets.SingleOrDefault(asset => asset.Rid == rid) : null;
     }
 
     public bool TryGetAssetPath(string fileName, out string path)
     {
         path = string.Empty;
-        if (!Volatile.Read(ref _snapshot).FileNames.Contains(fileName)) return false;
+        if (!Volatile.Read(ref snapshot).FileNames.Contains(fileName)) return false;
         path = Path.Combine(ReleasesDirectory, fileName);
         return File.Exists(path);
     }

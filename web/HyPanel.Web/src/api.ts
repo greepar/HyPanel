@@ -1,4 +1,4 @@
-import type { BackendDefinition, Backup, BackupValidation, Certificate, CertificateRequest, GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Usage, User, UserGroup } from './domain'
+import type { ServiceLogPage, BackendDefinition, Backup, BackupValidation, Certificate, CertificateRequest, GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Usage, User, UserGroup } from './domain'
 
 
 export type InstallPlatform = 'unix' | 'powershell' | 'docker'
@@ -52,6 +52,10 @@ export class ApiClient {
   services = (nodeId: string, signal?: AbortSignal) => this.request<Service[]>(`/api/admin/v1/nodes/${nodeId}/services`, { signal })
   endpoint = (nodeId: string, serviceId: string) => this.request<PublicEndpoint | undefined>(`/api/admin/v1/nodes/${nodeId}/services/${serviceId}/public-endpoint`)
   diagnostics = (nodeId: string, serviceId: string) => this.request<ServiceDiagnostic[]>(`/api/admin/v1/nodes/${nodeId}/services/${serviceId}/diagnostics`)
+  /** Long-poll: returns once the Server's change counter moves past `since` (or after ~25s). */
+  changes = (since: number | null, signal?: AbortSignal) => this.request<{ version: number }>(`/api/admin/v1/changes${since === null ? '' : `?since=${since}`}`, { signal })
+  /** Live log tail: lines numbered above `after`; with `wait` the Server holds the request until new lines arrive. */
+  serviceLogs = (nodeId: string, serviceId: string, after: number, wait: boolean, signal?: AbortSignal) => this.request<ServiceLogPage>(`/api/admin/v1/nodes/${nodeId}/services/${serviceId}/logs?after=${after}${wait ? '&wait=true' : ''}`, { signal })
   collectLogs = (nodeId: string, serviceId: string) => this.request<{ commandId: string }>(`/api/admin/v1/nodes/${nodeId}/services/${serviceId}/diagnostics/logs`, { method: 'POST' })
   updateBackend = (nodeId: string, serviceId: string) => this.request<{ version: string; revision: number }>(`/api/admin/v1/nodes/${nodeId}/services/${serviceId}/backend-update`, { method: 'POST' })
   setBackendUpdatePolicy = (nodeId: string, serviceId: string, policy: 'Manual' | 'Auto') => this.request<void>(`/api/admin/v1/nodes/${nodeId}/services/${serviceId}/backend-update-policy`, { method: 'PUT', body: JSON.stringify({ policy }) })
@@ -76,6 +80,9 @@ export class ApiClient {
       badge: string
       defaultVersion: string | null
       fields: BackendDefinition['fields']
+      engine: string
+      protocolId: string
+      features: BackendDefinition['features'] | null
     }[]>('/api/admin/v1/backends')
     return raw.map(item => ({
       backendType: item.backendType,
@@ -86,6 +93,9 @@ export class ApiClient {
       badge: item.badge,
       defaultVersion: item.defaultVersion,
       fields: item.fields,
+      engine: item.engine,
+      protocolId: item.protocolId,
+      features: item.features ?? [],
     }))
   }
   generateBackendDefaults = (backendType: string, nodeId?: string) => this.request<{ backendType: string; values: Record<string, string> }>(`/api/admin/v1/backends/${encodeURIComponent(backendType)}/defaults${nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`, { method: 'POST' })

@@ -25,7 +25,7 @@
 <script setup lang="ts">
 const nodes = [
   { name: '节点 A', services: ['Hysteria2', 'Xray REALITY'] },
-  { name: '节点 B', services: ['Shadowsocks 2022'] },
+  { name: '节点 B', services: ['Xray REALITY · 多线路'] },
 ]
 </script>
 

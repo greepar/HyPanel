@@ -1,16 +1,17 @@
-namespace HyPanel.Server;
-
 using System.Net;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
+using HyPanel.Server.Backup;
 using HyPanel.Server.Endpoints;
+using HyPanel.Server.Live;
 using HyPanel.Server.Persistence;
 using HyPanel.Server.Releases;
 using HyPanel.Server.Security;
 using HyPanel.Server.Updates;
-using HyPanel.Server.Backup;
 using HyPanel.Shared.Serialization;
 using Microsoft.AspNetCore.HttpOverrides;
+
+namespace HyPanel.Server;
 
 public static class Program
 {
@@ -32,7 +33,7 @@ public static class Program
             options.SerializerOptions.TypeInfoResolverChain.Insert(0, HealthJsonSerializerContext.Default);
         });
         builder.Services.Configure<ForwardedHeadersOptions>(ConfigureForwardedHeaders);
-        builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+        builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<AdminTokenAuthentication>();
         builder.Services.AddSingleton<AdminAuthorization>();
         builder.Services.AddSingleton<AgentAuthentication>();
@@ -56,12 +57,14 @@ public static class Program
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = true });
         builder.Services.AddSingleton<ReleaseSyncWorker>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<ReleaseSyncWorker>());
-        builder.Services.AddHostedService<HyPanel.Server.Security.CertificateSourceWatcher>();
+        builder.Services.AddHostedService<CertificateSourceWatcher>();
         builder.Services.AddSingleton<BackendArtifactCatalog>();
         builder.Services.AddHttpClient("backend-release-sync", client => client.Timeout = TimeSpan.FromMinutes(10));
         builder.Services.AddSingleton<BackendReleaseSyncWorker>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<BackendReleaseSyncWorker>());
         builder.Services.AddSingleton<InstallCodeService>();
+        builder.Services.AddSingleton<ServiceLogStore>();
+        builder.Services.AddSingleton<ChangeFeed>();
         builder.Services.AddRateLimiter(options =>
         {
             options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -100,6 +103,7 @@ public static class Program
 
         app.UseForwardedHeaders();
         app.UseRateLimiter();
+        app.UseAdminChangeSignal();
 
         _ = app.Services.GetRequiredService<AdminTokenAuthentication>();
         _ = app.Services.GetRequiredService<ReleaseCatalog>();
@@ -128,6 +132,7 @@ public static class Program
         AdminEnrollmentTokensEndpoints.Map(app);
         AgentEnrollmentEndpoints.Map(app);
         AgentSyncEndpoints.Map(app);
+        LiveEndpoints.Map(app);
         UserEndpoints.Map(app);
         PasskeyEndpoints.Map(app);
         SubscriptionEndpoints.Map(app);

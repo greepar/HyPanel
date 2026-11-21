@@ -1,7 +1,7 @@
-namespace HyPanel.Server.Persistence;
-
 using HyPanel.Server.Backends;
 using Microsoft.Data.Sqlite;
+
+namespace HyPanel.Server.Persistence;
 
 internal sealed record UserGroupRecord(Guid Id, string Name, bool IsDefault, bool AutoIncludeNewServices,
     IReadOnlyList<Guid> ServiceIds, int MemberCount);

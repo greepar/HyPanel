@@ -1,7 +1,7 @@
-namespace HyPanel.Server.Endpoints;
-
 using HyPanel.Server.Persistence;
 using HyPanel.Shared.Contracts;
+
+namespace HyPanel.Server.Endpoints;
 
 internal static class AdminHealthSummaryEndpoints
 {
@@ -60,6 +60,6 @@ internal static class AdminHealthSummaryEndpoints
 
         var counts = new HealthSummaryCounts(nodes.Count, online, drifted, services.Count, running, failed,
             services.Count - running - failed);
-        return new HealthSummaryResponse(observedAtUtc, counts, issues.ToArray());
+        return new HealthSummaryResponse(observedAtUtc, counts, [.. issues]);
     }
 }

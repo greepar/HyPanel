@@ -108,7 +108,7 @@ export function Splash({ label }: { label: string }) { return <div className="sp
 export function Empty({ title, description, action }: { title: string; description: string; action?: ComponentChildren }) { return <div className="empty-state"><span className="empty-icon">＋</span><h2>{title}</h2><p>{description}</p>{action}</div> }
 export function ErrorState({ message, retry }: { message: string; retry: () => void }) { return <div className="empty-state error-state" role="alert"><span className="empty-icon">!</span><h2>加载失败</h2><p>{message}</p><button className="button button-primary" type="button" onClick={retry}>重试</button></div> }
 export function Notice({ kind = 'info', children, dismiss }: { kind?: 'info' | 'success' | 'error'; children: ComponentChildren; dismiss?: () => void }) { return <div className={`notice notice-${kind}`} role={kind === 'error' ? 'alert' : 'status'}><span>{children}</span>{dismiss && <button type="button" aria-label="关闭消息" onClick={dismiss}>×</button>}</div> }
-export function Modal({ title, description, close, children }: { title: string; description?: string; close: () => void; children: ComponentChildren }) {
+export function Modal({ title, description, close, children, wide = false }: { title: string; description?: string; close: () => void; children: ComponentChildren; wide?: boolean }) {
   const dialog = useRef<HTMLElement>(null)
   const closeRef = useRef(close)
   closeRef.current = close
@@ -132,7 +132,7 @@ export function Modal({ title, description, close, children }: { title: string; 
     addEventListener('keydown', onKey)
     return () => { removeEventListener('keydown', onKey); previous?.focus() }
   }, [])
-  return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) close() }}><section ref={dialog} className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header><div><h2 id="modal-title">{title}</h2>{description && <p>{description}</p>}</div><button className="icon-button" type="button" aria-label="关闭" onClick={close}>×</button></header>{children}</section></div>
+  return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) close() }}><section ref={dialog} className={wide ? 'modal modal-wide' : 'modal'} role="dialog" aria-modal="true" aria-labelledby="modal-title"><header><div><h2 id="modal-title">{title}</h2>{description && <p>{description}</p>}</div><button className="icon-button" type="button" aria-label="关闭" onClick={close}>×</button></header>{children}</section></div>
 }
 export function Stat({ label, value, note, percent, tone }: { label: string; value: string; note: string; percent?: number | null; tone?: 'good' | 'warn' | 'bad' }) {
   return <article className={`card stat-card${tone ? ` tone-${tone}` : ''}`}><span>{label}</span><strong>{value}</strong>{percent != null && <Meter value={percent} />}<small>{note}</small></article>
@@ -240,4 +240,27 @@ export function Select({ value, options, onChange, placeholder = '请选择', re
       </li>)}
     </ul>}
   </div>
+}
+
+/**
+ * Underlined tab row whose indicator slides from the old tab to the new one, so the eye follows the switch.
+ * The indicator is positioned from the active link's box and re-measured on resize.
+ */
+export function TabNav<T extends string>({ label, items, active }: { label: string; items: { value: T; label: string; href: string }[]; active: T }) {
+  const nav = useRef<HTMLElement>(null)
+  const [bar, setBar] = useState<{ x: number; width: number } | null>(null)
+  useEffect(() => {
+    const measure = () => {
+      const link = nav.current?.querySelector<HTMLElement>('a.active')
+      if (link) setBar({ x: link.offsetLeft, width: link.offsetWidth })
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    if (nav.current) observer.observe(nav.current)
+    return () => observer.disconnect()
+  }, [active])
+  return <nav ref={nav} className={bar ? 'detail-tabs measured' : 'detail-tabs'} aria-label={label}>
+    {items.map(item => <a key={item.value} className={item.value === active ? 'active' : ''} aria-current={item.value === active ? 'page' : undefined} href={item.href}>{item.label}</a>)}
+    {bar && <i className="tab-indicator" aria-hidden="true" style={{ width: `${bar.width}px`, transform: `translateX(${bar.x}px)` }} />}
+  </nav>
 }

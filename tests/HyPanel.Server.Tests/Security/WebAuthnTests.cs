@@ -1,10 +1,10 @@
-namespace HyPanel.Server.Tests.Security;
-
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 using HyPanel.Server.Security;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+
+namespace HyPanel.Server.Tests.Security;
 
 [TestClass]
 public sealed class WebAuthnTests
@@ -75,8 +75,10 @@ public sealed class WebAuthnTests
 
     private static byte[] AuthData(string rpId, uint signCount, byte[]? credentialId)
     {
-        var data = new List<byte>(SHA256.HashData(Encoding.UTF8.GetBytes(rpId)));
-        data.Add((byte)(0x01 | 0x04 | (credentialId is null ? 0 : 0x40)));
+        var data = new List<byte>(SHA256.HashData(Encoding.UTF8.GetBytes(rpId)))
+        {
+            (byte)(0x01 | 0x04 | (credentialId is null ? 0 : 0x40))
+        };
         var counter = new byte[4];
         BinaryPrimitives.WriteUInt32BigEndian(counter, signCount);
         data.AddRange(counter);

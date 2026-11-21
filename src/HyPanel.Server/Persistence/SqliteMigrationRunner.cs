@@ -1,10 +1,10 @@
-namespace HyPanel.Server.Persistence;
-
 using Microsoft.Data.Sqlite;
+
+namespace HyPanel.Server.Persistence;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 30;
+    public const long CurrentSchemaVersion = 31;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -687,6 +687,16 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             await ExecuteAsync(connection, transaction, """
                 ALTER TABLE service_instances ADD COLUMN ipv6_entry INTEGER NOT NULL DEFAULT 1;
                 INSERT INTO schema_migrations (version, applied_at_utc) VALUES (30, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                """, cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, 31, cancellationToken))
+        {
+            // Exit countries of a service's extra lines (routes) that leave through their own upstream proxy, as a
+            // JSON array of { routeId, countryCode }; they flag those lines' subscription entries.
+            await ExecuteAsync(connection, transaction, """
+                ALTER TABLE service_runtime_states ADD COLUMN route_exit_countries_json TEXT NULL;
+                INSERT INTO schema_migrations (version, applied_at_utc) VALUES (31, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
                 """, cancellationToken);
         }
 

@@ -4,5 +4,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- .NET 11 runtime async: async methods compile to runtime-managed continuations instead of state machines. -->
+    <Features>$(Features);runtime-async=on</Features>
   </PropertyGroup>
 </Project>

@@ -1,6 +1,6 @@
-namespace HyPanel.Agent;
-
 using System.Text.Json;
+
+namespace HyPanel.Agent;
 
 public sealed class AgentCredentialStore(AgentEnrollmentOptions options, ILogger<AgentCredentialStore> logger)
 {

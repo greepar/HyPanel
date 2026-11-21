@@ -1,6 +1,7 @@
-namespace HyPanel.Server.Persistence;
-
 using System.Text.Json;
+using HyPanel.Server.Backends;
+
+namespace HyPanel.Server.Persistence;
 
 /// <summary>What the port-conflict check needs of a service, so it runs over any mix of stored and proposed ones.</summary>
 internal sealed record ServiceBindingSource(Guid Id, Guid NodeId, string Name, string BackendType, bool Enabled,
@@ -12,10 +13,8 @@ internal sealed record ServiceBindingSource(Guid Id, Guid NodeId, string Name, s
 /// </summary>
 internal static class ServicePortConflicts
 {
-    [Flags]
-    private enum Transport { Tcp = 1, Udp = 2 }
-
-    private readonly record struct Bind(Guid NodeId, string Host, int Port, Transport Transport, string Description);
+    private readonly record struct Bind(Guid NodeId, string Host, int Port, ListenTransport Transport,
+        string Description);
 
     /// <summary>The first conflict between <paramref name="candidate"/> and the others, or null.</summary>
     internal static string? Find(ServiceBindingSource candidate, IEnumerable<ServiceBindingSource> others)
@@ -48,19 +47,14 @@ internal static class ServicePortConflicts
             {
                 var host = root.TryGetProperty("listenHost", out var h) && h.ValueKind == JsonValueKind.String
                     ? h.GetString() ?? "" : "";
-                var transport = service.BackendType switch
-                {
-                    "hysteria2" => Transport.Udp,
-                    "xray" => Transport.Tcp,
-                    "xray-ss" => Transport.Tcp | (root.TryGetProperty("udp", out var u) && u.ValueKind == JsonValueKind.True
-                        ? Transport.Udp : 0),
-                    _ => Transport.Tcp
-                };
+                var transport = BackendDefinitionCatalog.TryGet(service.BackendType, out var definition)
+                    ? definition.ServiceProtocol.Transport
+                    : ListenTransport.Tcp;
                 yield return new(service.NodeId, host, listen, transport, $"服务“{service.Name}”的监听端口 {listen}");
             }
         }
         if (SqliteServerRepository.Relay(service.ConfigJson) is { } relay && relay.Port is >= 1 and <= 65535)
-            yield return new(relay.NodeId, "", relay.Port, Transport.Tcp, $"服务“{service.Name}”的转发端口 {relay.Port}");
+            yield return new(relay.NodeId, "", relay.Port, ListenTransport.Tcp, $"服务“{service.Name}”的转发端口 {relay.Port}");
     }
 
     private static bool Overlaps(string a, string b) => IsWildcard(a) || IsWildcard(b) || string.Equals(a, b, StringComparison.OrdinalIgnoreCase);

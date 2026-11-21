@@ -1,5 +1,3 @@
-namespace HyPanel.Server.Updates;
-
 using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO.Compression;
@@ -7,10 +5,12 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using HyPanel.Server.Backup;
+using HyPanel.Server.Persistence;
 using HyPanel.Server.Releases;
 using HyPanel.Shared.Versioning;
-using HyPanel.Server.Persistence;
-using HyPanel.Server.Backup;
+
+namespace HyPanel.Server.Updates;
 
 internal sealed record ServerUpdateStatus(string CurrentVersion, string? LatestVersion, string DeploymentMode,
     bool UpdateAvailable, string Status, string? Error);
@@ -198,13 +198,18 @@ internal sealed partial class ServerUpdateService(IConfiguration configuration, 
 
     internal static async Task ExtractAsync(string archivePath, string stagedPath, CancellationToken cancellationToken)
     {
-        await using var archive = File.OpenRead(archivePath); await using var gzip = new GZipStream(archive, CompressionMode.Decompress);
-        using var reader = new TarReader(gzip); var found = false;
+        await using var archive = File.OpenRead(archivePath);
+        await using var gzip = new GZipStream(archive, CompressionMode.Decompress);
+        await using var reader = new TarReader(gzip);
+        var found = false;
         while (await reader.GetNextEntryAsync(cancellationToken: cancellationToken) is { } entry)
         {
             var name = entry.Name.TrimStart('.', '/');
-            if (name == "hypanel-server" && entry.EntryType == TarEntryType.RegularFile && entry.DataStream is not null)
-            { if (found) throw new InvalidDataException("server_archive_ambiguous"); found = true; await using var output = File.Create(stagedPath); await entry.DataStream.CopyToAsync(output, cancellationToken); }
+            if (name != "hypanel-server" || entry is not { EntryType: TarEntryType.RegularFile, DataStream: { } data }) continue;
+            if (found) throw new InvalidDataException("server_archive_ambiguous");
+            found = true;
+            await using var output = File.Create(stagedPath);
+            await data.CopyToAsync(output, cancellationToken);
         }
         if (!found) throw new InvalidDataException("server_archive_missing");
         SetExecutable(stagedPath);

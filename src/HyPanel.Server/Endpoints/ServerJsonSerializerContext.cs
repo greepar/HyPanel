@@ -1,11 +1,11 @@
-namespace HyPanel.Server.Endpoints;
-using HyPanel.Server.Updates;
-using HyPanel.Server.Persistence;
-using HyPanel.Server.Backup;
-using HyPanel.Server.Backends;
-
 using System.Text.Json.Serialization;
+using HyPanel.Server.Backends;
+using HyPanel.Server.Backup;
+using HyPanel.Server.Persistence;
+using HyPanel.Server.Updates;
 using HyPanel.Shared.Contracts;
+
+namespace HyPanel.Server.Endpoints;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(ApiErrorResponse))]
@@ -17,6 +17,8 @@ using HyPanel.Shared.Contracts;
 [JsonSerializable(typeof(CreateHealthCheckCommandResponse))]
 [JsonSerializable(typeof(CreateDiagnosticCommandResponse))]
 [JsonSerializable(typeof(ServiceDiagnosticResponse[]))]
+[JsonSerializable(typeof(ChangesResponse))]
+[JsonSerializable(typeof(ServiceLogResponse))]
 [JsonSerializable(typeof(InstallCommandRequest))]
 [JsonSerializable(typeof(InstallCommandResponse))]
 [JsonSerializable(typeof(CreateServiceRequest))]

@@ -1,8 +1,8 @@
-namespace HyPanel.Agent;
-
 using System.Text;
 using System.Text.Json;
 using HyPanel.Agent.Backends.Infrastructure;
+
+namespace HyPanel.Agent;
 
 public sealed class ServiceLogCollector(BackendProcessSupervisor supervisor, BackendInstanceStore instanceStore)
 {
@@ -23,7 +23,7 @@ public sealed class ServiceLogCollector(BackendProcessSupervisor supervisor, Bac
         using var document = JsonDocument.Parse(configJson);
         var secrets = new HashSet<string>(StringComparer.Ordinal);
         Visit(document.RootElement, secrets);
-        return secrets.OrderByDescending(static value => value.Length).ToArray();
+        return [.. secrets.OrderByDescending(static value => value.Length)];
     }
 
     private static void Visit(JsonElement element, HashSet<string> secrets)
@@ -83,7 +83,7 @@ public sealed class ServiceLogCollector(BackendProcessSupervisor supervisor, Bac
         return string.Join('\n', selected);
     }
 
-    private static string Redact(string value, IReadOnlyList<string> secrets)
+    internal static string Redact(string value, IReadOnlyList<string> secrets)
     {
         foreach (var secret in secrets) value = value.Replace(secret, "[REDACTED]", StringComparison.Ordinal);
         return value;

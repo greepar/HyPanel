@@ -1,10 +1,11 @@
-namespace HyPanel.Agent.Backends.Xray;
-
 using System.Text.Json.Serialization;
+using HyPanel.Shared.Networking;
+
+namespace HyPanel.Agent.Backends.Xray;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(XrayRuntimeConfig))]
-[JsonSerializable(typeof(XrayShadowsocksRuntimeConfig))]
+[JsonSerializable(typeof(XrayInbound))]
 internal sealed partial class XrayRuntimeJsonSerializerContext : JsonSerializerContext;
 
 internal sealed class XrayRuntimeConfig
@@ -13,41 +14,24 @@ internal sealed class XrayRuntimeConfig
     public required XrayApi Api { get; init; }
     public required XrayStats Stats { get; init; }
     public required XrayPolicy Policy { get; init; }
-    public required XrayInbound[] Inbounds { get; init; }
+    /// <summary>Built by each protocol (see <see cref="XrayEngineProvider{TConfig}"/>), so the engine stays protocol-agnostic.</summary>
+    public required System.Text.Json.Nodes.JsonNode[] Inbounds { get; init; }
     public required XrayOutbound[] Outbounds { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public XrayRouting? Routing { get; init; }
 }
 
-internal sealed class XrayShadowsocksRuntimeConfig
+/// <summary>Sends each route's users to that route's outbound; everyone else takes the first outbound.</summary>
+internal sealed class XrayRouting
 {
-    public required XrayLog Log { get; init; }
-    public required XrayApi Api { get; init; }
-    public required XrayStats Stats { get; init; }
-    public required XrayPolicy Policy { get; init; }
-    public required XrayShadowsocksInbound[] Inbounds { get; init; }
-    public required XrayOutbound[] Outbounds { get; init; }
+    public required XrayRoutingRule[] Rules { get; init; }
 }
 
-internal sealed class XrayShadowsocksInbound
+internal sealed class XrayRoutingRule
 {
-    public required string Listen { get; init; }
-    public required int Port { get; init; }
-    public required string Protocol { get; init; }
-    public required XrayShadowsocksSettings Settings { get; init; }
-}
-
-internal sealed class XrayShadowsocksSettings
-{
-    public required string Method { get; init; }
-    public required string Password { get; init; }
-    public required string Network { get; init; }
-    public required XrayShadowsocksClient[] Clients { get; init; }
-}
-
-internal sealed class XrayShadowsocksClient
-{
-    public required string Password { get; init; }
-    public required string Email { get; init; }
-    public required int Level { get; init; }
+    public required string Type { get; init; }
+    public required string[] User { get; init; }
+    public required string OutboundTag { get; init; }
 }
 
 internal sealed class XrayApi
@@ -128,29 +112,28 @@ internal sealed class XrayOutbound
     /// Xray sends everything through the first outbound: the upstream proxy when one is configured (it fails closed,
     /// there is no fallback to a direct connection), otherwise a direct connection.
     /// </summary>
-    public static XrayOutbound[] Create(HyPanel.Shared.Networking.UpstreamProxy? proxy)
+    public static XrayOutbound[] Create(UpstreamProxy? proxy) =>
+        [For(proxy, proxy is null ? "direct" : "upstream"), new XrayOutbound { Protocol = "blackhole", Tag = "blocked" }];
+
+    /// <summary>One way out: a direct connection, or through the proxy (failing closed when it is down).</summary>
+    public static XrayOutbound For(UpstreamProxy? proxy, string tag)
     {
-        var blocked = new XrayOutbound { Protocol = "blackhole", Tag = "blocked" };
-        if (proxy is null) return [new XrayOutbound { Protocol = "freedom", Tag = "direct" }, blocked];
+        if (proxy is null) return new XrayOutbound { Protocol = "freedom", Tag = tag };
         var server = new XrayProxyServer
         {
             Address = proxy.Host,
             Port = proxy.Port,
             Users = proxy.Username is null ? null : [new XrayProxyUser { User = proxy.Username, Pass = proxy.Password ?? "" }]
         };
-        return
-        [
-            new XrayOutbound
-            {
-                Protocol = proxy.Type == HyPanel.Shared.Networking.UpstreamProxy.Socks5 ? "socks" : "http",
-                Tag = "upstream",
-                Settings = new XrayProxyOutboundSettings { Servers = [server] },
-                StreamSettings = proxy.Type == HyPanel.Shared.Networking.UpstreamProxy.Https
-                    ? new XrayOutboundStream { Security = "tls", TlsSettings = new XrayTlsSettings { ServerName = proxy.Host } }
-                    : null
-            },
-            blocked
-        ];
+        return new XrayOutbound
+        {
+            Protocol = proxy.Type == UpstreamProxy.Socks5 ? "socks" : "http",
+            Tag = tag,
+            Settings = new XrayProxyOutboundSettings { Servers = [server] },
+            StreamSettings = proxy.Type == UpstreamProxy.Https
+                ? new XrayOutboundStream { Security = "tls", TlsSettings = new XrayTlsSettings { ServerName = proxy.Host } }
+                : null
+        };
     }
 }
 

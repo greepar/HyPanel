@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState } from "preact/hooks";
+import { Plus, Trash2, Upload } from "lucide-preact";
 import { ApiError, type ApiClient, type InstallPlatform } from "./api";
-import { useAutoRefresh, readCache, writeCache, dropCache } from "./hooks";
+import { useAutoRefresh, readCache, writeCache, dropCache, setLiveClient } from "./hooks";
+import { LiveLogPanel } from "./logs";
 import { OwnSubscription } from "./subscription";
 import { PasskeyPanel } from "./passkey";
 import {
   backendFor,
+  supports,
   emptyService,
+  exitFrom,
+  newRoute,
   formFor,
   parseConfig,
   payloadFor,
@@ -30,9 +35,10 @@ import type {
   PublicEndpoint,
   ServerUpdate,
   Service,
-  ServiceDiagnostic,
   ServiceForm,
   ServiceRef,
+  ExitForm,
+  RouteForm,
   Usage,
   User,
   UserForm,
@@ -58,6 +64,7 @@ import {
   countryFlag,
   NodeName,
   PasswordInput,
+  TabNav,
 } from "./ui";
 
 type PageProps = { api: ApiClient; setError: (value: string) => void };
@@ -99,22 +106,34 @@ export function AdminApp({
   setError,
   account = false,
 }: PageProps & { route: AppRoute; account?: boolean }) {
+  useEffect(() => {
+    setLiveClient(api);
+    // Backend features drive the UI everywhere (user grants, editor sections), not only inside the editor.
+    void api.backends().then(setBackendDefinitions, () => undefined);
+    return () => setLiveClient(null);
+  }, [api]);
   const nodeRoute = route.match(
     /^nodes\/([^/]+)\/(overview|services|network|logs|settings)$/,
   );
-  if (nodeRoute)
-    return (
-      <NodeDetailPage
-        api={api}
-        setError={setError}
-        nodeId={decodeURIComponent(nodeRoute[1])}
-        tab={nodeRoute[2] as NodeTab}
-      />
-    );
-  if (route === "nodes") return <NodesPage api={api} setError={setError} />;
-  if (route === "users") return <UsersPage api={api} setError={setError} />;
-  if (route === "settings") return <SettingsPage api={api} setError={setError} account={account} />;
-  return <OverviewPage api={api} setError={setError} account={account} />;
+  // Keyed by section (a node's tabs share one key) so switching sections replays the entrance, tabs animate on their own.
+  const section = nodeRoute ? `node:${nodeRoute[1]}` : route;
+  const page = nodeRoute ? (
+    <NodeDetailPage
+      api={api}
+      setError={setError}
+      nodeId={decodeURIComponent(nodeRoute[1])}
+      tab={nodeRoute[2] as NodeTab}
+    />
+  ) : route === "nodes" ? (
+    <NodesPage api={api} setError={setError} />
+  ) : route === "users" ? (
+    <UsersPage api={api} setError={setError} />
+  ) : route === "settings" ? (
+    <SettingsPage api={api} setError={setError} account={account} />
+  ) : (
+    <OverviewPage api={api} setError={setError} account={account} />
+  );
+  return <div key={section} className="route-view">{page}</div>;
 }
 
 function SettingsPage({ api, setError, account }: PageProps & { account: boolean }) {
@@ -260,10 +279,12 @@ function BackupPanel({ api, setError }: PageProps) {
     try { await api.deleteBackup(backup.id); setBackups(current => current.filter(item => item.id !== backup.id)); setError("备份已删除。"); }
     catch (reason) { setError(messageFor(reason, "无法删除备份")); }
   };
-  const validate = async (event: Event) => {
-    const file = (event.currentTarget as HTMLInputElement).files?.[0];
+  const [fileName, setFileName] = useState("");
+  const [dragging, setDragging] = useState(false);
+  const validate = async (file: File | undefined) => {
     setValidation(null); setConfirmation("");
     if (!file) return;
+    setFileName(file.name);
     setBusy(true);
     try { setValidation(await api.validateBackup(file)); }
     catch (reason) { setError(messageFor(reason, "无法验证备份文件")); }
@@ -280,7 +301,18 @@ function BackupPanel({ api, setError }: PageProps) {
     <SectionTitle title="数据备份与恢复" description="创建、下载或验证 Server 数据库备份。" />
     <div className="section-toolbar"><span>最近备份</span><button className="button button-primary" type="button" disabled={busy} onClick={() => void create()}>{busy ? "处理中…" : "立即创建备份"}</button></div>
     {backups.length ? <div className="backup-list">{backups.map(backup => <article className="backup-row" key={backup.id}><div><strong>{formatDate(backup.createdAtUtc)}</strong><small>{formatBytes(backup.sizeBytes)} · Schema {backup.schemaVersion} · Server {backup.serverVersion}</small></div><div className="row-actions"><button className="button button-secondary" type="button" onClick={() => void download(backup)}>下载</button><button className="button button-secondary" type="button" onClick={() => void remove(backup)}>删除</button></div></article>)}</div> : <p className="muted">还没有备份。</p>}
-    <div className="backup-restore"><h3>从文件恢复</h3><p className="muted">先选择 .gz 备份文件进行验证。验证通过后才会显示恢复确认。</p><input ref={fileInput} type="file" accept=".gz,application/gzip" disabled={busy} onChange={event => void validate(event)} />
+    <div className="backup-restore"><h3>从文件恢复</h3><p className="muted">先选择 .gz 备份文件进行验证。验证通过后才会显示恢复确认。</p><label
+        className={`file-drop${dragging ? " dragging" : ""}${busy ? " busy" : ""}`}
+        onDragOver={event => { event.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={event => { event.preventDefault(); setDragging(false); if (!busy) void validate(event.dataTransfer?.files[0]); }}>
+        <input ref={fileInput} type="file" accept=".gz,application/gzip" disabled={busy} onChange={event => void validate(event.currentTarget.files?.[0])} />
+        <span className="file-drop-icon" aria-hidden="true"><Upload size={18} /></span>
+        <span className="file-drop-text">
+          <strong>{busy && fileName ? `正在验证 ${fileName}…` : fileName || "选择备份文件"}</strong>
+          <small>{fileName && !busy ? "点击可换一个文件" : "点击选择，或把 .gz 文件拖到这里"}</small>
+        </span>
+      </label>
       {validation && <><dl className="facts-list"><div><dt>备份时间</dt><dd>{validation.createdAtUtc ? formatDate(validation.createdAtUtc) : "不可用"}</dd></div><div><dt>Server 版本</dt><dd>{validation.serverVersion ?? "不可用"}</dd></div><div><dt>Schema 版本</dt><dd>{validation.schemaVersion ?? "不可用"}（格式 {validation.formatVersion ?? "不可用"}）</dd></div><div><dt>数据库大小</dt><dd>{validation.databaseSizeBytes == null ? "不可用" : formatBytes(validation.databaseSizeBytes)}</dd></div><div><dt>完整性检查</dt><dd>{validation.databaseIntegrity ? "通过" : "未通过"}</dd></div><div><dt>MasterKey 兼容</dt><dd>{validation.masterKeyCompatible ? "兼容" : "不兼容"}</dd></div></dl>
         {validation.error && <Notice kind="error">{validation.error}</Notice>}
         {validation.valid && <div className="restore-controls"><Notice>恢复将覆盖当前数据，Server 会重启，当前会话可能断开。请在下方输入 RESTORE 确认。</Notice><label>输入 RESTORE<input value={confirmation} onInput={event => setConfirmation(event.currentTarget.value)} autoComplete="off" /></label><button className="button button-primary" type="button" disabled={busy || confirmation !== "RESTORE"} onClick={() => void restore()}>恢复备份</button></div>}
@@ -960,7 +992,7 @@ function NodesPage({ api, setError }: PageProps) {
 }
 
 /** Backends whose Agent provider issues a distinct identity per user (mirrors Server BackendCapabilities). */
-const isMultiUserBackend = (backendType: string) => backendType === "xray" || backendType === "xray-ss" || backendType === "hysteria2";
+const isMultiUserBackend = (backendType: string) => supports(backendType, "multiUser");
 
 function visibleNodes(nodes: Node[], filter: "all" | "online" | "offline", query: string) {
   const needle = query.trim().toLowerCase();
@@ -1302,7 +1334,7 @@ function NodeDetailPage({
     ) : tab === "network" ? (
       <NodeNetwork api={api} services={services} />
     ) : tab === "logs" ? (
-      <NodeLogs api={api} nodeId={node.id} services={services} setError={setError} />
+      <NodeLogs nodeId={node.id} api={api} services={services} online={node.online} />
     ) : tab === "settings" ? (
       <NodeSettings api={api} node={node} setError={setError} reload={() => void load(true)} />
     ) : (
@@ -1339,18 +1371,12 @@ function NodeDetailPage({
         </>
       }
     >
-      <nav className="detail-tabs" aria-label="节点详情">
-        {tabs.map((item) => (
-          <a
-            key={item.value}
-            className={tab === item.value ? "active" : ""}
-            href={`#/nodes/${node.id}/${item.value}`}
-          >
-            {item.label}
-          </a>
-        ))}
-      </nav>
-      {content}
+      <TabNav
+        label="节点详情"
+        items={tabs.map((item) => ({ ...item, href: `#/nodes/${node.id}/${item.value}` }))}
+        active={tab}
+      />
+      <div key={tab} className="tab-view">{content}</div>
     </Page>
   );
 }
@@ -1524,12 +1550,12 @@ function NodeLogs({
   api,
   nodeId,
   services,
-  setError,
+  online,
 }: {
   api: ApiClient;
   nodeId: string;
   services: Service[];
-  setError: (value: string) => void;
+  online: boolean;
 }) {
   const [selectedId, setSelectedId] = useState(
     () => services.find((service) => service.runtime?.errorMessage)?.id ?? services[0]?.id ?? "",
@@ -1559,7 +1585,7 @@ function NodeLogs({
           ))}
         </div>
       )}
-      <ServiceLogPanel api={api} nodeId={nodeId} service={selected} setError={setError} />
+      <LiveLogPanel key={selected.id} api={api} nodeId={nodeId} service={selected} online={online} />
     </>
   );
 }
@@ -1771,6 +1797,15 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
     null,
   );
   const [selected, setSelected] = useState<string[]>([]);
+  const [endpointKey, setEndpointKey] = useState(0);
+  // Services touched since the node last caught up: their badge says 下发中 until the Agent applies the revision.
+  const [touched, setTouched] = useState<{ ids: Set<string>; revision: number } | null>(null);
+  const applyingNode = node.online && node.appliedRevision !== null && node.appliedRevision < node.desiredRevision;
+  useEffect(() => {
+    if (touched && node.appliedRevision !== null && node.appliedRevision >= touched.revision) setTouched(null);
+  }, [node.appliedRevision, touched]);
+  const touch = (ids: string[]) =>
+    setTouched((current) => ({ ids: new Set([...(current?.ids ?? []), ...ids]), revision: node.desiredRevision + 1 }));
   // Optimistic switch states: while a PUT is in flight (or the Server has not caught up), auto-refresh
   // must not bounce the toggle back to the old value. Entries expire once the Server agrees or after 15s.
   const overrides = useRef(new Map<string, { enabled?: boolean; backendUpdatePolicy?: "Auto" | "Manual"; at: number }>());
@@ -1840,6 +1875,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
           enabled: service.enabled,
           configSchemaVersion: 1,
           configJson: payload.configJson,
+          backendType: payload.backendType,
         }
       : payload;
     const result = await api.request<{ id: string } | undefined>(path, {
@@ -1859,6 +1895,9 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
         });
     }
     setEditor(null);
+    if (serviceId) touch([serviceId]);
+    setEndpointKey((key) => key + 1);
+    setError(node.online ? `已保存“${payload.name}”，正在下发到节点…` : `已保存“${payload.name}”，节点上线后生效。`);
     await loadServices(nodeId, undefined, true);
   };
   const remove = async (service: Service) => {
@@ -1877,6 +1916,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
   const enabled = async (service: Service, value: boolean) => {
     // Optimistic: flip the switch immediately and keep it flipped against background refreshes.
     override(service.id, { enabled: value });
+    touch([service.id]);
     setServices((current) => current.map((item) => (item.id === service.id ? { ...item, enabled: value } : item)));
     try {
       await api.request(
@@ -1892,6 +1932,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
   };
   const batch = async (value: boolean) => {
     for (const serviceId of selected) override(serviceId, { enabled: value });
+    touch(selected);
     setServices((current) => current.map((item) => (selected.includes(item.id) ? { ...item, enabled: value } : item)));
     try {
       await api.request("/api/admin/v1/services/batch-enabled", {
@@ -1920,7 +1961,11 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
       <div className="section-toolbar">
         <div>
           <strong>{services.length} 个服务实例</strong>
-          <span>服务只在当前节点范围内管理。</span>
+          {applyingNode ? (
+            <span className="live-status" role="status"><i className="pending-dot" />正在下发配置到节点，完成后状态会自动更新</span>
+          ) : (
+            <span>服务只在当前节点范围内管理。</span>
+          )}
         </div>
         <button
           className="button button-primary"
@@ -1989,6 +2034,8 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
                  setServices((current) => current.map((item) => (item.id === serviceId ? { ...item, backendUpdatePolicy: policy } : item)));
                }}
                setError={setError}
+               endpointKey={endpointKey}
+               applying={applyingNode && !!touched?.ids.has(service.id)}
               />
             ))}
           </div>
@@ -1997,7 +2044,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
         <section className="card">
           <Empty
             title="这个节点还没有服务"
-            description="添加 Hysteria 2、Xray REALITY 或 Xray Shadowsocks 实例。"
+            description="添加 Hysteria 2 或 Xray REALITY 实例。"
             action={
               <button
                 className="button button-primary"
@@ -2043,11 +2090,15 @@ function ServiceCard({
   refresh,
   onPolicyChange,
   setError,
+  endpointKey,
+  applying,
 }: {
   api: ApiClient;
   nodeId: string;
   publicIpv4: string | null;
   service: Service;
+  endpointKey: number;
+  applying: boolean;
   selected: boolean;
   select: () => void;
   edit: () => void;
@@ -2063,18 +2114,16 @@ function ServiceCard({
   const [endpoint, setEndpoint] = useState<PublicEndpoint | null>(null);
   const [updatingBackend, setUpdatingBackend] = useState(false);
   const listenPort = Number(parseConfig(service.configJson)?.listenPort) || null;
+  const config = parseConfig(service.configJson);
+  const defaultExit = exitFrom(config);
+  const routes = Array.isArray(config.routes)
+    ? (config.routes as Record<string, unknown>[]).map((item) => ({ id: String(item.id), name: String(item.name ?? ""), exit: exitFrom(item) }))
+    : [];
   const autoAddress = publicIpv4 && listenPort ? `${publicIpv4}:${listenPort}` : null;
+  // Refetched after every save (endpointKey), so a new custom address shows without a reload.
   useEffect(() => {
     void api.endpoint(nodeId, service.id).then((value) => setEndpoint(value ?? null), () => undefined);
-  }, [nodeId, service.id]);
-  // A failing service auto-requests one log collection so the failure is never silent; one shot per error message.
-  const lastAutoCollect = useRef<string | null>(null);
-  useEffect(() => {
-    const error = service.runtime?.errorMessage;
-    if (!error || lastAutoCollect.current === error) return;
-    lastAutoCollect.current = error;
-    void api.collectLogs(nodeId, service.id).catch(() => undefined);
-  }, [service.runtime?.errorMessage, nodeId, service.id]);
+  }, [nodeId, service.id, endpointKey]);
   const updateBackend = async () => {
     if (
       !service.latestBackendVersion ||
@@ -2112,7 +2161,7 @@ function ServiceCard({
     }
   };
   return (
-    <article className={`service-card ${selected ? "selected" : ""}`}>
+    <article className={`service-card ${selected ? "selected" : ""} ${applying ? "applying" : ""}`}>
       <div className="service-card-main">
         <label className="check">
           <input type="checkbox" checked={selected} onChange={select} />
@@ -2122,7 +2171,11 @@ function ServiceCard({
         <div className="service-identity">
           <div>
             <h3>{service.name}</h3>
-            <StatusBadge status={status} enabled={service.enabled} />
+            {applying ? (
+              <span className="badge badge-applying" key="applying"><i className="pending-dot" />下发中</span>
+            ) : (
+              <StatusBadge status={status} enabled={service.enabled} />
+            )}
           </div>
           <p>{backend.name}</p>
           <small>
@@ -2155,6 +2208,14 @@ function ServiceCard({
           </span>
         ))}
       </div>
+      {routes.length > 0 && (
+        <div className="route-strip" aria-label="线路">
+          <span className="route-chip"><b>{service.name}</b>{exitLabel(defaultExit)}</span>
+          {routes.map((route) => (
+            <span className="route-chip" key={route.id}><b>{route.name}</b>{exitLabel(route.exit)}</span>
+          ))}
+        </div>
+      )}
       {service.runtime?.errorMessage && (
         <div className="service-error">
           <strong>运行错误</strong>
@@ -2199,93 +2260,6 @@ function ServiceCard({
         </label>
       </div>
     </article>
-  );
-}
-
-/** Bounded stdout/stderr collection for one service, shown inline on the node 日志 tab. */
-function ServiceLogPanel({
-  api,
-  nodeId,
-  service,
-  setError,
-}: {
-  api: ApiClient;
-  nodeId: string;
-  service: Service;
-  setError: (value: string) => void;
-}) {
-  const [records, setRecords] = useState<ServiceDiagnostic[] | null>(null);
-  const [busy, setBusy] = useState(false);
-  const load = async () => {
-    try {
-      setRecords(await api.diagnostics(nodeId, service.id));
-    } catch (reason) {
-      setError(messageFor(reason, "无法加载日志记录"));
-    }
-  };
-  const waiting = records?.some((record) => record.status === "Pending" || record.status === "Running") ?? false;
-  useEffect(() => {
-    setRecords(null);
-    void load();
-  }, [nodeId, service.id]);
-  // Auto-collect on entry: a fresh log snapshot when the panel opens, so problems surface without a click.
-  const autoCollected = useRef(false);
-  useEffect(() => {
-    if (autoCollected.current) return;
-    autoCollected.current = true;
-    void api.collectLogs(nodeId, service.id).then(() => void load(), () => undefined);
-  }, [nodeId, service.id]);
-  // While the Agent has a collection in flight, poll until it reports back on its next sync.
-  useEffect(() => {
-    if (!waiting) return;
-    const timer = setInterval(() => void load(), 3000);
-    return () => clearInterval(timer);
-  }, [waiting, service.id]);
-  const collect = async () => {
-    setBusy(true);
-    try {
-      await api.collectLogs(nodeId, service.id);
-      await load();
-    } catch (reason) {
-      setError(messageFor(reason, "无法收集日志"));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const label = (status: ServiceDiagnostic["status"]) =>
-    status === "Succeeded" ? "收集成功" : status === "Failed" ? "收集失败" : status === "Expired" ? "已过期" : "等待 Agent…";
-  return (
-    <section className="card panel">
-      <div className="section-toolbar">
-        <div>
-          <h2>{service.name}</h2>
-          <span>收集服务进程日志。</span>
-        </div>
-        <button className="button button-primary" type="button" disabled={busy || waiting} onClick={() => void collect()}>
-          {waiting ? "等待 Agent 返回…" : "收集日志与网络诊断"}
-        </button>
-      </div>
-      {service.runtime?.errorMessage && <Notice kind="error">当前错误：{service.runtime.errorMessage}</Notice>}
-      {records === null ? (
-        <Loading />
-      ) : records.length ? (
-        <div className="diagnostic-list">
-          {records.map((record) => (
-            <article key={record.commandId}>
-              <header>
-                <strong>{label(record.status)}</strong>
-                <time>{new Date(record.createdAtUtc).toLocaleString("zh-CN")}</time>
-              </header>
-              {record.output !== null && <pre>{record.output || "日志缓冲区为空。"}</pre>}
-              {record.status === "Expired" && <Notice>Agent 未在有效期内完成，可重新收集。</Notice>}
-              {record.errorMessage && <Notice kind="error">{record.errorMessage}</Notice>}
-            </article>
-          ))}
-        </div>
-      ) : (
-        <Empty title="还没有日志记录" description="点击“收集最新日志”，Agent 会在下次同步（几秒内）返回结果。" />
-      )}
-    </section>
   );
 }
 
@@ -2339,7 +2313,7 @@ function ServiceEditor({
   const [generating, setGenerating] = useState(false);
   // New services are named "<node>-<protocol>" (made unique on the node) until the admin types a name.
   const defaultName = (backendType: string) => {
-    const base = `${nodeName}-${{ hysteria2: "hy2", xray: "reality", "xray-ss": "ss" }[backendType] ?? backendType}`;
+    const base = `${nodeName}-${{ hysteria2: "hy2", "xray-hysteria2": "hy2", xray: "reality" }[backendType] ?? backendType}`;
     let name = base;
     for (let index = 2; existingNames.includes(name); index++) name = `${base}-${index}`;
     return name;
@@ -2393,14 +2367,14 @@ function ServiceEditor({
     };
   }, []);
   useEffect(() => {
-    if (form?.backendType !== "hysteria2") return;
+    if (!form || !supports(form.backendType, "certificate")) return;
     void api.certificates().then((list) => {
       setCertificates(list);
       // Preselect a usable certificate (unexpired, readable) so a new service needs no extra clicks.
       const usable = list.find((item) => !item.sourceError && (!item.expiresAtUtc || new Date(item.expiresAtUtc) > new Date())) ?? list[0];
       if (usable)
         setForm((current) =>
-          current && current.backendType === "hysteria2" && !current.values.certificateId
+          current && supports(current.backendType, "certificate") && !current.values.certificateId
             ? { ...current, values: { ...current.values, certificateId: usable.id } }
             : current,
         );
@@ -2408,7 +2382,8 @@ function ServiceEditor({
   }, [form?.backendType]);
   // Stored secrets arrive as "[REDACTED]"; revealing one loads the real values of all of them into the form.
   const revealSecrets = async () => {
-    if (!service || !form || !Object.values(form.values).includes(REDACTED)) return true;
+    const redacted = form && (Object.values(form.values).includes(REDACTED) || form.routes.some((route) => route.exit.password === REDACTED));
+    if (!service || !form || !redacted) return true;
     try {
       const secrets = await api.request<Record<string, string>>(
         `/api/admin/v1/nodes/${nodeId}/services/${service.id}/secrets`,
@@ -2422,7 +2397,11 @@ function ServiceEditor({
             values[field.key] = secrets[field.configKey];
         if (values.upstreamProxyPassword === REDACTED && secrets.upstreamProxyPassword != null)
           values.upstreamProxyPassword = secrets.upstreamProxyPassword;
-        return { ...current, values };
+        const routes = current.routes.map((route) => {
+          const secret = secrets[`routes.${route.id}.upstreamProxyPassword`];
+          return route.exit.password === REDACTED && secret != null ? { ...route, exit: { ...route.exit, password: secret } } : route;
+        });
+        return { ...current, values, routes };
       });
       return true;
     } catch (reason) {
@@ -2467,20 +2446,20 @@ function ServiceEditor({
   const renderField = (field: BackendField) => {
     if (!form) return null;
     // Salamander obfuscation is opt-in: it costs noticeable CPU on both ends. Off means no obfs password.
-    if (form.backendType === "hysteria2" && field.key === "obfsPassword") {
+    if (field.key === "obfsPassword") {
       const enabled = (form.values[field.key] ?? "") !== "";
       return (
-        <div className="obfs-field" key={field.key}>
-          <label className="switch form-switch">
+        <div className="editor-toggle wide" key={field.key}>
+          <label className="switch">
             <input
               type="checkbox"
               checked={enabled}
               onChange={(event) => change(field.key, event.currentTarget.checked ? randomSecret() : "")}
             />
             <span />
-            启用 Salamander 混淆
+            Salamander 混淆
           </label>
-          <p className="field-help">混淆可以让流量特征更难识别，但会明显增加服务器和客户端的 CPU 占用。一般不需要开启。</p>
+          <small>让流量特征更难识别，但两端 CPU 占用明显增加，一般不需要。</small>
           {enabled && (
             <label>
               {field.label}
@@ -2496,16 +2475,11 @@ function ServiceEditor({
       );
     }
     if (field.kind === "fixed") {
-      const display =
-        field.fixedKind === "boolean"
-          ? field.fixed === "true"
-            ? "启用"
-            : "禁用"
-          : field.fixed;
+      const display = field.fixedKind === "boolean" ? (field.fixed === "true" ? "启用" : "禁用") : field.fixed;
       return (
         <div className="fixed-setting" key={field.key}>
           <span>{field.label}</span>
-          <strong>{display}</strong>
+          <strong className="mono">{display}</strong>
         </div>
       );
     }
@@ -2519,7 +2493,9 @@ function ServiceEditor({
             placeholder={certificates.length ? "选择证书" : "请先在“设置”中添加证书"}
             value={form.values[field.key] ?? ""}
             onChange={(value) => change(field.key, value)}
-            options={certificates.map((certificate) => ({
+            // ACME certificates are issued by the engine itself; engines that cannot do that only get stored ones.
+            options={certificates.filter((certificate) => certificate.kind !== "Acme"
+              || supports(form.backendType, "acmeCertificate")).map((certificate) => ({
               value: certificate.id,
               label: certificate.name,
               hint: certificateSummary(certificate),
@@ -2555,15 +2531,13 @@ function ServiceEditor({
           />
         </label>
       );
-    const type = field.kind === "number" ? "number" : "text";
-    const label =
-      service && field.secret ? `${field.label}（保留当前占位值即可沿用）` : field.label;
     return (
       <label key={field.key}>
-        {label}
+        {field.label}
         <input
           required={field.required}
-          type={type}
+          type={field.kind === "number" ? "number" : "text"}
+          className={field.generate ? "mono" : undefined}
           value={form.values[field.key] ?? ""}
           placeholder={field.placeholder ?? undefined}
           onInput={(event) => change(field.key, event.currentTarget.value)}
@@ -2573,217 +2547,323 @@ function ServiceEditor({
   };
   if (!form || !definitions.length)
     return (
-      <Modal
-        title={service ? `编辑 ${service.name}` : "添加服务"}
-        close={close}
-      >
+      <Modal title={service ? `编辑 ${service.name}` : "添加服务"} close={close} wide>
         <Loading />
       </Modal>
     );
   const definition = backendFor(form.backendType);
-  const listenFields = definition.fields.filter(
-    (field) => field.section === "listen",
+  // Backends grouped by the protocol clients speak; a protocol served by several engines offers an engine choice.
+  const protocols = Object.values(
+    definitions.reduce<Record<string, BackendDefinition[]>>((groups, item) => {
+      (groups[item.protocolId] ??= []).push(item);
+      return groups;
+    }, {}),
   );
-  const protocolFields = definition.fields.filter(
-    (field) => field.section !== "listen",
+  const engines = definitions.filter((item) => item.protocolId === definition.protocolId);
+  // Same protocol, other engine: settings carry over; the version follows the engine and lines need one that routes.
+  const switchEngine = (next: BackendDefinition) =>
+    setForm((current) => current && {
+      ...current,
+      backendType: next.backendType,
+      version: next.defaultVersion ?? current.version,
+      routes: next.features.includes("routes") ? current.routes : [],
+    });
+  // Fields are placed by role: what an admin usually edits up front, generated keys and fixed values tucked away.
+  const keyFields = new Set(["realityPrivateKey", "realityPublicKey", "shortId", "authPassword"]);
+  const advancedKeys = new Set(["listenHost"]);
+  const portField = definition.fields.find((field) => field.key === "listenPort");
+  const primaryFields = definition.fields.filter(
+    (field) => field !== portField && !keyFields.has(field.key) && !advancedKeys.has(field.key) && field.kind !== "fixed",
   );
-  const hasGenerated = protocolFields.some((field) => field.generate);
+  const secretFields = definition.fields.filter((field) => keyFields.has(field.key));
+  const advancedFields = definition.fields.filter((field) => advancedKeys.has(field.key) || field.kind === "fixed");
+  const multiRoute = definition.features.includes("routes");
+  const defaultExit = exitFrom(form.values);
+  const setDefaultExit = (exit: ExitForm) =>
+    setForm((current) => current && {
+      ...current,
+      values: {
+        ...current.values,
+        upstreamProxyType: exit.type, upstreamProxyHost: exit.host, upstreamProxyPort: exit.port,
+        upstreamProxyUsername: exit.username, upstreamProxyPassword: exit.password,
+      },
+    });
+  const setRoute = (id: string, patch: Partial<RouteForm>) =>
+    setForm((current) => current && { ...current, routes: current.routes.map((route) => (route.id === id ? { ...route, ...patch } : route)) });
+  const customAddress = Boolean(address.host.trim() || address.port.trim() || address.sni.trim());
+  const autoAddress = `${publicIpv4 ?? "节点公网 IP"}:${form.values.listenPort || "端口"}`;
+  const relayNode = relayNodes.find((item) => item.id === form.values.relayNodeId);
   return (
     <Modal
       title={service ? `编辑 ${service.name}` : "添加服务"}
       description={`${definition.core} · ${definition.protocol}`}
       close={close}
+      wide
     >
       <form className="service-editor" onSubmit={(event) => void submit(event)}>
         {!service && (
-          <fieldset>
-            <legend>后端类型</legend>
-            <div className="backend-picker">
-              {definitions.map((item) => (
-                <label
-                  className={
-                    form.backendType === item.backendType
-                      ? "backend-option selected"
-                      : "backend-option"
-                  }
-                  key={item.backendType}
-                >
-                  <input
-                    type="radio"
-                    checked={form.backendType === item.backendType}
-                    onChange={() => switchBackend(item)}
-                  />
-                  <span className="backend-mark">{item.badge}</span>
+          <div className="backend-picker" role="radiogroup" aria-label="协议">
+            {protocols.map((group) => {
+              const first = group[0];
+              const selected = group.some((item) => item.backendType === form.backendType);
+              return (
+                <label className={selected ? "backend-option selected" : "backend-option"} key={first.protocolId}>
+                  <input type="radio" checked={selected} onChange={() => !selected && switchBackend(first)} />
+                  <span className="backend-mark">{first.badge}</span>
                   <span>
-                    <strong>{item.core}</strong>
-                    <small>{item.protocol}</small>
+                    <strong>{first.protocol}</strong>
+                    <small>{group.length > 1 ? `${group.length} 种内核可选` : first.core}</small>
                   </span>
                 </label>
+              );
+            })}
+          </div>
+        )}
+        {engines.length > 1 && (
+          <div className="engine-picker">
+            <span>内核</span>
+            <div className="segmented" role="radiogroup" aria-label="内核">
+              {engines.map((item) => (
+                <button
+                  key={item.backendType}
+                  type="button"
+                  role="radio"
+                  aria-checked={item.backendType === form.backendType}
+                  className={item.backendType === form.backendType ? "active" : ""}
+                  onClick={() => switchEngine(item)}
+                >
+                  {item.core}{item.features.includes("routes") ? " · 多线路" : ""}
+                </button>
               ))}
             </div>
-          </fieldset>
+            <small>{definition.description}{service && service.backendType !== form.backendType ? " 保存后服务会用新内核重启一次，用户无需更新订阅。" : ""}</small>
+          </div>
         )}
-        <fieldset>
-          <legend>基本与监听</legend>
-          <div className="form-grid">
-            <label>
+
+        <section className="editor-section">
+          <div className="editor-grid">
+            <label className="span-2">
               服务名称
-              <input
-                required
-                value={form.name}
-                onInput={(event) =>
-                  setForm({ ...form, name: event.currentTarget.value })
-                }
-              />
+              <input required value={form.name} onInput={(event) => setForm({ ...form, name: event.currentTarget.value })} />
             </label>
-            <label>
-              后端版本
-              <input
-                required
-                value={form.version}
-                onInput={(event) =>
-                  setForm({ ...form, version: event.currentTarget.value })
-                }
-              />
-            </label>
-            {listenFields.map(renderField)}
+            {portField && renderField(portField)}
+            {primaryFields.map(renderField)}
           </div>
-        </fieldset>
-        <fieldset>
-          <legend>协议配置</legend>
-          {hasGenerated && (
-            <div className="service-editor-actions">
-              <button
-                className="button button-secondary"
-                type="button"
-                disabled={busy || generating}
-                onClick={() => void generate(definition)}
-              >
-                {generating ? "生成中…" : "重新生成默认密钥"}
+          {secretFields.length > 0 && (
+            <details className="editor-disclosure">
+              <summary>
+                <span>密钥与标识</span>
+                <small>{service ? "已保存，展开可查看或轮换" : generating ? "正在生成…" : "已自动生成"}</small>
+              </summary>
+              <div className="editor-grid">{secretFields.map(renderField)}</div>
+              <button className="button button-secondary" type="button" disabled={busy || generating} onClick={() => void generate(definition)}>
+                {generating ? "生成中…" : "重新生成"}
               </button>
-            </div>
+            </details>
           )}
-          <div className="form-grid">{protocolFields.map(renderField)}</div>
-          <div className="relay-field">
-            <span>上游代理（可选）</span>
-            <Select value={form.values.upstreamProxyType ?? ""} onChange={value => change("upstreamProxyType", value)}
-              options={[
-                { value: "", label: "不使用（本节点直接出网）" },
-                { value: "http", label: "HTTP 代理" },
-                { value: "https", label: "HTTPS 代理（与代理服务器之间走 TLS）" },
-                { value: "socks5", label: "SOCKS5 代理" }
-              ]} />
-            {form.values.upstreamProxyType && <div className="form-grid">
-              <label>代理地址
-                <input placeholder="如 p.webshare.io" autoComplete="off" value={form.values.upstreamProxyHost ?? ""}
-                  onInput={event => change("upstreamProxyHost", event.currentTarget.value)} />
+        </section>
+
+        <section className="editor-section">
+          <header className="editor-section-head">
+            <h3>线路</h3>
+            <p>{multiRoute
+              ? "同一端口、同一伪装下可以挂多条线路，每条在订阅里是独立节点，各走各的出口。"
+              : "服务的出站流量从这里离开；选代理后网站看到的是代理的 IP。"}</p>
+          </header>
+          <ol className="route-list">
+            <li className="route-item">
+              <div className="route-head">
+                <span className="route-name">
+                  <strong>{form.name.trim() || "默认线路"}</strong>
+                  <small>{multiRoute && form.routes.length ? "默认线路" : "出口"}</small>
+                </span>
+                <ExitPicker value={defaultExit} onChange={setDefaultExit} />
+              </div>
+              <ExitFields value={defaultExit} onChange={setDefaultExit} reveal={revealSecrets} />
+            </li>
+            {form.routes.map((route) => (
+              <li className="route-item" key={route.id}>
+                <div className="route-head">
+                  <input
+                    className="route-name-input"
+                    aria-label="线路名称"
+                    maxLength={32}
+                    value={route.name}
+                    onInput={(event) => setRoute(route.id, { name: event.currentTarget.value })}
+                  />
+                  <ExitPicker value={route.exit} onChange={(exit) => setRoute(route.id, { exit })} />
+                  <button
+                    className="icon-button"
+                    type="button"
+                    aria-label={`删除线路 ${route.name}`}
+                    title="删除线路"
+                    onClick={() => setForm({ ...form, routes: form.routes.filter((item) => item.id !== route.id) })}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+                <ExitFields value={route.exit} onChange={(exit) => setRoute(route.id, { exit })} reveal={revealSecrets} />
+              </li>
+            ))}
+          </ol>
+          {multiRoute && form.routes.length < 16 && (
+            <button
+              className="add-route"
+              type="button"
+              onClick={() => setForm({ ...form, routes: [...form.routes, newRoute(form.routes.length + 2)] })}
+            >
+              <Plus size={15} />添加线路
+            </button>
+          )}
+          {(defaultExit.type === "http" || defaultExit.type === "https" || form.routes.some((route) => route.exit.type === "http" || route.exit.type === "https")) && (
+            <p className="field-help">HTTP / HTTPS 代理只转发 TCP，UDP（QUIC、DNS、部分游戏）会被丢弃；代理不可用时连接失败，不会回退直连。</p>
+          )}
+        </section>
+
+        {definition.features.includes("relay") && (
+          <section className="editor-section">
+            <header className="editor-section-head">
+              <h3>入口</h3>
+              <p>{relayNode
+                ? `客户端连 ${relayNode.displayName}，由它的 Agent 把 TCP 端口转发到本节点；网站看到的仍是本节点（或线路代理）的 IP。`
+                : "客户端直接连本节点。也可以让另一台节点做入口，把流量转发过来。"}</p>
+            </header>
+            <div className="editor-grid">
+              <label className={form.values.relayNodeId ? undefined : "span-2"}>
+                入口节点
+                <Select
+                  ariaLabel="入口节点"
+                  value={form.values.relayNodeId ?? ""}
+                  onChange={(value) => change("relayNodeId", value)}
+                  options={[
+                    { value: "", label: "直连本节点" },
+                    ...relayNodes.map((item) => ({ value: item.id, label: item.displayName, hint: item.publicIpv4 ?? "未知 IP" })),
+                  ]}
+                />
               </label>
-              <label>代理端口
-                <input type="number" min="1" max="65535" value={form.values.upstreamProxyPort ?? ""}
-                  onInput={event => change("upstreamProxyPort", event.currentTarget.value)} />
-              </label>
-              <label>用户名（可选）
-                <input autoComplete="off" value={form.values.upstreamProxyUsername ?? ""}
-                  onInput={event => change("upstreamProxyUsername", event.currentTarget.value)} />
-              </label>
-              <label>密码（可选）
-                <PasswordInput value={form.values.upstreamProxyPassword ?? ""}
-                  onValue={(value) => change("upstreamProxyPassword", value)} beforeReveal={revealSecrets} />
-              </label>
-            </div>}
-            <p className="field-help">服务的所有出站流量都会经这个代理发出，网站看到的是代理的 IP。代理不可用时连接会失败，不会回退到本机直连。
-              HTTP 和 HTTPS 代理只支持 TCP，UDP 流量（QUIC、部分游戏和 DNS）会被丢弃；SOCKS5 是否支持 UDP取决于代理服务器。</p>
-          </div>
-          {form.backendType === "xray" && <div className="relay-field">
-            <span>转发入口节点</span>
-            <Select value={form.values.relayNodeId ?? ""} onChange={value => setForm({ ...form, values: { ...form.values, relayNodeId: value } })}
-              options={[
-                { value: "", label: "不转发（客户端直连本节点）" },
-                ...relayNodes.map(item => ({ value: item.id, label: `${item.displayName} · ${item.publicIpv4 ?? '未知 IP'}` }))
-              ]} />
-            {form.values.relayNodeId && <label>
-              转发端口（在入口节点监听）
-              <input type="number" min="1" max="65535" value={form.values.relayPort ?? ""}
-                onInput={event => setForm({ ...form, values: { ...form.values, relayPort: event.currentTarget.value } })} />
-            </label>}
-            <p className="field-help">服务仍运行在本节点，由入口节点的 Agent 把该 TCP 端口转发到这里；订阅自动使用入口节点的地址和转发端口，网站看到的是本节点的出口 IP。
-              入口节点的 Agent 会自动放行转发端口（云厂商安全组除外）；请在本节点放行入口节点的访问。用户流量统计在本节点，本节点看到的来源 IP 是入口节点。</p>
-          </div>}
-        </fieldset>
-        <fieldset>
-          <legend>连接地址（可选）</legend>
-          <p className="field-help">
-            写进用户订阅的地址。全部留空即自动使用节点公网 IP 和监听端口
-            {form.backendType === "hysteria2" ? "，SNI 取证书域名" : ""}。只有通过域名、CDN 或端口转发访问时才需要填写，填写后订阅里只保留这一个入口。
-          </p>
-          <div className="form-grid">
+              {form.values.relayNodeId && (
+                <label>
+                  入口端口
+                  <input type="number" min="1" max="65535" required value={form.values.relayPort ?? ""}
+                    onInput={(event) => change("relayPort", event.currentTarget.value)} />
+                </label>
+              )}
+            </div>
+          </section>
+        )}
+
+        <details className="editor-disclosure" open={customAddress || undefined}>
+          <summary>
+            <span>订阅地址</span>
+            <small className="mono">{customAddress ? `${address.host || publicIpv4}:${address.port || form.values.listenPort}` : `自动 · ${autoAddress}`}</small>
+          </summary>
+          <p className="field-help">只有通过域名、CDN 或端口转发访问时才需要填写；填写后订阅只保留这一个入口。</p>
+          <div className="editor-grid">
             <label>
               域名或 IP
-              <input
-                placeholder={publicIpv4 ? `自动：${publicIpv4}` : "自动：节点公网 IP"}
-                value={address.host}
-                onInput={(event) => setAddress({ ...address, host: event.currentTarget.value })}
-              />
+              <input placeholder={publicIpv4 ? `自动：${publicIpv4}` : "自动：节点公网 IP"} value={address.host}
+                onInput={(event) => setAddress({ ...address, host: event.currentTarget.value })} />
             </label>
             <label>
               端口
-              <input
-                type="number"
-                min="1"
-                max="65535"
-                placeholder={`自动：${String(form.values.listenPort ?? "监听端口")}`}
-                value={address.port}
-                onInput={(event) => setAddress({ ...address, port: event.currentTarget.value })}
-              />
+              <input type="number" min="1" max="65535" placeholder={`自动：${String(form.values.listenPort ?? "监听端口")}`}
+                value={address.port} onInput={(event) => setAddress({ ...address, port: event.currentTarget.value })} />
             </label>
-            {form.backendType === "hysteria2" && (
+            {definition.features.includes("certificate") && (
               <label>
                 SNI
-                <input
-                  placeholder="自动：证书域名"
-                  value={address.sni}
-                  onInput={(event) => setAddress({ ...address, sni: event.currentTarget.value })}
-                />
+                <input placeholder="自动：证书域名" value={address.sni} onInput={(event) => setAddress({ ...address, sni: event.currentTarget.value })} />
               </label>
             )}
           </div>
-          <label className="switch">
-            <input
-              type="checkbox"
-              checked={ipv6Entry}
-              disabled={Boolean(address.host.trim())}
-              onChange={(event) => setIpv6Entry(event.currentTarget.checked)}
-            />
-            <span />
-            订阅中提供 IPv6 入口
-          </label>
-          <p className="field-help">
-            {address.host.trim()
-              ? "已填写连接地址，订阅只使用该地址。"
-              : publicIpv6
-                ? `开启后订阅会多一条「IPv6」入口，连接 ${publicIpv6}。`
-                : "节点暂未检测到公网 IPv6；检测到后，开启此项会在订阅里多一条「IPv6」入口。"}
-          </p>
-        </fieldset>
-        <footer>
-          <div className="row-actions">
-            <button
-              className="button button-secondary"
-              type="button"
-              onClick={close}
-            >
-              取消
-            </button>
-            <button
-              className="button button-primary"
-              disabled={busy || generating}
-            >
-              {busy ? "正在保存…" : "保存服务"}
-            </button>
+          <div className="editor-toggle">
+            <label className="switch">
+              <input type="checkbox" checked={ipv6Entry} disabled={Boolean(address.host.trim())}
+                onChange={(event) => setIpv6Entry(event.currentTarget.checked)} />
+              <span />
+              提供 IPv6 入口
+            </label>
+            <small>
+              {address.host.trim()
+                ? "已填写连接地址，订阅只使用该地址。"
+                : publicIpv6 ? `订阅多一条「IPv6」入口，连接 ${publicIpv6}。` : "节点暂未检测到公网 IPv6。"}
+            </small>
           </div>
+        </details>
+
+        <details className="editor-disclosure">
+          <summary>
+            <span>高级</span>
+            <small className="mono">{form.values.listenHost || "0.0.0.0"} · v{form.version || "?"}</small>
+          </summary>
+          <div className="editor-grid">
+            <label>
+              后端版本
+              <input required className="mono" value={form.version} onInput={(event) => setForm({ ...form, version: event.currentTarget.value })} />
+            </label>
+            {advancedFields.map(renderField)}
+          </div>
+        </details>
+
+        <footer className="editor-footer">
+          <button className="button button-secondary" type="button" onClick={close}>取消</button>
+          <button className="button button-primary" disabled={busy || generating}>
+            {busy ? "正在保存…" : service ? "保存" : "创建服务"}
+          </button>
         </footer>
       </form>
     </Modal>
+  );
+}
+
+const exitLabel = (exit: ExitForm) =>
+  exit.type ? `${exit.type.toUpperCase()} · ${exit.host}` : "直连";
+
+const exitOptions: { value: ExitForm["type"]; label: string; hint?: string }[] = [
+  { value: "", label: "直连", hint: "本节点出网" },
+  { value: "socks5", label: "SOCKS5 代理" },
+  { value: "http", label: "HTTP 代理" },
+  { value: "https", label: "HTTPS 代理", hint: "到代理走 TLS" },
+];
+
+function ExitPicker({ value, onChange }: { value: ExitForm; onChange: (value: ExitForm) => void }) {
+  return (
+    <div className="exit-picker">
+      <Select
+        ariaLabel="出口"
+        value={value.type}
+        onChange={(type) => onChange({ ...value, type: type as ExitForm["type"] })}
+        options={exitOptions}
+      />
+    </div>
+  );
+}
+
+/** Proxy address and credentials, shown only when the line leaves through a proxy. */
+function ExitFields({ value, onChange, reveal }: { value: ExitForm; onChange: (value: ExitForm) => void; reveal: () => Promise<boolean> }) {
+  if (!value.type) return null;
+  return (
+    <div className="exit-fields">
+      <label className="exit-host">
+        代理地址
+        <input placeholder="如 p.webshare.io" autoComplete="off" required value={value.host}
+          onInput={(event) => onChange({ ...value, host: event.currentTarget.value })} />
+      </label>
+      <label className="exit-port">
+        端口
+        <input type="number" min="1" max="65535" required value={value.port}
+          onInput={(event) => onChange({ ...value, port: event.currentTarget.value })} />
+      </label>
+      <label>
+        用户名
+        <input autoComplete="off" placeholder="可选" value={value.username}
+          onInput={(event) => onChange({ ...value, username: event.currentTarget.value })} />
+      </label>
+      <label>
+        密码
+        <PasswordInput value={value.password} placeholder="可选" onValue={(password) => onChange({ ...value, password })} beforeReveal={reveal} />
+      </label>
+    </div>
   );
 }
 
@@ -3382,7 +3462,7 @@ function StatusBadge({
   ];
   return (
     <>
-      <span className={`badge status-${status}`}>
+      <span key={status} className={`badge live-badge status-${status}`}>
         {labels[status] ?? "未知"}
       </span>
       {!enabled && <span className="badge disabled">配置停用</span>}

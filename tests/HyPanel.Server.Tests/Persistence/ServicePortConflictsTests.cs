@@ -31,16 +31,6 @@ public sealed class ServicePortConflictsTests
     }
 
     [TestMethod]
-    public void ShadowsocksWithUdpTakesBothProtocols()
-    {
-        var ss = Service("ss", "xray-ss", "{\"listenPort\":8388,\"udp\":true}");
-        var hy2 = Service("hy2", "hysteria2", "{\"listenPort\":8388}");
-        Assert.IsNotNull(ServicePortConflicts.Find(hy2, [ss]));
-        var tcpOnly = Service("ss2", "xray-ss", "{\"listenPort\":8388,\"udp\":false}");
-        Assert.IsNull(ServicePortConflicts.Find(hy2, [tcpOnly]));
-    }
-
-    [TestMethod]
     public void DifferentNodesAndDisabledServicesNeverConflict()
     {
         var a = Service("a", "xray", "{\"listenPort\":8443}");

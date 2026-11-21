@@ -1,15 +1,15 @@
-namespace HyPanel.Agent.Updates;
-
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
-using HyPanel.Shared.Contracts;
-using HyPanel.Shared.Versioning;
 using HyPanel.Agent.Backends.Infrastructure;
 using HyPanel.Agent.Reconciliation;
+using HyPanel.Shared.Contracts;
+using HyPanel.Shared.Versioning;
+
+namespace HyPanel.Agent.Updates;
 
 public sealed class AgentUpdater(
     ILogger<AgentUpdater> logger,
@@ -23,7 +23,7 @@ public sealed class AgentUpdater(
     private static readonly TimeSpan SelfTestTimeout = TimeSpan.FromSeconds(20);
     private const long MaximumExtractedBinarySize = 512L * 1024 * 1024;
     private const long MaximumArchiveSize = 512L * 1024 * 1024;
-    private int _applying;
+    private int applying;
 
     public async Task RecoverAsync(CancellationToken cancellationToken)
     {
@@ -71,7 +71,7 @@ public sealed class AgentUpdater(
     public async Task ApplyOfferAsync(AgentUpdateDescriptor offer, AgentCredentials credentials,
         CancellationToken cancellationToken)
     {
-        if (Interlocked.Exchange(ref _applying, 1) != 0) return;
+        if (Interlocked.Exchange(ref applying, 1) != 0) return;
         try
         {
             var existing = await stateStore.LoadAsync(cancellationToken);
@@ -126,7 +126,7 @@ public sealed class AgentUpdater(
         }
         finally
         {
-            Volatile.Write(ref _applying, 0);
+            Volatile.Write(ref applying, 0);
         }
     }
 

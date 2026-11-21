@@ -1,19 +1,20 @@
-namespace HyPanel.Agent.Backends.Hysteria2;
-
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using HyPanel.Agent.Backends;
 using HyPanel.Shared.Contracts;
+using HyPanel.Shared.Networking;
+
+namespace HyPanel.Agent.Backends.Hysteria2;
 
 /// <summary>
 /// Hysteria2 server. Granted users authenticate with distinct <c>userpass</c> identities
 /// (<c>hypanel-&lt;userId:N&gt;</c> / per-binding credential) and their cumulative traffic is read from the
 /// loopback-only trafficStats API on the Panel-assigned control port.
 /// </summary>
-public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvider? timeProvider = null) : IBackendProvider
+public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvider? timeProvider = null)
+    : IBackendProvider, IPortHoppingBackend
 {
     private const int MinimumSecretLength = 8;
     private const int MaximumSecretLength = 256;
@@ -205,7 +206,7 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
             .ToLowerInvariant()[..32];
 
     private static BackendValidationResult Invalid(string errorCode, string errorMessage) =>
-        new(false, Array.Empty<int>(), Array.Empty<int>(), errorCode, errorMessage);
+        new(false, [], [], errorCode, errorMessage);
 
     private static bool TryParseConfig(string configJson, out Hysteria2Config config)
     {
@@ -218,8 +219,10 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
 
         try
         {
-            config = JsonSerializer.Deserialize(configJson, Hysteria2JsonSerializerContext.Default.Hysteria2Config)!;
-            return config is not null;
+            var parsed = JsonSerializer.Deserialize(configJson, Hysteria2JsonSerializerContext.Default.Hysteria2Config);
+            if (parsed is null) return false;
+            config = parsed;
+            return true;
         }
         catch (JsonException)
         {
@@ -236,13 +239,16 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
         (config.ObfsPassword is null || HasValidSecretLength(config.ObfsPassword)) &&
         config.UpMbps is >= 1 and <= MaximumBandwidthMbps &&
         config.DownMbps is >= 1 and <= MaximumBandwidthMbps &&
-        (string.IsNullOrWhiteSpace(config.PortHopping) || HyPanel.Shared.Networking.PortSpec.TryParse(config.PortHopping, out _)) &&
+        (string.IsNullOrWhiteSpace(config.PortHopping) || PortSpec.TryParse(config.PortHopping, out _)) &&
         config.TryGetProxy(out _);
 
+    (int ListenPort, PortSpec Ports)? IPortHoppingBackend.PortHopping(string configJson) =>
+        PortHopping(configJson);
+
     /// <summary>Port-hopping ports of a Hysteria2 service config, or null when none are configured.</summary>
-    internal static (int ListenPort, HyPanel.Shared.Networking.PortSpec Ports)? PortHopping(string configJson) =>
+    internal static (int ListenPort, PortSpec Ports)? PortHopping(string configJson) =>
         TryParseConfig(configJson, out var config) && !string.IsNullOrWhiteSpace(config.PortHopping) &&
-        HyPanel.Shared.Networking.PortSpec.TryParse(config.PortHopping, out var ports)
+        PortSpec.TryParse(config.PortHopping, out var ports)
             ? (config.ListenPort, ports)
             : null;
 
@@ -414,7 +420,7 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
         {
             yaml.AppendLine("outbounds:");
             yaml.AppendLine("  - name: upstream");
-            if (proxy.Type == HyPanel.Shared.Networking.UpstreamProxy.Socks5)
+            if (proxy.Type == UpstreamProxy.Socks5)
             {
                 yaml.AppendLine("    type: socks5");
                 yaml.AppendLine("    socks5:");

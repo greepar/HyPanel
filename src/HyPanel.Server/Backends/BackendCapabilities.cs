@@ -1,17 +1,20 @@
-namespace HyPanel.Server.Backends;
-
 using System.Diagnostics.CodeAnalysis;
 
-/// <summary>
-/// Backends whose Agent provider renders one distinct identity per granted user and reports per-user traffic.
-/// Only these receive user grants; their subscription entries use the per-binding credential.
-/// </summary>
+namespace HyPanel.Server.Backends;
+
+/// <summary>Shortcuts for the feature checks the persistence layer and endpoints make by backend type.</summary>
 internal static class BackendCapabilities
 {
-    public static bool IsMultiUser([NotNullWhen(true)] string? backendType) => backendType is "xray" or "xray-ss" or "hysteria2";
+    /// <summary>
+    /// Backends whose Agent provider renders one distinct identity per granted user and reports per-user traffic.
+    /// Only these receive user grants; their subscription entries use the per-binding credential.
+    /// </summary>
+    public static bool IsMultiUser([NotNullWhen(true)] string? backendType) =>
+        BackendDefinitionCatalog.Has(backendType, BackendFeatures.MultiUser);
 
     /// <summary>Backends that need a loopback control port for their local stats API.</summary>
-    public static bool NeedsControlPort([NotNullWhen(true)] string? backendType) => IsMultiUser(backendType);
+    public static bool NeedsControlPort([NotNullWhen(true)] string? backendType) =>
+        BackendDefinitionCatalog.Has(backendType, BackendFeatures.ControlPort);
 
-    public const string MultiUserSqlList = "('xray','xray-ss','hysteria2')";
+    public static string MultiUserSqlList { get; } = BackendDefinitionCatalog.SqlList(BackendFeatures.MultiUser);
 }

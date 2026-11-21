@@ -1,11 +1,12 @@
-namespace HyPanel.Server.Endpoints;
-
 using System.Security.Cryptography;
 using System.Text.Json;
-using HyPanel.Server.Persistence;
-using HyPanel.Shared.Serialization;
 using HyPanel.Server.Backends;
+using HyPanel.Server.Persistence;
 using HyPanel.Server.Releases;
+using HyPanel.Shared.Networking;
+using HyPanel.Shared.Serialization;
+
+namespace HyPanel.Server.Endpoints;
 
 internal sealed record BackendDefinitionResponse(
     string BackendType,
@@ -15,7 +16,16 @@ internal sealed record BackendDefinitionResponse(
     string Description,
     string Badge,
     string? DefaultVersion,
-    BackendFieldDefinition[] Fields);
+    BackendFieldDefinition[] Fields,
+    string Engine = "",
+    string ProtocolId = "",
+    string[]? Features = null)
+{
+    /// <summary>Feature names in camelCase (<c>routes</c>, <c>relay</c>, <c>certificate</c>…), for the editor.</summary>
+    public static string[] FeatureNames(BackendFeatures features) => [.. Enum.GetValues<BackendFeatures>()
+        .Where(flag => flag != BackendFeatures.None && (features & flag) == flag)
+        .Select(flag => char.ToLowerInvariant(flag.ToString()[0]) + flag.ToString()[1..])];
+}
 
 internal sealed record BackendDefaultsResponse(string BackendType, Dictionary<string, string> Values);
 
@@ -39,8 +49,9 @@ internal static class AdminBackendEndpoints
             item.Protocol,
             item.Description,
             item.Badge,
-            catalog.GetLatestVersion(item.BackendType) ?? item.FallbackVersion,
-            item.Fields)).ToArray();
+            catalog.GetLatestVersion(item.Engine) ?? item.FallbackVersion,
+            item.Fields, item.Engine, item.ServiceProtocol.Id,
+            BackendDefinitionResponse.FeatureNames(item.Features))).ToArray();
         return Results.Json(response, ServerJsonSerializerContext.Default.BackendDefinitionResponseArray);
     }
 
@@ -90,7 +101,7 @@ internal static class AdminBackendEndpoints
                 if (document.RootElement.TryGetProperty("listenPort", out var port) && port.TryGetInt32(out var value))
                     used.Add(value);
                 if (document.RootElement.TryGetProperty("portHopping", out var hop) && hop.ValueKind == JsonValueKind.String &&
-                    HyPanel.Shared.Networking.PortSpec.TryParse(hop.GetString(), out var hopping))
+                    PortSpec.TryParse(hop.GetString(), out var hopping))
                     foreach (var range in hopping.Ranges)
                         for (var hopPort = range.From; hopPort <= range.To; hopPort++) used.Add(hopPort);
             }

@@ -1,6 +1,6 @@
-namespace HyPanel.Server.Backup;
-
 using System.Text.Json.Serialization;
+
+namespace HyPanel.Server.Backup;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(BackupManifest))]

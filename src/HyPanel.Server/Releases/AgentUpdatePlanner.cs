@@ -1,6 +1,6 @@
-namespace HyPanel.Server.Releases;
-
 using HyPanel.Shared.Versioning;
+
+namespace HyPanel.Server.Releases;
 
 internal static class AgentUpdatePlanner
 {

@@ -144,4 +144,8 @@ internal sealed record SubscriptionServiceRecord(
     string ConfigJson,
     string Credential,
     ServicePublicEndpointRecord PublicEndpoint,
-    string? PinnedCertificateSha256 = null);
+    string? PinnedCertificateSha256 = null,
+    IReadOnlyList<SubscriptionRouteEntry>? Routes = null);
+
+/// <summary>An extra line of a REALITY service as a subscription entry: same server, its own name and UUID.</summary>
+internal sealed record SubscriptionRouteEntry(Guid RouteId, string Name);

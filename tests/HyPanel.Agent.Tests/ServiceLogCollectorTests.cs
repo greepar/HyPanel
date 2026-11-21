@@ -119,6 +119,46 @@ public sealed class ServiceLogCollectorTests
     }
 
     [TestMethod]
+    public async Task LogsAfter_ReturnsOnlyLinesPastTheCursorAndSignalsNewOutput()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("This assertion uses the POSIX shell and is covered on Unix runners.");
+        }
+
+        var directory = Path.Combine(Path.GetTempPath(), "HyPanel.Agent.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var serviceId = Guid.NewGuid();
+            await using var supervisor = new BackendProcessSupervisor(NullLogger<BackendProcessSupervisor>.Instance);
+            var written = 0;
+            supervisor.LogWritten += () => Interlocked.Increment(ref written);
+            await supervisor.StartAsync(serviceId,
+                new BackendProcessSpec("/bin/sh", ["-c", "printf 'one\\ntwo\\nthree\\n'; sleep 5"], directory,
+                    new Dictionary<string, string>()),
+                CancellationToken.None);
+            for (var attempt = 0; attempt < 100 && supervisor.GetStatus(serviceId).RecentLogs.Count < 3; attempt++)
+                await Task.Delay(20);
+
+            var all = supervisor.LogsAfter(new Dictionary<Guid, long>()).Single();
+            var rest = supervisor.LogsAfter(new Dictionary<Guid, long> { [serviceId] = 2 }).Single();
+            var none = supervisor.LogsAfter(new Dictionary<Guid, long> { [serviceId] = 3 });
+
+            Assert.AreEqual(1, all.FirstSequence);
+            Assert.AreEqual(3, all.Lines.Count);
+            Assert.AreEqual(3, rest.FirstSequence);
+            CollectionAssert.AreEqual(new[] { "stdout: three" }, rest.Lines.ToArray());
+            Assert.AreEqual(0, none.Count);
+            Assert.AreEqual(3, written);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public async Task CollectAsync_EmptyLogBuffer_ReturnsEmptyStringNotError()
     {
         if (OperatingSystem.IsWindows())

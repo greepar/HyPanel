@@ -1,7 +1,7 @@
-namespace HyPanel.Server.Persistence;
-
 using HyPanel.Server.Security;
 using Microsoft.Data.Sqlite;
+
+namespace HyPanel.Server.Persistence;
 
 internal sealed partial class SqliteServerRepository
 {

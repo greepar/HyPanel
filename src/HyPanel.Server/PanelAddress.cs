@@ -1,6 +1,6 @@
-namespace HyPanel.Server;
-
 using HyPanel.Server.Persistence;
+
+namespace HyPanel.Server;
 
 /// <summary>
 /// The address users and Agents reach the panel at: the configured panel URL (Settings) when set, otherwise the

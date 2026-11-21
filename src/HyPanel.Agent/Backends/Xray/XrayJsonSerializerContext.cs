@@ -1,6 +1,6 @@
-namespace HyPanel.Agent.Backends.Xray;
-
 using System.Text.Json.Serialization;
+
+namespace HyPanel.Agent.Backends.Xray;
 
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
@@ -8,10 +8,10 @@ using System.Text.Json.Serialization;
     AllowDuplicateProperties = false,
     UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(XrayConfig))]
-[JsonSerializable(typeof(XrayShadowsocksConfig))]
+[JsonSerializable(typeof(XrayHysteria2Config))]
 internal sealed partial class XrayJsonSerializerContext : JsonSerializerContext;
 
-internal sealed class XrayConfig : HyPanel.Agent.Backends.IUpstreamProxyConfig
+internal sealed class XrayConfig : IXrayServiceConfig
 {
     public string? UpstreamProxyType { get; init; }
 
@@ -50,9 +50,30 @@ internal sealed class XrayConfig : HyPanel.Agent.Backends.IUpstreamProxyConfig
     public Guid? RelayNodeId { get; init; }
 
     public int? RelayPort { get; init; }
+
+    /// <summary>Extra lines on the same port, each with its own exit; see <see cref="HyPanel.Shared.Networking.ServiceRoute"/>.</summary>
+    public XrayRouteConfig?[]? Routes { get; init; }
 }
 
-internal sealed class XrayShadowsocksConfig : HyPanel.Agent.Backends.IUpstreamProxyConfig
+internal sealed class XrayRouteConfig : IUpstreamProxyConfig
+{
+    public Guid Id { get; init; }
+
+    public string? Name { get; init; }
+
+    public string? UpstreamProxyType { get; init; }
+
+    public string? UpstreamProxyHost { get; init; }
+
+    public int? UpstreamProxyPort { get; init; }
+
+    public string? UpstreamProxyUsername { get; init; }
+
+    public string? UpstreamProxyPassword { get; init; }
+}
+
+/// <summary>Hysteria2 served by Xray (backend type <c>xray-hysteria2</c>); same fields as the official server's config.</summary>
+internal sealed class XrayHysteria2Config : IXrayServiceConfig
 {
     public string? UpstreamProxyType { get; init; }
 
@@ -68,10 +89,20 @@ internal sealed class XrayShadowsocksConfig : HyPanel.Agent.Backends.IUpstreamPr
 
     public int ListenPort { get; init; }
 
-    /// <summary>Server key (base64, 16 bytes) shared by every user of the service.</summary>
-    public string? Password { get; init; }
+    public Guid CertificateId { get; init; }
 
-    public string? Method { get; init; }
+    /// <summary>Only used when no user is granted the service.</summary>
+    public string? AuthPassword { get; init; }
 
-    public bool? Udp { get; init; }
+    public string? MasqueradeUrl { get; init; }
+
+    public string? ObfsPassword { get; init; }
+
+    public int UpMbps { get; init; }
+
+    public int DownMbps { get; init; }
+
+    public string? PortHopping { get; init; }
+
+    public XrayRouteConfig?[]? Routes { get; init; }
 }

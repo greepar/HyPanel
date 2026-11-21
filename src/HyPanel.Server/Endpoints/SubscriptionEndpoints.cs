@@ -1,8 +1,10 @@
-namespace HyPanel.Server.Endpoints;
-
 using System.Text;
 using System.Text.Json;
+using HyPanel.Server.Backends;
 using HyPanel.Server.Persistence;
+using HyPanel.Shared.Networking;
+
+namespace HyPanel.Server.Endpoints;
 
 internal static class SubscriptionEndpoints
 {
@@ -24,7 +26,7 @@ internal static class SubscriptionEndpoints
             return;
         }
 
-        var proxies = services.Select(TryProject).Where(static p => p is not null).Cast<SubscriptionProxy>().ToArray();
+        var proxies = services.SelectMany(Project).ToArray();
         var output = RenderMihomo(proxies, await repository.GetMihomoTemplateAsync(ct) ?? MihomoTemplate.Default);
         var info = await repository.GetSubscriptionUserInfoAsync(token, ct);
         // Clients name the profile after profile-title (Clash Verge, Mihomo Party) or the attachment file name;
@@ -47,98 +49,32 @@ internal static class SubscriptionEndpoints
         await response.WriteAsync(output, Encoding.UTF8, ct);
     }
 
-    private static SubscriptionProxy? TryProject(SubscriptionServiceRecord service) =>
-        string.Equals(service.BackendType, "hysteria2", StringComparison.OrdinalIgnoreCase)
-            ? TryProjectHysteria2(service)
-            : string.Equals(service.BackendType, "xray", StringComparison.OrdinalIgnoreCase)
-                ? TryProjectXray(service)
-                : service.BackendType == "xray-ss"
-                    ? TryProjectShadowsocks(service)
-                    : null;
-
-    private static SubscriptionProxy? TryProjectHysteria2(SubscriptionServiceRecord service)
+    /// <summary>The entries of one service: itself, then one per extra line (route) under the route's own credential.</summary>
+    private static IEnumerable<SubscriptionProxy> Project(SubscriptionServiceRecord service)
     {
-        if (!string.Equals(service.BackendType, "hysteria2", StringComparison.OrdinalIgnoreCase)) return null;
+        if (!BackendDefinitionCatalog.TryGet(service.BackendType, out var definition)) return [];
         try
         {
             using var document = JsonDocument.Parse(service.ConfigJson);
-            if (document.RootElement.ValueKind != JsonValueKind.Object) return null;
-            // Each granted user authenticates with their own userpass identity (see Hysteria2Provider).
-            var password = $"{Hysteria2UserName(service.UserId)}:{service.Credential}";
-            TryString(document.RootElement, "obfsPassword", out var obfsPassword);
-            var hopping = TryString(document.RootElement, "portHopping", out var hopText) &&
-                          HyPanel.Shared.Networking.PortSpec.TryParse(hopText, out var ports)
-                ? ports.ToString()
-                : null;
-            var endpoint = service.PublicEndpoint;
-            return new Hysteria2Proxy(service.Name, endpoint.Host, endpoint.Port, endpoint.TlsServerName, password,
-                obfsPassword, service.PinnedCertificateSha256, hopping);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return [];
+            var protocol = definition.ServiceProtocol;
+            var entries = new List<SubscriptionProxy>();
+            if (protocol.Project(service, document.RootElement, service.Name, service.Credential) is not { } main)
+                return [];
+            entries.Add(main);
+            foreach (var route in service.Routes ?? [])
+                if (protocol.Project(service, document.RootElement, route.Name,
+                        ServiceRoute.Credential(service.Credential, route.RouteId)) is { } entry)
+                    entries.Add(entry);
+            return entries;
         }
         catch (JsonException)
         {
-            return null;
+            return [];
         }
     }
 
-    private static SubscriptionProxy? TryProjectXray(SubscriptionServiceRecord service)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(service.ConfigJson);
-            var root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object ||
-                !TryString(root, "flow", out var flow) ||
-                !TryString(root, "realityPublicKey", out var publicKey) ||
-                !TryString(root, "shortId", out var shortId) ||
-                !TryString(root, "serverName", out var serverName) ||
-                !TryString(root, "fingerprint", out var fingerprint)) return null;
-
-            var endpoint = service.PublicEndpoint;
-            return new XrayProxy(service.Name, endpoint.Host, endpoint.Port, service.Credential, flow, serverName, fingerprint,
-                publicKey, shortId);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    private static SubscriptionProxy? TryProjectShadowsocks(SubscriptionServiceRecord service)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(service.ConfigJson);
-            var root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object || !TryString(root, "password", out var serverKey)) return null;
-            var endpoint = service.PublicEndpoint;
-            // Shadowsocks 2022 multi-user: "<server key>:<user key>"; the user key is the credential GUID's bytes.
-            var userKey = Convert.ToBase64String(Guid.Parse(service.Credential).ToByteArray());
-            return new ShadowsocksProxy(service.Name, endpoint.Host, endpoint.Port, "2022-blake3-aes-128-gcm",
-                $"{serverKey}:{userKey}");
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    internal static string Hysteria2UserName(Guid userId) => $"hypanel-{userId:N}";
-
-    private static bool TryString(JsonElement root, string name, out string value)
-    {
-        value = string.Empty;
-        foreach (var property in root.EnumerateObject())
-        {
-            if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase) &&
-                property.Value.ValueKind == JsonValueKind.String)
-            {
-                value = property.Value.GetString() ?? string.Empty;
-                return value.Length > 0;
-            }
-        }
-
-        return false;
-    }
+    internal static string Hysteria2UserName(Guid userId) => Hysteria2Protocol.UserName(userId);
 
     private static string RenderMihomo(IEnumerable<SubscriptionProxy> proxies, string template)
     {
@@ -146,82 +82,16 @@ internal static class SubscriptionEndpoints
         foreach (var proxy in proxies)
         {
             var yaml = new StringBuilder();
-            if (proxy is Hysteria2Proxy hysteria)
-            {
-                yaml.Append("  - name: ").Append(Yaml(hysteria.Name)).Append("\n    type: hysteria2\n    server: ")
-                    .Append(Yaml(hysteria.Host)).Append("\n    port: ").Append(hysteria.Port).Append("\n    password: ")
-                    .Append(Yaml(hysteria.Password)).Append(hysteria.PinnedSha256 is null
-                        ? "\n    skip-cert-verify: false\n"
-                        : "\n    skip-cert-verify: true\n    fingerprint: " + Yaml(hysteria.PinnedSha256) + "\n");
-                if (!string.IsNullOrEmpty(hysteria.TlsServerName))
-                    yaml.Append("    sni: ").Append(Yaml(hysteria.TlsServerName)).Append('\n');
-                if (hysteria.PortHopping is { } hopping)
-                    yaml.Append("    ports: ").Append(Yaml(hopping)).Append("\n    hop-interval: 30\n");
-                if (!string.IsNullOrEmpty(hysteria.ObfsPassword))
-                    yaml.Append("    obfs: salamander\n    obfs-password: ").Append(Yaml(hysteria.ObfsPassword))
-                        .Append('\n');
-            }
-            else if (proxy is XrayProxy xray)
-            {
-                yaml.Append("  - name: ").Append(Yaml(xray.Name)).Append("\n    type: vless\n    server: ")
-                    .Append(Yaml(xray.Host)).Append("\n    port: ").Append(xray.Port).Append("\n    uuid: ")
-                    .Append(Yaml(xray.ClientId)).Append("\n    flow: ").Append(Yaml(xray.Flow))
-                    .Append("\n    tls: true\n    servername: ").Append(Yaml(xray.ServerName))
-                    .Append("\n    client-fingerprint: ").Append(Yaml(xray.Fingerprint))
-                    .Append("\n    reality-opts:\n      public-key: ").Append(Yaml(xray.PublicKey))
-                    .Append("\n      short-id: ").Append(Yaml(xray.ShortId))
-                    // Recent REALITY servers require a hybrid key share; Mihomo removes it by default.
-                    .Append("\n      support-x25519mlkem768: true\n");
-            }
-            else if (proxy is ShadowsocksProxy shadowsocks)
-            {
-                yaml.Append("  - name: ").Append(Yaml(shadowsocks.Name)).Append("\n    type: ss\n    server: ")
-                    .Append(Yaml(shadowsocks.Host)).Append("\n    port: ").Append(shadowsocks.Port)
-                    .Append("\n    cipher: ").Append(Yaml(shadowsocks.Method)).Append("\n    password: ")
-                    .Append(Yaml(shadowsocks.Password)).Append("\n    udp: true\n");
-            }
+            proxy.AppendMihomo(yaml);
             rendered.Add((proxy.Name, yaml.ToString()));
         }
 
-        return MihomoTemplate.Render(template, rendered, Yaml);
+        return MihomoTemplate.Render(template, rendered, SubscriptionProxy.Quote);
     }
-
-    private static string Yaml(string value) => '"' + value.Replace("\\", "\\\\", StringComparison.Ordinal)
-        .Replace("\"", "\\\"", StringComparison.Ordinal) + '"';
 
     private static void SetPrivateHeaders(HttpResponse response)
     {
         response.Headers.CacheControl = "no-store";
         response.Headers["Referrer-Policy"] = "no-referrer";
     }
-
-    private abstract record SubscriptionProxy(string Name, string Host, int Port);
-
-    private sealed record Hysteria2Proxy(
-        string Name,
-        string Host,
-        int Port,
-        string? TlsServerName,
-        string Password,
-        string? ObfsPassword,
-        string? PinnedSha256,
-        string? PortHopping) : SubscriptionProxy(Name, Host, Port);
-
-    private sealed record XrayProxy(
-        string Name,
-        string Host,
-        int Port,
-        string ClientId,
-        string Flow,
-        string ServerName,
-        string Fingerprint,
-        string PublicKey,
-        string ShortId) : SubscriptionProxy(Name, Host, Port);
-
-    private sealed record ShadowsocksProxy(
-        string Name,
-        string Host,
-        int Port,
-        string Method,
-        string Password) : SubscriptionProxy(Name, Host, Port);
 }

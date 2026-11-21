@@ -1,8 +1,8 @@
-namespace HyPanel.Server.Endpoints;
-
 using HyPanel.Server.Persistence;
 using HyPanel.Server.Security;
 using Microsoft.Data.Sqlite;
+
+namespace HyPanel.Server.Endpoints;
 
 /// <summary>Passkey (WebAuthn) registration for signed-in accounts and passwordless sign-in.</summary>
 internal static class PasskeyEndpoints
@@ -25,7 +25,7 @@ internal static class PasskeyEndpoints
     {
         var user = await auth.AuthenticateAsync(request, ct);
         if (user is null) return Results.Unauthorized();
-        return Results.Json((await repository.GetPasskeysAsync(user.Id, ct)).Select(ToResponse).ToArray(),
+        return Results.Json([.. (await repository.GetPasskeysAsync(user.Id, ct)).Select(ToResponse)],
             ServerJsonSerializerContext.Default.PasskeyResponseArray);
     }
 
@@ -37,7 +37,7 @@ internal static class PasskeyEndpoints
         if (webAuthn.CreateChallenge(user.Id) is not { } challenge) return Results.StatusCode(StatusCodes.Status429TooManyRequests);
         var existing = await repository.GetPasskeysAsync(user.Id, ct);
         return Results.Json(new PasskeyOptionsResponse(challenge.Id, challenge.Value, WebAuthn.RpId(request), RpName,
-                WebAuthn.Encode(user.Id.ToByteArray()), user.Username, existing.Select(key => key.Id).ToArray()),
+                WebAuthn.Encode(user.Id.ToByteArray()), user.Username, [.. existing.Select(key => key.Id)]),
             ServerJsonSerializerContext.Default.PasskeyOptionsResponse);
     }
 

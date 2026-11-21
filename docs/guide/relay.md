@@ -24,7 +24,7 @@ REALITY 是端到端加密的，A 只搬运字节，不解密也不重新加密�
 - 转发端口是 A 上的 TCP 监听端口，不能和 A 上其他已启用服务的 TCP 监听端口重复；保存或启用服务时面板会检查，并说明与哪个服务冲突。已停用的服务不占用端口。
 - 用户认证和流量统计在 B，B 看到的来源 IP 是 A。
 - REALITY 的“伪装目标”由 B 去连接，请选一个对 B 来说稳定、低延迟的站点。目标不稳定时，客户端会表现为连接超时。
-- 当前只支持 Xray REALITY（TCP）。Hysteria2 和 Shadowsocks 暂不支持转发。
+- 当前只支持 Xray REALITY（TCP）。Hysteria2 暂不支持转发。
 - 转发由 Agent 内置的 C# 代码完成，不依赖 `ip`、`nft` 或 `iptables`。入口节点 A 可以是 Linux、macOS 或 Windows。
   Windows 和 macOS 的系统防火墙需要自行放行 Agent 监听的转发端口；Docker Desktop / OrbStack 里的 Agent 会监听该端口，由 Docker 转发到主机。
 - A 绑定端口失败（例如被占用）时，Agent 日志会记录原因；面板暂不显示转发状态。

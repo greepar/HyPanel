@@ -1,6 +1,6 @@
-namespace HyPanel.Agent.Backends;
-
 using HyPanel.Shared.Networking;
+
+namespace HyPanel.Agent.Backends;
 
 /// <summary>The flat config values every backend uses to describe an optional upstream proxy.</summary>
 internal interface IUpstreamProxyConfig

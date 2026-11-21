@@ -1,9 +1,9 @@
-namespace HyPanel.Agent;
-
 using System.Net.Http.Headers;
 using System.Text.Json;
 using HyPanel.Shared.Contracts;
 using HyPanel.Shared.Serialization;
+
+namespace HyPanel.Agent;
 
 public sealed class EnrollmentClient(HttpClient httpClient) : IEnrollmentClient
 {

@@ -15,8 +15,7 @@ HyPanel 由两部分组成：
 | 后端 | 协议 | 说明 |
 | --- | --- | --- |
 | Hysteria2 | Hysteria2 / QUIC | 多用户、流量统计、Salamander 混淆、端口跳跃 |
-| Xray | VLESS REALITY Vision | 每个用户独立 UUID 与流量统计 |
-| Xray | Shadowsocks 2022 | 多用户，每个用户独立密钥与流量统计 |
+| Xray | VLESS REALITY Vision | 每个用户独立 UUID 与流量统计，一个端口可挂多条不同出口的线路 |
 
 代理内核（Hysteria2、Xray）由面板从官方发布下载并分发给节点，不需要在节点上手动安装。
 

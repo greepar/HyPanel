@@ -1,8 +1,8 @@
-namespace HyPanel.Server.Releases;
-
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
+
+namespace HyPanel.Server.Releases;
 
 internal sealed class InstallCodeService(TimeProvider timeProvider)
 {

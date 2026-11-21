@@ -1,7 +1,7 @@
-namespace HyPanel.Server.Security;
-
 using HyPanel.Server.Endpoints;
 using HyPanel.Server.Persistence;
+
+namespace HyPanel.Server.Security;
 
 /// <summary>
 /// Re-reads Path certificates from the Panel host every minute. When the files hold a different valid certificate

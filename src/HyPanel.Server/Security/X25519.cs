@@ -1,6 +1,6 @@
-namespace HyPanel.Server.Security;
-
 using System.Numerics;
+
+namespace HyPanel.Server.Security;
 
 /// <summary>
 /// Minimal RFC 7748 X25519 scalar multiplication used only to generate a REALITY key pair for a brand-new service.
@@ -59,8 +59,9 @@ internal static class X25519
             z2 = Mod(e * Mod(aa + CurveFactor * e));
         }
 
-        (x2, x3) = ConditionalSwap(swap, x2, x3);
-        (z2, z3) = ConditionalSwap(swap, z2, z3);
+        // The final swap still runs both ways so the ladder stays constant-time; only (x2, z2) is needed after it.
+        (x2, _) = ConditionalSwap(swap, x2, x3);
+        (z2, _) = ConditionalSwap(swap, z2, z3);
         return EncodeUCoordinate(Mod(x2 * BigInteger.ModPow(z2, Prime - 2, Prime)));
     }
 

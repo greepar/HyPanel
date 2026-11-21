@@ -1,9 +1,10 @@
-namespace HyPanel.Server.Releases;
-
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using HyPanel.Server.Backends;
 using HyPanel.Shared.Contracts;
 using HyPanel.Shared.Versioning;
+
+namespace HyPanel.Server.Releases;
 
 internal sealed class BackendArtifactCatalog
 {
@@ -22,17 +23,17 @@ internal sealed class BackendArtifactCatalog
     public BackendArtifactManifest? Manifest { get; private set; }
 
     public IReadOnlyList<BackendArtifact> GetArtifacts(string rid) =>
-        Volatile.Read(ref snapshot).Artifacts.Where(asset => asset.Rid == rid).ToArray();
+        [.. Volatile.Read(ref snapshot).Artifacts.Where(asset => asset.Rid == rid)];
 
     public string? GetLatestVersion(string backendType) =>
         Volatile.Read(ref snapshot).LatestVersions.TryGetValue(BinarySource(backendType), out var version) ? version : null;
 
-    public IReadOnlyList<BackendReleaseIndex> GetReleases() => Volatile.Read(ref snapshot).Releases.Values.ToArray();
+    public IReadOnlyList<BackendReleaseIndex> GetReleases() => [.. Volatile.Read(ref snapshot).Releases.Values];
 
     public BackendReleaseIndex? GetRelease(string backendType, string version) =>
         Volatile.Read(ref snapshot).Releases.TryGetValue(Key(BinarySource(backendType), version), out var release) ? release : null;
 
-    /// <summary>Artifact for a service's backend; <c>xray-ss</c> runs the Xray binary but is reported under its own type.</summary>
+    /// <summary>Artifact for a service's backend, under the service's own backend type.</summary>
     public BackendArtifact? FindArtifact(string backendType, string version, string rid, bool supportsAvx = false)
     {
         var source = BinarySource(backendType);
@@ -43,8 +44,9 @@ internal sealed class BackendArtifactCatalog
         return artifact is null || source == backendType ? artifact : artifact with { BackendType = backendType };
     }
 
-    /// <summary>Backend types that reuse another backend's released binary.</summary>
-    internal static string BinarySource(string backendType) => backendType == "xray-ss" ? "xray" : backendType;
+    /// <summary>The released binary a backend runs: its engine (several backends can share one, e.g. Xray).</summary>
+    internal static string BinarySource(string backendType) =>
+        BackendDefinitionCatalog.TryGet(backendType, out var definition) ? definition.Engine : backendType;
 
     public bool TryGetAssetPath(string fileName, out string path)
     {
@@ -68,7 +70,7 @@ internal sealed class BackendArtifactCatalog
                 BackendArtifactManifestJsonContext.Default.BackendArtifactManifest)
                 ?? throw new InvalidOperationException("Backend artifact manifest must not be null.");
             // Backends that were retired (e.g. sing-box, Mihomo) may still be cached on disk; ignore them.
-            legacy = legacy with { Assets = legacy.Assets.Where(asset => BackendReleaseSources.IsBackendType(asset.BackendType)).ToArray() };
+            legacy = legacy with { Assets = [.. legacy.Assets.Where(asset => BackendReleaseSources.IsBackendType(asset.BackendType))] };
             ValidateLegacy(legacy);
             Manifest = legacy;
             artifacts.AddRange(legacy.Assets);
@@ -89,8 +91,7 @@ internal sealed class BackendArtifactCatalog
             .ToDictionary(group => group.Key,
                 group => group.MaxBy(item => SemanticVersion.Parse(item.Version))!.Version, StringComparer.Ordinal);
         Volatile.Write(ref snapshot, new Snapshot(releases, latest,
-            artifacts.GroupBy(item => $"{item.BackendType}\n{item.Version}\n{item.Rid}\n{item.RequiresAvx}", StringComparer.Ordinal)
-                .Select(group => group.Last()).ToArray()));
+            [.. artifacts.GroupBy(item => $"{item.BackendType}\n{item.Version}\n{item.Rid}\n{item.RequiresAvx}", StringComparer.Ordinal).Select(group => group.Last())]));
     }
 
     internal static void ValidateRelease(BackendReleaseIndex release)

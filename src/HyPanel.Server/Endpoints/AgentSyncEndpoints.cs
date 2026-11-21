@@ -1,13 +1,16 @@
-namespace HyPanel.Server.Endpoints;
-
 using System.Net;
-using System.Text.Json;
 using System.Text;
+using System.Text.Json;
+using HyPanel.Server.Backends;
+using HyPanel.Server.Live;
 using HyPanel.Server.Persistence;
 using HyPanel.Server.Releases;
 using HyPanel.Shared.Contracts;
+using HyPanel.Shared.Networking;
 using HyPanel.Shared.Serialization;
 using HyPanel.Shared.Versioning;
+
+namespace HyPanel.Server.Endpoints;
 
 internal static class AgentSyncEndpoints
 {
@@ -33,6 +36,8 @@ internal static class AgentSyncEndpoints
         BackendArtifactCatalog backendArtifactCatalog,
         BackendReleaseSyncWorker backendReleaseSync,
         ReleaseCatalog releaseCatalog,
+        ServiceLogStore logStore,
+        ChangeFeed changeFeed,
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
@@ -80,6 +85,18 @@ internal static class AgentSyncEndpoints
             return Results.Unauthorized();
         }
 
+        changeFeed.ObserveAgent(agent.AgentId, StatusFingerprint(request, publicIpv4));
+        IReadOnlyList<ServiceLogCursor>? logCursors = null;
+        if (request.LogStreamId is { } streamId && streamId != Guid.Empty)
+        {
+            // Only this node's services: an Agent cannot write into another node's logs.
+            var ownServices = desired.Value.Services.Select(service => service.Id).ToHashSet();
+            var chunks = (request.ServiceLogs ?? []).Where(chunk => ownServices.Contains(chunk.ServiceId)).ToArray();
+            logCursors = chunks.Length > 0
+                ? logStore.Append(agent.AgentId, streamId, chunks, nowUtc)
+                : logStore.Cursors(agent.AgentId, streamId);
+        }
+
         var commands = await repository.GetActiveCommandsAsync(agent.AgentId, cancellationToken);
         var responseCommands = new AgentCommand[commands.Count];
         for (var index = 0; index < commands.Count; index++)
@@ -110,16 +127,15 @@ internal static class AgentSyncEndpoints
         {
             var desiredServices = new List<ServiceDesiredState>(desired.Value.Services.Count);
             var controlPorts = await repository.EnsureControlPortsAsync(agent.NodeId,
-                desired.Value.Services.Where(service => Backends.BackendCapabilities.NeedsControlPort(service.BackendType))
-                    .Select(service => service.Id).ToArray(), cancellationToken);
+                [.. desired.Value.Services.Where(service => BackendCapabilities.NeedsControlPort(service.BackendType)).Select(service => service.Id)], cancellationToken);
             foreach (var service in desired.Value.Services)
             {
-                var users = Backends.BackendCapabilities.IsMultiUser(service.BackendType)
-                    ? (await repository.GetServiceCredentialsAsync(service.Id, true, cancellationToken))
-                        .Select(item => new BackendUser(item.UserId, item.Credential)).ToArray()
+                var users = BackendCapabilities.IsMultiUser(service.BackendType)
+                    ? [.. (await repository.GetServiceCredentialsAsync(service.Id, true, cancellationToken)).Select(item => new BackendUser(item.UserId, item.Credential))]
                     : Array.Empty<BackendUser>();
                 TlsCertificateAsset? tls = null;
-                if (service.BackendType == "hysteria2" && TryCertificateId(service.ConfigJson, out var certificateId))
+                if (BackendDefinitionCatalog.Has(service.BackendType, BackendFeatures.Certificate)
+                    && TryCertificateId(service.ConfigJson, out var certificateId))
                 {
                     var certificate = await repository.GetCertificateWithKeyAsync(certificateId, cancellationToken);
                     if (certificate is not null)
@@ -143,20 +159,36 @@ internal static class AgentSyncEndpoints
             desired.Value.Revision,
             desiredState,
             responseCommands,
-            request.UsageBatches.Select(batch => batch.BatchId).ToArray(),
+            [.. request.UsageBatches.Select(batch => batch.BatchId)],
             SyncIntervalSeconds,
             update,
             // Agents move to the configured panel address once an authenticated sync there succeeds.
             (await repository.GetGlobalSettingsAsync(cancellationToken)).PanelUrl,
-            await repository.GetPortRelaysAsync(agent.NodeId, cancellationToken));
+            await repository.GetPortRelaysAsync(agent.NodeId, cancellationToken),
+            logCursors);
         return Results.Json(response, HyPanelJsonSerializerContext.Default.AgentSyncResponse);
     }
 
-    internal static BackendArtifact[] DistinctArtifacts(IEnumerable<BackendArtifact?> artifacts) => artifacts
+    /// <summary>What the admin UI shows of a sync, minus the metrics that change every time.</summary>
+    internal static string StatusFingerprint(AgentSyncRequest request, string? publicIpv4)
+    {
+        var builder = new StringBuilder();
+        builder.Append(request.AgentVersion).Append('|').Append(request.AppliedRevision).Append('|')
+            .Append(publicIpv4).Append('|').Append(request.PublicIpv6).Append('|')
+            .Append(request.AgentUpdate?.Status).Append('|');
+        foreach (var service in request.Services.OrderBy(service => service.ServiceId))
+            builder.Append(service.ServiceId).Append(':').Append((int)service.Status).Append(':')
+                .Append(service.BackendVersion).Append(':').Append(service.ErrorCode).Append(':')
+                .Append(service.ErrorMessage).Append(':').Append(service.ExitCountryCode).Append(':')
+                .Append(string.Join(',', (service.RouteExitCountries ?? []).Select(item => $"{item.RouteId:N}={item.CountryCode}")))
+                .Append(';');
+        return builder.ToString();
+    }
+
+    internal static BackendArtifact[] DistinctArtifacts(IEnumerable<BackendArtifact?> artifacts) => [.. artifacts
                 .Where(static artifact => artifact is not null)
                 .Cast<BackendArtifact>()
-                .DistinctBy(static artifact => (artifact.BackendType, artifact.Version, artifact.Rid))
-                .ToArray();
+                .DistinctBy(static artifact => (artifact.BackendType, artifact.Version, artifact.Rid))];
 
     private static bool TryCertificateId(string json, out Guid id)
     {
@@ -192,6 +224,20 @@ internal static class AgentSyncEndpoints
             asset.Sha256, asset.Size);
     }
 
+    private static bool IsValidLogs(IReadOnlyList<ServiceLogChunk>? chunks)
+    {
+        if (chunks is null) return true;
+        if (chunks.Count > 128) return false;
+        var lines = 0;
+        foreach (var chunk in chunks)
+        {
+            if (chunk?.Lines is null || chunk.FirstSequence < 1 || chunk.Lines.Count > ServiceLogStore.MaximumLinesPerChunk)
+                return false;
+            lines += chunk.Lines.Count;
+        }
+        return lines <= 8192;
+    }
+
     private static bool IsValidRequest(AgentSyncRequest request, DateTimeOffset nowUtc)
     {
         if (!AdminNodesEndpoints.TryNormalize(request.AgentVersion, MaximumAgentVersionLength, out _)
@@ -207,6 +253,7 @@ internal static class AgentSyncEndpoints
             || request.CommandResults.Count > MaximumCommandResults
             || request.UsageBatches is null
             || request.UsageBatches.Count > 32
+            || !IsValidLogs(request.ServiceLogs)
             || !IsValidMetrics(request.Metrics, nowUtc)
             || !IsValidPublicIpv4(request.PublicIpv4)
             || !IsValidPublicIpv6(request.PublicIpv6)
@@ -292,7 +339,9 @@ internal static class AgentSyncEndpoints
         && HasMaximumLength(state.BackendVersion, MaximumAgentVersionLength) && IsOptionalSha256(state.AppliedConfigSha256)
         && HasMaximumLength(state.ErrorCode, MaximumErrorCodeLength) && HasMaximumLength(state.ErrorMessage, MaximumErrorMessageLength)
         && (state.Traffic is null || (state.Traffic.UploadBytes >= 0 && state.Traffic.DownloadBytes >= 0 && state.Traffic.ObservedAt <= nowUtc + MaximumFutureClockSkew))
-        && (state.ExitCountryCode is null || IsCountryCode(state.ExitCountryCode));
+        && (state.ExitCountryCode is null || IsCountryCode(state.ExitCountryCode))
+        && (state.RouteExitCountries is null || state.RouteExitCountries.Count <= ServiceRoute.MaximumRoutes
+            && state.RouteExitCountries.All(item => item is not null && item.RouteId != Guid.Empty && IsCountryCode(item.CountryCode)));
 
     internal static bool IsValidMetrics(NodeMetrics metrics, DateTimeOffset nowUtc) =>
         metrics.ObservedAt > nowUtc + MaximumFutureClockSkew

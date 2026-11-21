@@ -1,8 +1,8 @@
-namespace HyPanel.Agent;
-
 using System.Text.Json;
 using HyPanel.Agent.Backends;
 using HyPanel.Shared.Contracts;
+
+namespace HyPanel.Agent;
 
 public sealed record UserTrafficCounter(Guid UserId, Guid ServiceId, long UploadBytes, long DownloadBytes);
 
@@ -34,7 +34,7 @@ public sealed class AgentUsageStateStore(AgentEnrollmentOptions options)
                 ValidateState(state);
                 lock (snapshotLock)
                 {
-                    pendingBatches = state.PendingBatches.ToArray();
+                    pendingBatches = [.. state.PendingBatches];
                     lastObserved = state.LastObserved?.ToArray() ?? [];
                     loaded = true;
                 }
@@ -83,8 +83,12 @@ public sealed class AgentUsageStateStore(AgentEnrollmentOptions options)
             {
                 if (batches.Count >= MaxPendingBatches)
                     throw new InvalidOperationException("The pending usage queue is full.");
-                batches = batches.Append(new UsageBatch(Guid.NewGuid(),
-                    observations.Max(item => item.ObservedAt), deltas)).ToArray();
+                batches =
+                [
+                    .. batches,
+                    new UsageBatch(Guid.NewGuid(),
+                        observations.Max(item => item.ObservedAt), deltas),
+                ];
             }
             var observed = counters.Values.OrderBy(item => item.ServiceId).ThenBy(item => item.UserId).ToArray();
             var state = new AgentUsageStoreState(batches, observed);
@@ -140,7 +144,7 @@ public sealed class AgentUsageStateStore(AgentEnrollmentOptions options)
                 throw new InvalidOperationException("Usage state must be loaded before it can be read.");
             }
 
-            return pendingBatches.ToArray();
+            return [.. pendingBatches];
         }
     }
 
@@ -160,7 +164,7 @@ public sealed class AgentUsageStateStore(AgentEnrollmentOptions options)
                     throw new InvalidOperationException("A pending usage batch already has this BatchId.");
                 }
 
-                updated = pendingBatches.Append(batch).ToArray();
+                updated = [.. pendingBatches, batch];
             }
 
             ValidateState(new AgentUsageStoreState(updated));
@@ -188,10 +192,10 @@ public sealed class AgentUsageStateStore(AgentEnrollmentOptions options)
         {
             var acceptedIds = acceptedBatchIds!.ToHashSet();
             IReadOnlyList<UsageBatch> updated;
-            var changed = false;
+            bool changed;
             lock (snapshotLock)
             {
-                updated = pendingBatches.Where(batch => !acceptedIds.Contains(batch.BatchId)).ToArray();
+                updated = [.. pendingBatches.Where(batch => !acceptedIds.Contains(batch.BatchId))];
                 changed = updated.Count != pendingBatches.Count;
             }
 
@@ -283,7 +287,7 @@ public sealed class AgentUsageStateStore(AgentEnrollmentOptions options)
 
     private IReadOnlyList<UserTrafficCounter> GetLastObservedSnapshot()
     {
-        lock (snapshotLock) return lastObserved.ToArray();
+        lock (snapshotLock) return [.. lastObserved];
     }
 
     private static void ValidateAcknowledgements(IReadOnlyList<UsageBatch> sentSnapshot,

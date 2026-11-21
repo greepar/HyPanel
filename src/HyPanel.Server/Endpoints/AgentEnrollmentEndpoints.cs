@@ -1,9 +1,9 @@
-namespace HyPanel.Server.Endpoints;
-
 using HyPanel.Server.Persistence;
 using HyPanel.Shared.Contracts;
 using HyPanel.Shared.Serialization;
 using HyPanel.Shared.Versioning;
+
+namespace HyPanel.Server.Endpoints;
 
 internal static class AgentEnrollmentEndpoints
 {

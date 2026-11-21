@@ -76,8 +76,7 @@ public sealed class AgentUsageStateStoreTests
     {
         Directory.CreateDirectory(dataDirectory);
         var batch = new UsageBatch(Guid.NewGuid(), DateTimeOffset.UtcNow,
-            Enumerable.Range(0, AgentUsageStateStore.MaxRecordsPerBatch + 1)
-                .Select(_ => new UserUsageDelta(Guid.NewGuid(), Guid.NewGuid(), 1, 2)).ToArray());
+            [.. Enumerable.Range(0, AgentUsageStateStore.MaxRecordsPerBatch + 1).Select(_ => new UserUsageDelta(Guid.NewGuid(), Guid.NewGuid(), 1, 2))]);
         await File.WriteAllTextAsync(Path.Combine(dataDirectory, "usage-state.json"),
             JsonSerializer.Serialize(new AgentUsageStoreState([batch])));
 

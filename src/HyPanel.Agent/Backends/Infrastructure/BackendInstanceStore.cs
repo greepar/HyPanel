@@ -1,8 +1,8 @@
-namespace HyPanel.Agent.Backends.Infrastructure;
-
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using HyPanel.Shared.Contracts;
+
+namespace HyPanel.Agent.Backends.Infrastructure;
 
 public sealed record BackendInstanceMetadata(
     ServiceDesiredState DesiredState,

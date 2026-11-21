@@ -1,7 +1,8 @@
-namespace HyPanel.Agent.Updates;
-
 using System.Diagnostics;
 using System.Text.Json;
+using HyPanel.Shared.Contracts;
+
+namespace HyPanel.Agent.Updates;
 
 internal static class AgentUpdateEntrypoint
 {
@@ -37,7 +38,7 @@ internal static class AgentUpdateEntrypoint
         if (!File.Exists(statePath)) return 2;
         var state = JsonSerializer.Deserialize(await File.ReadAllBytesAsync(statePath),
             AgentSyncJsonSerializerContext.Default.AgentUpdateLocalState);
-        if (state is null || state.UpdateId != updateId || state.Status != HyPanel.Shared.Contracts.AgentUpdateStatus.Applying
+        if (state is null || state.UpdateId != updateId || state.Status != AgentUpdateStatus.Applying
             || !Path.GetFullPath(state.InstallPath).Equals(target, StringComparison.OrdinalIgnoreCase)) return 2;
         try
         {
@@ -72,7 +73,10 @@ internal static class AgentUpdateEntrypoint
                 { UseShellExecute = false, CreateNoWindow = true });
                 if (restart is not null) await restart.WaitForExitAsync();
             }
-            catch { }
+            catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException)
+            {
+                // Best effort: the service manager's recovery policy restarts the Agent anyway.
+            }
             return 3;
         }
     }

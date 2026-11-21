@@ -1,7 +1,7 @@
-namespace HyPanel.Server.Endpoints;
-
 using System.Text;
 using HyPanel.Server.Persistence;
+
+namespace HyPanel.Server.Endpoints;
 
 /// <summary>User groups: each group lists the services its members may use.</summary>
 internal static class AdminGroupEndpoints
@@ -22,7 +22,7 @@ internal static class AdminGroupEndpoints
     {
         var access = await authorization.AuthorizeAsync(request, ct);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
-        return Results.Json((await repository.GetGroupsAsync(ct)).Select(Map).ToArray(),
+        return Results.Json([.. (await repository.GetGroupsAsync(ct)).Select(Map)],
             ServerJsonSerializerContext.Default.UserGroupResponseArray);
     }
 
@@ -67,5 +67,5 @@ internal static class AdminGroupEndpoints
     }
 
     private static UserGroupResponse Map(UserGroupRecord group) => new(group.Id, group.Name, group.IsDefault,
-        group.AutoIncludeNewServices, group.ServiceIds.ToArray(), group.MemberCount);
+        group.AutoIncludeNewServices, [.. group.ServiceIds], group.MemberCount);
 }

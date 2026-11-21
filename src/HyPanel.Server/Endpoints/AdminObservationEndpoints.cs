@@ -1,10 +1,11 @@
-namespace HyPanel.Server.Endpoints;
-
 using System.Text.Json;
 using HyPanel.Server.Persistence;
+using HyPanel.Server.Releases;
 using HyPanel.Shared.Contracts;
 using HyPanel.Shared.Serialization;
-using HyPanel.Server.Releases;
+using HyPanel.Shared.Versioning;
+
+namespace HyPanel.Server.Endpoints;
 
 internal static class AdminObservationEndpoints
 {
@@ -72,8 +73,8 @@ internal static class AdminObservationEndpoints
                     ? "WaitingForReconnect" : "Requested";
         if (observation.DesiredAgentVersion is { } completed && observation.ReportedVersion == completed) return "Succeeded";
         if (latest is not null && observation.ReportedVersion is { } current
-            && HyPanel.Shared.Versioning.SemanticVersion.TryParse(current, out var currentVersion)
-            && HyPanel.Shared.Versioning.SemanticVersion.TryParse(latest, out var latestVersion)
+            && SemanticVersion.TryParse(current, out var currentVersion)
+            && SemanticVersion.TryParse(latest, out var latestVersion)
             && currentVersion.CompareTo(latestVersion) < 0) return "Available";
         return "UpToDate";
     }

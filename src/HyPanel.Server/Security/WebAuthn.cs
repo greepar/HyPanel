@@ -1,11 +1,11 @@
-namespace HyPanel.Server.Security;
-
 using System.Buffers.Binary;
 using System.Buffers.Text;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+
+namespace HyPanel.Server.Security;
 
 /// <summary>
 /// Minimal WebAuthn (passkey) relying party. Registration requests no attestation and takes the public key from
@@ -18,7 +18,7 @@ internal sealed class WebAuthn(TimeProvider time)
     public const int Rs256 = -257;
     private const int MaxPendingChallenges = 2048;
     private static readonly TimeSpan ChallengeLifetime = TimeSpan.FromMinutes(5);
-    private readonly ConcurrentDictionary<string, Challenge> _challenges = new();
+    private readonly ConcurrentDictionary<string, Challenge> challenges = new();
 
     private sealed record Challenge(byte[] Value, Guid? UserId, DateTimeOffset ExpiresAtUtc);
 
@@ -26,18 +26,18 @@ internal sealed class WebAuthn(TimeProvider time)
     public (string Id, string Value)? CreateChallenge(Guid? userId)
     {
         var now = time.GetUtcNow();
-        foreach (var (key, pending) in _challenges)
-            if (pending.ExpiresAtUtc <= now) _challenges.TryRemove(key, out _);
-        if (_challenges.Count >= MaxPendingChallenges) return null;
+        foreach (var (key, pending) in challenges)
+            if (pending.ExpiresAtUtc <= now) challenges.TryRemove(key, out _);
+        if (challenges.Count >= MaxPendingChallenges) return null;
         var value = RandomNumberGenerator.GetBytes(32);
         var id = Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(16));
-        _challenges[id] = new Challenge(value, userId, now + ChallengeLifetime);
+        challenges[id] = new Challenge(value, userId, now + ChallengeLifetime);
         return (id, Base64Url.EncodeToString(value));
     }
 
     /// <summary>Consumes the challenge; it must exist, be unexpired and belong to <paramref name="userId"/>.</summary>
     public byte[]? TakeChallenge(string? id, Guid? userId) =>
-        id is not null && _challenges.TryRemove(id, out var pending) && pending.ExpiresAtUtc > time.GetUtcNow() &&
+        id is not null && challenges.TryRemove(id, out var pending) && pending.ExpiresAtUtc > time.GetUtcNow() &&
         pending.UserId == userId
             ? pending.Value
             : null;

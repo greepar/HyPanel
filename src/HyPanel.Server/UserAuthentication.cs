@@ -1,7 +1,7 @@
-namespace HyPanel.Server;
-
-using Microsoft.Net.Http.Headers;
 using HyPanel.Server.Persistence;
+using Microsoft.Net.Http.Headers;
+
+namespace HyPanel.Server;
 
 internal sealed class UserAuthentication(SqliteServerRepository repository)
 {

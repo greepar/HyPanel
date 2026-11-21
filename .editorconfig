@@ -1,0 +1,24 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+
+[*.{ts,tsx,css,json,yml,yaml,md,vue}]
+indent_size = 2
+
+[*.cs]
+# File-scoped namespaces with using directives above them (Rider, ReSharper and Roslyn all read these).
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_using_directive_placement = outside_namespace:warning
+dotnet_sort_system_directives_first = true
+csharp_style_var_for_built_in_types = true:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = true:suggestion
+# Several folders deliberately share their project's root namespace (e.g. the Agent's Sync and Enrollment types live in
+# HyPanel.Agent); folder names are organisation, not API.
+dotnet_style_namespace_match_folder = false
+resharper_check_namespace_highlighting = none

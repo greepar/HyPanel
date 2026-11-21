@@ -1,8 +1,8 @@
-namespace HyPanel.Agent;
-
 using System.Text.Json.Serialization;
-using HyPanel.Shared.Contracts;
 using HyPanel.Agent.Updates;
+using HyPanel.Shared.Contracts;
+
+namespace HyPanel.Agent;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, UseStringEnumConverter = true)]
 [JsonSerializable(typeof(AgentLocalState))]

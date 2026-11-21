@@ -1,7 +1,8 @@
-namespace HyPanel.Server.Endpoints;
-
 using HyPanel.Server.Persistence;
 using HyPanel.Server.Releases;
+using HyPanel.Shared.Serialization;
+
+namespace HyPanel.Server.Endpoints;
 
 internal static class ReleaseEndpoints
 {
@@ -22,7 +23,7 @@ internal static class ReleaseEndpoints
         catalog.Manifest is null
             ? Results.NotFound()
             : Results.Json(catalog.Manifest,
-                HyPanel.Shared.Serialization.HyPanelJsonSerializerContext.Default.AgentReleaseManifest);
+                HyPanelJsonSerializerContext.Default.AgentReleaseManifest);
 
     private static IResult GetAsset(string fileName, ReleaseCatalog catalog)
     {

@@ -1,9 +1,9 @@
-namespace HyPanel.Server.Endpoints;
-
 using System.Security.Cryptography;
 using System.Text;
 using HyPanel.Server.Persistence;
 using Microsoft.Data.Sqlite;
+
+namespace HyPanel.Server.Endpoints;
 
 internal static class UserEndpoints
 {
@@ -93,8 +93,7 @@ internal static class UserEndpoints
         var access = await authorization.AuthorizeAsync(request, ct);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
         var groups = await repo.GetUserGroupMapAsync(ct);
-        return Results.Json((await repo.GetUsersAsync(ct))
-                .Select(user => ToResponse(user) with { GroupId = groups.GetValueOrDefault(user.Id) }).ToArray(),
+        return Results.Json([.. (await repo.GetUsersAsync(ct)).Select(user => ToResponse(user) with { GroupId = groups.GetValueOrDefault(user.Id) })],
             ServerJsonSerializerContext.Default.UserResponseArray);
     }
 
@@ -173,7 +172,7 @@ internal static class UserEndpoints
     {
         var access = await authorization.AuthorizeAsync(request, ct);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
-        return Results.Json((await r.GetBoundServicesAsync(id, ct)).ToArray(),
+        return Results.Json([.. (await r.GetBoundServicesAsync(id, ct))],
             ServerJsonSerializerContext.Default.GuidArray);
     }
 
@@ -200,7 +199,7 @@ internal static class UserEndpoints
                 ? new UserServiceAccessResponse(serviceId, "Unsupported", false, false, false)
                 : new UserServiceAccessResponse(serviceId, credential.Status, true, true, true));
         }
-        return Results.Json(rows.ToArray(), ServerJsonSerializerContext.Default.UserServiceAccessResponseArray);
+        return Results.Json([.. rows], ServerJsonSerializerContext.Default.UserServiceAccessResponseArray);
     }
 
     private static async Task<IResult> UnbindAsync(Guid id, Guid serviceId, HttpRequest request,
@@ -234,7 +233,7 @@ internal static class UserEndpoints
     {
         var access = await authorization.AuthorizeAsync(request, ct);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
-        return Results.Json((await r.GetUsageTotalsAsync(userId, serviceId, ct)).Select(ToResponse).ToArray(),
+        return Results.Json([.. (await r.GetUsageTotalsAsync(userId, serviceId, ct)).Select(ToResponse)],
             ServerJsonSerializerContext.Default.UsageTotalResponseArray);
     }
 
@@ -244,7 +243,7 @@ internal static class UserEndpoints
         var user = await a.AuthenticateAsync(request, ct);
         return user is null
             ? Results.Unauthorized()
-            : Results.Json((await r.GetUsageTotalsAsync(user.Id, null, ct)).Select(ToResponse).ToArray(),
+            : Results.Json([.. (await r.GetUsageTotalsAsync(user.Id, null, ct)).Select(ToResponse)],
                 ServerJsonSerializerContext.Default.UsageTotalResponseArray);
     }
 

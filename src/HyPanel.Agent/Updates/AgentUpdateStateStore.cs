@@ -1,7 +1,7 @@
-namespace HyPanel.Agent.Updates;
-
 using System.Text.Json;
 using HyPanel.Shared.Contracts;
+
+namespace HyPanel.Agent.Updates;
 
 public sealed record AgentUpdateLocalState(
     Guid UpdateId,

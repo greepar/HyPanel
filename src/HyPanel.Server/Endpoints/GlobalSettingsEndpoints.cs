@@ -1,8 +1,8 @@
-namespace HyPanel.Server.Endpoints;
-
 using HyPanel.Server.Persistence;
 using HyPanel.Server.Releases;
 using HyPanel.Server.Updates;
+
+namespace HyPanel.Server.Endpoints;
 
 internal sealed record UpdateGlobalSettingsRequest(string AgentUpdateDefaultPolicy,
     string BackendUpdateDefaultPolicy, string? GithubMirrorBaseUrl, string? PanelUrl = null);

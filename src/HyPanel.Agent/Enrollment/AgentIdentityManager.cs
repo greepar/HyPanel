@@ -1,6 +1,6 @@
-namespace HyPanel.Agent;
-
 using HyPanel.Shared.Contracts;
+
+namespace HyPanel.Agent;
 
 public sealed class AgentIdentityManager(
     AgentCredentialStore credentialStore,

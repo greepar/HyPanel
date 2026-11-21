@@ -38,7 +38,7 @@ public sealed record UpstreamProxy(string Type, string Host, int Port, string? U
             return Fail("上游代理的用户名和密码不能包含控制字符，且不能超过 255 个字符。", out error);
         if (!string.IsNullOrEmpty(password) && string.IsNullOrEmpty(username))
             return Fail("填写了上游代理密码时，还需要填写用户名。", out error);
-        proxy = new UpstreamProxy(type, host!, port!.Value, NullIfEmpty(username), NullIfEmpty(password));
+        proxy = new UpstreamProxy(type, host!, port.Value, NullIfEmpty(username), NullIfEmpty(password));
         return true;
     }
 

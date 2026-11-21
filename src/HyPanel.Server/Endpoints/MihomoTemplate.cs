@@ -1,6 +1,6 @@
-namespace HyPanel.Server.Endpoints;
-
 using System.Text;
+
+namespace HyPanel.Server.Endpoints;
 
 /// <summary>
 /// Mihomo subscription template. A template is ordinary Mihomo YAML with two placeholders:

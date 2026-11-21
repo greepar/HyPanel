@@ -13,7 +13,9 @@ public sealed record AgentSyncRequest(
     string? CountryCode = null,
     bool SupportsAvx = false,
     IReadOnlyList<BackendArtifact>? AppliedBackendArtifacts = null,
-    string? PublicIpv6 = null);
+    string? PublicIpv6 = null,
+    Guid? LogStreamId = null,
+    IReadOnlyList<ServiceLogChunk>? ServiceLogs = null);
 
 public sealed record AgentSyncResponse(
     long DesiredRevision,
@@ -23,7 +25,25 @@ public sealed record AgentSyncResponse(
     int SyncIntervalSeconds,
     AgentUpdateDescriptor? AgentUpdate = null,
     string? PanelUrl = null,
-    IReadOnlyList<PortRelayRule>? Relays = null);
+    IReadOnlyList<PortRelayRule>? Relays = null,
+    IReadOnlyList<ServiceLogCursor>? LogCursors = null);
+
+/// <summary>
+/// New output lines of one service, numbered by the Agent. <see cref="FirstSequence"/> is the number of the first
+/// line; the rest follow without gaps. Numbers restart whenever <see cref="AgentSyncRequest.LogStreamId"/> changes
+/// (the Agent process restarted).
+/// </summary>
+public sealed record ServiceLogChunk(Guid ServiceId, long FirstSequence, IReadOnlyList<string> Lines);
+
+/// <summary>
+/// The last line number of a service the Panel holds for the Agent's current log stream. A Panel that knows nothing
+/// of the stream (it restarted) answers with no cursors, so the Agent sends its whole buffer again. Null means the
+/// Panel does not take live logs (older Panel).
+/// </summary>
+public sealed record ServiceLogCursor(Guid ServiceId, long Sequence);
+
+/// <summary>Answer of the Agent's long-poll watch: true when the Panel has something new for the next sync.</summary>
+public sealed record AgentWatchResponse(bool Changed);
 
 /// <summary>
 /// A TCP port this node forwards to the node that really runs the service. Sent on every sync, separately from the
@@ -161,7 +181,11 @@ public sealed record ServiceRuntimeState(
     DateTimeOffset ObservedAt,
     string? ErrorCode,
     string? ErrorMessage,
-    string? ExitCountryCode = null);
+    string? ExitCountryCode = null,
+    IReadOnlyList<RouteExitCountry>? RouteExitCountries = null);
+
+/// <summary>The country an extra line of a service exits from through its own upstream proxy.</summary>
+public sealed record RouteExitCountry(Guid RouteId, string CountryCode);
 
 public sealed record BackendTrafficSnapshot(
     long UploadBytes,

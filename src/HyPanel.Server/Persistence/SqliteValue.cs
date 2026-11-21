@@ -1,6 +1,6 @@
-namespace HyPanel.Server.Persistence;
-
 using System.Globalization;
+
+namespace HyPanel.Server.Persistence;
 
 internal static class SqliteValue
 {

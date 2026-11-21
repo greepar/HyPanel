@@ -1,8 +1,8 @@
-namespace HyPanel.Agent;
-
 using System.Diagnostics;
 using System.Net.NetworkInformation;
 using HyPanel.Shared.Contracts;
+
+namespace HyPanel.Agent;
 
 public sealed class NodeMetricsCollector(AgentEnrollmentOptions options, TimeProvider timeProvider)
 {
@@ -45,18 +45,18 @@ public sealed class NodeMetricsCollector(AgentEnrollmentOptions options, TimePro
     {
         try
         {
-            var properties = System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties();
+            var properties = IPGlobalProperties.GetIPGlobalProperties();
             return (Ports(properties.GetActiveTcpListeners()), Ports(properties.GetActiveUdpListeners()));
         }
-        catch (Exception exception) when (exception is System.Net.NetworkInformation.NetworkInformationException
+        catch (Exception exception) when (exception is NetworkInformationException
                                               or PlatformNotSupportedException or IOException
                                               or UnauthorizedAccessException)
         {
             return (null, null);
         }
 
-        static int[] Ports(System.Net.IPEndPoint[] endpoints) => endpoints.Select(endpoint => endpoint.Port)
-            .Where(port => port is >= 1 and <= 65_535).Distinct().Order().Take(MaximumReportedPorts).ToArray();
+        static int[] Ports(System.Net.IPEndPoint[] endpoints) => [.. endpoints.Select(endpoint => endpoint.Port)
+            .Where(port => port is >= 1 and <= 65_535).Distinct().Order().Take(MaximumReportedPorts)];
     }
 
     private double CollectPortableCpuPercent(DateTimeOffset observedAt)

@@ -1,6 +1,6 @@
-namespace HyPanel.Server.Endpoints;
-
 using HyPanel.Server.Persistence;
+
+namespace HyPanel.Server.Endpoints;
 
 internal sealed record SubscriptionTemplateRequest(string Template);
 internal sealed record SubscriptionTemplateResponse(string Template, bool IsCustom, string DefaultTemplate);

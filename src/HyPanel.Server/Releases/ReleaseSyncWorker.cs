@@ -1,10 +1,10 @@
-namespace HyPanel.Server.Releases;
-
 using System.Security.Cryptography;
 using System.Text.Json;
+using HyPanel.Server.Persistence;
 using HyPanel.Shared.Contracts;
 using HyPanel.Shared.Serialization;
-using HyPanel.Server.Persistence;
+
+namespace HyPanel.Server.Releases;
 
 internal sealed class ReleaseSyncWorker(
     ILogger<ReleaseSyncWorker> logger,

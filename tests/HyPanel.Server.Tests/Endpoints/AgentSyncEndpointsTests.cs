@@ -1,7 +1,7 @@
+using System.Net;
 using HyPanel.Server.Endpoints;
 using HyPanel.Shared.Contracts;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using System.Net;
 
 namespace HyPanel.Server.Tests.Endpoints;
 

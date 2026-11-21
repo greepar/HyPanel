@@ -1,9 +1,9 @@
-namespace HyPanel.Server.Endpoints;
-
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using HyPanel.Server.Persistence;
 using HyPanel.Server.Security;
+
+namespace HyPanel.Server.Endpoints;
 
 /// <summary>
 /// Kind: <c>Upload</c> (PEM pair), <c>Path</c> (files on the node + domain) or <c>Acme</c> (domain, email, challenge).

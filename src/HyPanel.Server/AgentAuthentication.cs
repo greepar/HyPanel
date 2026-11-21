@@ -1,8 +1,8 @@
-namespace HyPanel.Server;
-
 using System.Security.Cryptography;
 using System.Text;
 using HyPanel.Server.Persistence;
+
+namespace HyPanel.Server;
 
 internal sealed class AgentAuthentication(SqliteServerRepository repository)
 {

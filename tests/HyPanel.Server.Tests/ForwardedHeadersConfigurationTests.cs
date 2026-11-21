@@ -1,9 +1,9 @@
-namespace HyPanel.Server.Tests;
-
 using System.Net;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+
+namespace HyPanel.Server.Tests;
 
 [TestClass]
 public sealed class ForwardedHeadersConfigurationTests

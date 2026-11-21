@@ -1,13 +1,13 @@
-namespace HyPanel.Server;
-
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Net.Http.Headers;
 
+namespace HyPanel.Server;
+
 internal sealed class AdminTokenAuthentication
 {
     private const string DevelopmentOverrideKey = "HyPanel:AllowInsecureDevelopmentAdminToken";
-    private readonly byte[] _tokenHash;
+    private readonly byte[] tokenHash;
 
     public AdminTokenAuthentication(IConfiguration configuration, IHostEnvironment environment)
     {
@@ -24,7 +24,7 @@ internal sealed class AdminTokenAuthentication
             throw new InvalidOperationException("HYPANEL_ADMIN_TOKEN must contain at least 32 characters and 32 UTF-8 bytes.");
         }
 
-        _tokenHash = SHA256.HashData(Encoding.UTF8.GetBytes(token));
+        tokenHash = SHA256.HashData(Encoding.UTF8.GetBytes(token));
     }
 
     public bool IsAuthenticated(HttpRequest request)
@@ -47,5 +47,5 @@ internal sealed class AdminTokenAuthentication
 
     public bool Matches(string? token) =>
         !string.IsNullOrEmpty(token) &&
-        CryptographicOperations.FixedTimeEquals(_tokenHash, SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+        CryptographicOperations.FixedTimeEquals(tokenHash, SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 }

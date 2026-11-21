@@ -1,7 +1,7 @@
-namespace HyPanel.Server.Persistence;
-
 using System.Text.Json;
 using HyPanel.Shared.Contracts;
+
+namespace HyPanel.Server.Persistence;
 
 internal sealed partial class SqliteServerRepository
 {

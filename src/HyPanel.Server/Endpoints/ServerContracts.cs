@@ -1,6 +1,6 @@
-namespace HyPanel.Server.Endpoints;
-
 using HyPanel.Shared.Contracts;
+
+namespace HyPanel.Server.Endpoints;
 
 internal sealed record ApiErrorResponse(string Error);
 
@@ -72,7 +72,8 @@ internal sealed record UpdateServiceRequest(
     string BackendVersion,
     bool Enabled,
     int ConfigSchemaVersion,
-    string ConfigJson);
+    string ConfigJson,
+    string? BackendType = null);
 
 internal sealed record SetServiceEnabledRequest(bool Enabled);
 internal sealed record SetBackendUpdatePolicyRequest(string Policy);

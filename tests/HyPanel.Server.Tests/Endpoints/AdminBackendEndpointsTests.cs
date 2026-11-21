@@ -1,9 +1,9 @@
-namespace HyPanel.Server.Tests.Endpoints;
-
 using System.Text.Json;
 using HyPanel.Server.Backends;
 using HyPanel.Server.Endpoints;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+
+namespace HyPanel.Server.Tests.Endpoints;
 
 [TestClass]
 public sealed class AdminBackendEndpointsTests
@@ -21,7 +21,7 @@ public sealed class AdminBackendEndpointsTests
         StringAssert.Contains(json, "\"backendType\":\"hysteria2\"");
         StringAssert.Contains(json, "\"listenPort\"");
         StringAssert.Contains(json, "\"generate\":true");
-        StringAssert.Contains(json, "\"fixed\":\"2022-blake3-aes-128-gcm\"");
+        StringAssert.Contains(json, "\"fixed\":\"xtls-rprx-vision\"");
     }
 
     [TestMethod]

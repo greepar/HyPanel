@@ -1,6 +1,6 @@
-namespace HyPanel.Server.Endpoints;
-
 using System.Reflection;
+
+namespace HyPanel.Server.Endpoints;
 
 internal static class EmbeddedWebEndpoints
 {
@@ -13,7 +13,7 @@ internal static class EmbeddedWebEndpoints
 
     public static void Map(IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/", static (HttpContext context) =>
+        endpoints.MapGet("/", static context =>
         {
             ApplyIndexCacheHeaders(context.Response);
             return WriteResourceAsync(context, IndexResourceName, "text/html; charset=utf-8");

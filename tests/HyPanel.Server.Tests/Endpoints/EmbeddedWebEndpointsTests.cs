@@ -1,8 +1,8 @@
-namespace HyPanel.Server.Tests.Endpoints;
-
 using HyPanel.Server.Endpoints;
 using Microsoft.AspNetCore.Http;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+
+namespace HyPanel.Server.Tests.Endpoints;
 
 [TestClass]
 public sealed class EmbeddedWebEndpointsTests

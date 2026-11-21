@@ -1,9 +1,10 @@
-namespace HyPanel.Server.Persistence;
-
 using System.Security.Cryptography;
-using HyPanel.Shared.Contracts;
 using HyPanel.Server.Security;
+using HyPanel.Shared.Contracts;
+using HyPanel.Shared.Serialization;
 using Microsoft.Data.Sqlite;
+
+namespace HyPanel.Server.Persistence;
 
 internal sealed partial class SqliteServerRepository(
     SqliteConnectionFactory connectionFactory,
@@ -216,10 +217,10 @@ internal sealed partial class SqliteServerRepository(
         try
         {
             var node = nodeId.ToString("D");
-            async Task<int> ExecAsync(string sql)
+            async Task<int> ExecAsync(SqliteConnection db, SqliteTransaction tx, string sql)
             {
-                await using var command = connection.CreateCommand();
-                command.Transaction = transaction;
+                await using var command = db.CreateCommand();
+                command.Transaction = tx;
                 command.CommandText = sql;
                 command.Parameters.AddWithValue("@node", node);
                 command.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
@@ -228,22 +229,22 @@ internal sealed partial class SqliteServerRepository(
 
             const string services = "SELECT id FROM service_instances WHERE node_id = @node";
             const string agents = "SELECT id FROM agents WHERE node_id = @node";
-            await ExecAsync($"DELETE FROM agent_commands WHERE agent_id IN ({agents}) OR target_service_id IN ({services});");
+            await ExecAsync(connection, transaction, $"DELETE FROM agent_commands WHERE agent_id IN ({agents}) OR target_service_id IN ({services});");
             foreach (var table in new[]
                      {
                          "usage_totals", "user_service_credentials", "user_service_bindings", "service_public_endpoints",
                          "service_runtime_states", "user_group_services"
                      })
-                await ExecAsync($"DELETE FROM {table} WHERE service_id IN ({services});");
-            await ExecAsync("DELETE FROM service_instances WHERE node_id = @node;");
-            await ExecAsync($"DELETE FROM usage_batches WHERE agent_id IN ({agents});");
-            await ExecAsync("DELETE FROM enrollment_tokens WHERE node_id = @node;");
-            await ExecAsync($"""
+                await ExecAsync(connection, transaction, $"DELETE FROM {table} WHERE service_id IN ({services});");
+            await ExecAsync(connection, transaction, "DELETE FROM service_instances WHERE node_id = @node;");
+            await ExecAsync(connection, transaction, $"DELETE FROM usage_batches WHERE agent_id IN ({agents});");
+            await ExecAsync(connection, transaction, "DELETE FROM enrollment_tokens WHERE node_id = @node;");
+            await ExecAsync(connection, transaction, $"""
                 INSERT OR REPLACE INTO revoked_agents (agent_id, secret_hash, revoked_at_utc)
                 SELECT id, secret_hash, @now FROM agents WHERE node_id = @node;
                 """);
-            await ExecAsync("DELETE FROM agents WHERE node_id = @node;");
-            if (await ExecAsync("DELETE FROM nodes WHERE id = @node;") != 1)
+            await ExecAsync(connection, transaction, "DELETE FROM agents WHERE node_id = @node;");
+            if (await ExecAsync(connection, transaction, "DELETE FROM nodes WHERE id = @node;") != 1)
             {
                 await transaction.RollbackAsync(cancellationToken);
                 return false;
@@ -752,11 +753,12 @@ internal sealed partial class SqliteServerRepository(
         CancellationToken cancellationToken) =>
         await MutateServiceAsync(service.NodeId, async (connection, transaction) =>
         {
+            await ReencryptCredentialsAsync(connection, transaction, service, cancellationToken);
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
                                   UPDATE service_instances
-                                  SET name = @name, backend_version = @backendVersion, enabled = @enabled, config_schema_version = @configSchemaVersion, config_json = @configJson, updated_at_utc = @updatedAtUtc
+                                  SET name = @name, backend_type = @backendType, backend_version = @backendVersion, enabled = @enabled, config_schema_version = @configSchemaVersion, config_json = @configJson, updated_at_utc = @updatedAtUtc
                                   WHERE id = @id AND node_id = @nodeId;
                                   """;
             AddServiceParameters(command, service);
@@ -1127,7 +1129,7 @@ internal sealed partial class SqliteServerRepository(
         CancellationToken cancellationToken)
     {
         var commands = await GetActiveCommandsAsync(agentId, cancellationToken);
-        return commands.Where(static command => command.Type == "RunHealthCheck").ToArray();
+        return [.. commands.Where(static command => command.Type == "RunHealthCheck")];
     }
 
     public async Task<IReadOnlyList<AgentCommandRecord>> GetServiceDiagnosticsAsync(Guid nodeId, Guid serviceId,
@@ -1280,10 +1282,10 @@ internal sealed partial class SqliteServerRepository(
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-                              INSERT INTO service_runtime_states (service_id, status, backend_version, applied_config_sha256, traffic_upload_bytes, traffic_download_bytes, traffic_observed_at_utc, observed_at_utc, error_code, error_message, exit_country_code)
-                              SELECT @serviceId, @status, @backendVersion, @appliedConfigSha256, @trafficUploadBytes, @trafficDownloadBytes, @trafficObservedAtUtc, @observedAtUtc, @errorCode, @errorMessage, @exitCountryCode
+                              INSERT INTO service_runtime_states (service_id, status, backend_version, applied_config_sha256, traffic_upload_bytes, traffic_download_bytes, traffic_observed_at_utc, observed_at_utc, error_code, error_message, exit_country_code, route_exit_countries_json)
+                              SELECT @serviceId, @status, @backendVersion, @appliedConfigSha256, @trafficUploadBytes, @trafficDownloadBytes, @trafficObservedAtUtc, @observedAtUtc, @errorCode, @errorMessage, @exitCountryCode, @routeExitCountries
                               WHERE EXISTS (SELECT 1 FROM service_instances s INNER JOIN agents a ON a.node_id = s.node_id WHERE s.id = @serviceId AND a.id = @agentId)
-                              ON CONFLICT(service_id) DO UPDATE SET status = excluded.status, backend_version = excluded.backend_version, applied_config_sha256 = excluded.applied_config_sha256, traffic_upload_bytes = excluded.traffic_upload_bytes, traffic_download_bytes = excluded.traffic_download_bytes, traffic_observed_at_utc = excluded.traffic_observed_at_utc, observed_at_utc = excluded.observed_at_utc, error_code = excluded.error_code, error_message = excluded.error_message, exit_country_code = excluded.exit_country_code;
+                              ON CONFLICT(service_id) DO UPDATE SET status = excluded.status, backend_version = excluded.backend_version, applied_config_sha256 = excluded.applied_config_sha256, traffic_upload_bytes = excluded.traffic_upload_bytes, traffic_download_bytes = excluded.traffic_download_bytes, traffic_observed_at_utc = excluded.traffic_observed_at_utc, observed_at_utc = excluded.observed_at_utc, error_code = excluded.error_code, error_message = excluded.error_message, exit_country_code = excluded.exit_country_code, route_exit_countries_json = excluded.route_exit_countries_json;
                               """;
         command.Parameters.AddWithValue("@serviceId", state.ServiceId.ToString("D"));
         command.Parameters.AddWithValue("@agentId", agentId.ToString("D"));
@@ -1300,12 +1302,29 @@ internal sealed partial class SqliteServerRepository(
         command.Parameters.AddWithValue("@errorCode", SqliteValue.ToDbValue(state.ErrorCode));
         command.Parameters.AddWithValue("@errorMessage", SqliteValue.ToDbValue(state.ErrorMessage));
         command.Parameters.AddWithValue("@exitCountryCode", SqliteValue.ToDbValue(state.ExitCountryCode));
+        command.Parameters.AddWithValue("@routeExitCountries", state.RouteExitCountries is { Count: > 0 } routeCountries
+            ? System.Text.Json.JsonSerializer.Serialize(routeCountries.ToArray(),
+                HyPanelJsonSerializerContext.Default.RouteExitCountryArray)
+            : DBNull.Value);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
+
+    /// <summary>
+    /// Usage batches observed longer ago than this are acknowledged without being counted. Their receipts may already
+    /// be pruned (<see cref="UsageReceiptRetention"/>), so counting them could count a resend twice.
+    /// </summary>
+    internal static readonly TimeSpan StaleUsageAge = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// How long a batch receipt is kept to recognise resends. One day longer than <see cref="StaleUsageAge"/>, so a
+    /// batch whose receipt is gone is always stale, even from an Agent whose clock runs a few minutes ahead.
+    /// </summary>
+    internal static readonly TimeSpan UsageReceiptRetention = TimeSpan.FromDays(8);
 
     private async Task<bool> RecordUsageBatchAsync(SqliteConnection connection, SqliteTransaction transaction,
         Guid agentId, UsageBatch batch, CancellationToken cancellationToken)
     {
+        if (batch.ObservedAt < timeProvider.GetUtcNow() - StaleUsageAge) return true;
         // Deleted services/users may leave durable usage queued on an Agent. Acknowledge those records
         // without totals, while retaining ownership/binding validation for all remaining records.
         var currentRecords = new List<UserUsageDelta>();
@@ -1406,6 +1425,51 @@ internal sealed partial class SqliteServerRepository(
         {
             await transaction.RollbackAsync(CancellationToken.None);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// When a service moves to another engine of the same protocol, its users' credentials stay the same (clients keep
+    /// working) but are encrypted under the backend type, so they are re-encrypted for the new one.
+    /// </summary>
+    private async Task ReencryptCredentialsAsync(SqliteConnection connection, SqliteTransaction transaction,
+        ServiceInstanceRecord service, CancellationToken cancellationToken)
+    {
+        var rows = new List<(string UserId, string BackendType, ProtectedCredential Value)>();
+        await using (var select = connection.CreateCommand())
+        {
+            select.Transaction = transaction;
+            select.CommandText = """
+                                 SELECT user_id, backend_type, nonce, ciphertext, tag FROM user_service_credentials
+                                 WHERE service_id = @id AND backend_type <> @backendType;
+                                 """;
+            select.Parameters.AddWithValue("@id", service.Id.ToString("D"));
+            select.Parameters.AddWithValue("@backendType", service.BackendType);
+            await using var reader = await select.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                rows.Add((reader.GetString(0), reader.GetString(1),
+                    new ProtectedCredential((byte[])reader[2], (byte[])reader[3], (byte[])reader[4])));
+        }
+
+        foreach (var (userId, backendType, value) in rows)
+        {
+            var user = SqliteValue.ToGuid(userId);
+            var plain = credentialProtector.Unprotect(user, service.Id, backendType, value);
+            var protectedValue = credentialProtector.Protect(user, service.Id, service.BackendType, plain);
+            await using var update = connection.CreateCommand();
+            update.Transaction = transaction;
+            update.CommandText = """
+                                 UPDATE user_service_credentials
+                                 SET backend_type = @backendType, nonce = @nonce, ciphertext = @ciphertext, tag = @tag
+                                 WHERE user_id = @user AND service_id = @id;
+                                 """;
+            update.Parameters.AddWithValue("@backendType", service.BackendType);
+            update.Parameters.AddWithValue("@nonce", protectedValue.Nonce);
+            update.Parameters.AddWithValue("@ciphertext", protectedValue.Ciphertext);
+            update.Parameters.AddWithValue("@tag", protectedValue.Tag);
+            update.Parameters.AddWithValue("@user", userId);
+            update.Parameters.AddWithValue("@id", service.Id.ToString("D"));
+            await update.ExecuteNonQueryAsync(cancellationToken);
         }
     }
 

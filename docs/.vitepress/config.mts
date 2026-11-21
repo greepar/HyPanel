@@ -36,7 +36,10 @@ export default defineConfig({
       },
       {
         text: '其他',
-        items: [{ text: '常见问题', link: '/guide/faq' }],
+        items: [
+          { text: '常见问题', link: '/guide/faq' },
+          { text: '添加新协议（开发者）', link: '/guide/backends' },
+        ],
       },
     ],
     socialLinks: [{ icon: 'github', link: 'https://github.com/greepar/HyPanel' }],

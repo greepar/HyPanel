@@ -1,8 +1,8 @@
-namespace HyPanel.Agent.Updates;
-
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
+
+namespace HyPanel.Agent.Updates;
 
 internal static partial class UnixProcess
 {

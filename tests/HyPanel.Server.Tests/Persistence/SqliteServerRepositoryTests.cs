@@ -1,12 +1,12 @@
-using HyPanel.Server.Persistence;
-using HyPanel.Server.Endpoints;
-using HyPanel.Server.Security;
-using HyPanel.Shared.Contracts;
 using System.Text;
 using System.Text.Json;
+using HyPanel.Server.Endpoints;
+using HyPanel.Server.Persistence;
+using HyPanel.Server.Security;
+using HyPanel.Shared.Contracts;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
-using Microsoft.AspNetCore.Http;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace HyPanel.Server.Tests.Persistence;
@@ -77,7 +77,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L), (22L, 1L), (23L, 1L), (24L, 1L), (25L, 1L), (26L, 1L), (27L, 1L), (28L, 1L), (29L, 1L), (30L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L), (22L, 1L), (23L, 1L), (24L, 1L), (25L, 1L), (26L, 1L), (27L, 1L), (28L, 1L), (29L, 1L), (30L, 1L), (31L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -132,8 +132,7 @@ public sealed class SqliteServerRepositoryTests
             var node = Guid.NewGuid();
             await fixture.Repository.CreateNodeAsync(node, "node", CancellationToken.None);
             var now = fixture.Time.GetUtcNow();
-            // xray-ss runs the xray binary, so its version keeps the xray release.
-            await fixture.Repository.CreateServiceAsync(new ServiceInstanceRecord(Guid.NewGuid(), node, "ss", "xray-ss",
+            await fixture.Repository.CreateServiceAsync(new ServiceInstanceRecord(Guid.NewGuid(), node, "reality", "xray",
                 "2.0.0", true, 1, "{}", now, now), CancellationToken.None);
             var catalog = new HyPanel.Server.Releases.BackendArtifactCatalog(new ConfigurationBuilder()
                 .AddInMemoryCollection(new Dictionary<string, string?> { ["HyPanel:BackendReleasesDirectory"] = releases })
@@ -228,29 +227,29 @@ public sealed class SqliteServerRepositoryTests
         var third = await fixture.Repository.CreateServiceAsync(CreateService(nodeOne, Guid.NewGuid(), "third"),
             CancellationToken.None);
 
-        var result = await fixture.Repository.SetServicesEnabledBatchAsync(new[]
-        {
+        var result = await fixture.Repository.SetServicesEnabledBatchAsync(
+        [
             new BatchServiceEnabledItemRecord(nodeOne, first.Service!.Id, false),
             new BatchServiceEnabledItemRecord(nodeOne, third.Service!.Id, false),
             new BatchServiceEnabledItemRecord(nodeTwo, second.Service!.Id, false),
-        }, CancellationToken.None);
+        ], CancellationToken.None);
         Assert.IsNotNull(result);
         CollectionAssert.AreEqual(new[] { nodeOne, nodeTwo }.Order().ToArray(), result.Select(x => x.NodeId).ToArray());
         CollectionAssert.AreEquivalent(new[] { 3L, 2L }, result.Select(x => x.Revision).ToArray());
 
         var before = await fixture.Repository.GetNodeAsync(nodeOne, CancellationToken.None);
-        Assert.IsNull(await fixture.Repository.SetServicesEnabledBatchAsync(new[]
-        {
+        Assert.IsNull(await fixture.Repository.SetServicesEnabledBatchAsync(
+        [
             new BatchServiceEnabledItemRecord(nodeOne, second.Service.Id, true)
-        }, CancellationToken.None));
+        ], CancellationToken.None));
         Assert.AreEqual(before!.DesiredRevision,
             (await fixture.Repository.GetNodeAsync(nodeOne, CancellationToken.None))!.DesiredRevision);
 
-        Assert.IsNull(await fixture.Repository.SetServicesEnabledBatchAsync(new[]
-        {
+        Assert.IsNull(await fixture.Repository.SetServicesEnabledBatchAsync(
+        [
             new BatchServiceEnabledItemRecord(nodeOne, first.Service!.Id, true),
             new BatchServiceEnabledItemRecord(nodeOne, first.Service!.Id, false)
-        }, CancellationToken.None));
+        ], CancellationToken.None));
         Assert.IsFalse((await fixture.Repository.GetServicesForNodeAsync(nodeOne, CancellationToken.None))
             .Single(item => item.Service.Id == first.Service!.Id).Service.Enabled);
     }
@@ -314,6 +313,29 @@ public sealed class SqliteServerRepositoryTests
         Assert.AreEqual("keep-key", document.RootElement.GetProperty("nested").GetProperty("realityPrivateKey").GetString());
         Assert.IsFalse(document.RootElement.TryGetProperty("obfsPassword", out _));
         Assert.IsFalse(merged.Contains("[REDACTED]", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void MergeRedactedSecrets_MatchesRoutesById()
+    {
+        const string existing = "{\"routes\":[{\"id\":\"a\",\"upstreamProxyPassword\":\"pa\"},{\"id\":\"b\",\"upstreamProxyPassword\":\"pb\"}]}";
+        // Reordered, one route removed, one new route added.
+        const string submitted = "{\"routes\":[{\"id\":\"b\",\"upstreamProxyPassword\":\"[REDACTED]\"},{\"id\":\"c\",\"upstreamProxyPassword\":\"new\"}]}";
+
+        Assert.IsTrue(AdminServicesEndpoints.TryMergeRedactedSecrets(existing, submitted, out var merged));
+        using var document = JsonDocument.Parse(merged);
+        var routes = document.RootElement.GetProperty("routes");
+        Assert.AreEqual("pb", routes[0].GetProperty("upstreamProxyPassword").GetString());
+        Assert.AreEqual("new", routes[1].GetProperty("upstreamProxyPassword").GetString());
+    }
+
+    [TestMethod]
+    public void UpstreamProxyError_AllowsRoutesOnlyOnReality()
+    {
+        const string config = "{\"routes\":[{\"id\":\"6f1c0e2a-3b4d-4e5f-8a9b-0c1d2e3f4a5b\",\"name\":\"a\"}]}";
+
+        Assert.IsNull(AdminServicesEndpoints.UpstreamProxyError(config, "xray"));
+        Assert.IsNotNull(AdminServicesEndpoints.UpstreamProxyError(config, "hysteria2"));
     }
 
     [TestMethod]
@@ -416,7 +438,7 @@ public sealed class SqliteServerRepositoryTests
             {
                 "service_id", "status", "backend_version", "applied_config_sha256", "traffic_upload_bytes",
                 "traffic_download_bytes", "traffic_observed_at_utc", "observed_at_utc", "error_code", "error_message",
-                "exit_country_code"
+                "exit_country_code", "route_exit_countries_json"
             },
             await ReadColumnNamesAsync(connection, "service_runtime_states"));
 
@@ -675,9 +697,9 @@ public sealed class SqliteServerRepositoryTests
             rid => $"hypanel-agent-2.0.0-{rid}.{(rid.StartsWith("win-", StringComparison.Ordinal) ? "zip" : "tar.gz")}",
             rid => Encoding.UTF8.GetBytes(rid));
         var manifest = new AgentReleaseManifest(1, "2.0.0", DateTimeOffset.Parse("2026-09-20T00:00:00Z"),
-            assets.Select(pair => new AgentReleaseAsset(RidOf(pair.Key),
+            [.. assets.Select(pair => new AgentReleaseAsset(RidOf(pair.Key),
                 pair.Key, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(pair.Value)).ToLowerInvariant(),
-                pair.Value.Length)).ToArray());
+                pair.Value.Length))]);
         var installSh = "sh"u8.ToArray();
         var installPs1 = "ps1"u8.ToArray();
         var handler = new RecordingReleaseHandler(new Dictionary<string, byte[]>(assets)
@@ -868,8 +890,7 @@ public sealed class SqliteServerRepositoryTests
         await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
         Assert.IsTrue(await fixture.Repository.BindServiceAsync(user.User.Id, service.Id, CancellationToken.None));
         async Task<string[]> Entries() =>
-            (await fixture.Repository.GetSubscriptionServicesAsync("six-token", CancellationToken.None))!
-            .Select(item => $"{item.Name}@{item.PublicEndpoint.Host}").ToArray();
+            [.. (await fixture.Repository.GetSubscriptionServicesAsync("six-token", CancellationToken.None))!.Select(item => $"{item.Name}@{item.PublicEndpoint.Host}")];
 
         Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "2.0", "linux-x64", 1, null, [], [],
             CancellationToken.None, null, "203.0.113.9", null, "2a01:4f8::9"));
@@ -1631,6 +1652,33 @@ public sealed class SqliteServerRepositoryTests
         Assert.AreEqual(4L,
             (await fixture.Repository.GetNodeObservationsAsync(CancellationToken.None))
             .Single(x => x.AgentId == agentId).AppliedRevision);
+    }
+
+    [TestMethod]
+    public async Task UsageReceipts_ArePrunedAndStaleResendsAreNotCountedTwice()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        var agentId = await CreateAgentAsync(fixture, nodeId, "prune-token", "prune-secret");
+        var user = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Erin", "erin", "password-hash", "User",
+            true, null, null, "subscription", CancellationToken.None);
+        var service = XrayService(CreateService(nodeId, Guid.NewGuid(), "prune"));
+        await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
+        Assert.IsTrue(await fixture.Repository.BindServiceAsync(user.User.Id, service.Id, CancellationToken.None));
+        var batch = new UsageBatch(Guid.NewGuid(), fixture.Time.GetUtcNow(),
+            [new UserUsageDelta(user.User.Id, service.Id, 10, 20)]);
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "2.0", "linux-x64", 1, "m", [], [],
+            CancellationToken.None, [batch]));
+
+        Assert.AreEqual(0, await fixture.Repository.PruneUsageReceiptsAsync(CancellationToken.None), "fresh receipts stay");
+        fixture.Time.Advance(SqliteServerRepository.UsageReceiptRetention + TimeSpan.FromMinutes(1));
+        Assert.AreEqual(1, await fixture.Repository.PruneUsageReceiptsAsync(CancellationToken.None));
+
+        // The receipt is gone; a late resend of the same batch is acknowledged but not counted again.
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "2.0", "linux-x64", 1, "m", [], [],
+            CancellationToken.None, [batch]));
+        var totals = await fixture.Repository.GetUsageTotalsAsync(user.User.Id, service.Id, CancellationToken.None);
+        Assert.AreEqual(10L, totals.Single().UploadBytes);
     }
 
     [TestMethod]

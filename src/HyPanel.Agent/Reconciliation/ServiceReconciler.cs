@@ -1,11 +1,11 @@
-namespace HyPanel.Agent.Reconciliation;
-
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using HyPanel.Agent.Backends;
 using HyPanel.Agent.Backends.Infrastructure;
 using HyPanel.Shared.Contracts;
+
+namespace HyPanel.Agent.Reconciliation;
 
 public sealed record ApplyResult(bool Succeeded, string? ErrorCode, string? ErrorMessage);
 
@@ -30,7 +30,7 @@ public sealed class ServiceReconciler(
     private readonly SemaphoreSlim applyGate = new(1, 1);
 
     public IReadOnlyList<ServiceRuntimeState> GetRuntimeStates() =>
-        runtimeStates.Values.OrderBy(state => state.ServiceId).ToArray();
+        [.. runtimeStates.Values.OrderBy(state => state.ServiceId)];
 
     public async Task<ApplyResult> ApplyAsync(NodeDesiredState desiredState, AgentCredentials credentials,
         CancellationToken cancellationToken)
@@ -67,13 +67,13 @@ public sealed class ServiceReconciler(
                 await processSupervisor.StopAsync(removed.ServiceId, StopTimeout, cancellationToken);
             var failed = preflight.Failures.Count > 0;
             var failedServiceIds = preflight.Failures.Select(failure => failure.ServiceId).ToHashSet();
-            var firstErrorCode = preflight.Failures.FirstOrDefault()?.ErrorCode;
+            var firstErrorCode = preflight.Failures.FirstOrDefault()?.Code;
             var appliedChanges = new List<Guid>();
             Guid failedService = Guid.Empty;
             foreach (var failure in preflight.Failures)
             {
                 failedService = failure.ServiceId;
-                SetFailed(failure.ServiceId, failure.ErrorCode);
+                SetFailed(failure.ServiceId, failure.Code);
             }
             try
             {
@@ -215,7 +215,7 @@ public sealed class ServiceReconciler(
                     var context = CreateContext(metadata.DesiredState, metadata.ConfigFileName, binaryPath);
                     if (metadata.DesiredState.Enabled && process.Status != ServiceRuntimeStatus.Running)
                     {
-                        await RecoverProcessAsync(item.Key, metadata, binaryPath, context, item.Value.Traffic,
+                        await RecoverProcessAsync(item.Key, metadata, context, item.Value.Traffic,
                             cancellationToken);
                         continue;
                     }
@@ -358,7 +358,7 @@ public sealed class ServiceReconciler(
         reportedFailures.TryRemove(plan.Desired.ServiceId, out _);
     }
 
-    private async Task RecoverProcessAsync(Guid serviceId, BackendInstanceMetadata metadata, string binaryPath,
+    private async Task RecoverProcessAsync(Guid serviceId, BackendInstanceMetadata metadata,
         BackendInstanceContext context, BackendTrafficSnapshot? traffic,
         CancellationToken cancellationToken)
     {
@@ -592,7 +592,7 @@ public sealed class ServiceReconciler(
 
     private static NodeDesiredState WithoutTlsMaterial(NodeDesiredState state) => state with
     {
-        Services = state.Services.Select(BackendInstanceStore.WithoutTlsMaterial).ToArray()
+        Services = [.. state.Services.Select(BackendInstanceStore.WithoutTlsMaterial)]
     };
 
     private BackendInstanceContext
@@ -736,7 +736,7 @@ public sealed class ServiceReconciler(
 
     private sealed class BackendBackoffException : InvalidOperationException;
 
-    private sealed record ServiceFailure(Guid ServiceId, string ErrorCode);
+    private sealed record ServiceFailure(Guid ServiceId, string Code);
 
     private sealed record PreflightResult(
         string? FatalErrorCode,

@@ -21,7 +21,7 @@ hero:
 
 features:
   - title: 多节点、多服务
-    details: 一个面板管理多台节点，每台节点可同时运行 Hysteria2、Xray REALITY、Shadowsocks 2022 等多个服务。
+    details: 一个面板管理多台节点，每台节点可同时运行 Hysteria2、Xray REALITY 等多个服务。
   - title: 一键接入
     details: 一条命令安装 Agent，节点主动连接面板，无需开放管理端口；卸载同样一条命令。
   - title: 用户与订阅

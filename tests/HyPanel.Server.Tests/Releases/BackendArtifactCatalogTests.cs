@@ -1,6 +1,6 @@
-using System.Text.Json;
-using System.IO.Compression;
 using System.Formats.Tar;
+using System.IO.Compression;
+using System.Text.Json;
 using HyPanel.Server.Releases;
 using HyPanel.Shared.Contracts;
 using Microsoft.Extensions.Configuration;
@@ -129,22 +129,6 @@ public sealed class BackendArtifactCatalogTests
         });
 
         Assert.AreEqual(0, fixture.CreateCatalog().GetArtifacts("linux-x64").Count);
-    }
-
-    [TestMethod]
-    public void FindArtifact_XrayShadowsocksReusesXrayBinaryUnderItsOwnType()
-    {
-        using var fixture = CatalogFixture.Create();
-        var xray = fixture.Manifest.Assets[0] with { BackendType = "xray" };
-        fixture.WriteManifest(fixture.Manifest with { Assets = [xray] });
-        var catalog = fixture.CreateCatalog();
-
-        var artifact = catalog.FindArtifact("xray-ss", xray.Version, xray.Rid);
-
-        Assert.IsNotNull(artifact);
-        Assert.AreEqual("xray-ss", artifact.BackendType);
-        Assert.AreEqual(xray.FileName, artifact.FileName);
-        Assert.AreEqual(xray.Sha256, artifact.Sha256);
     }
 
     [TestMethod]

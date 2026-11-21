@@ -3,11 +3,11 @@ using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
 using HyPanel.Agent;
+using HyPanel.Agent.Backends.Infrastructure;
 using HyPanel.Agent.Updates;
 using HyPanel.Shared.Contracts;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
-using HyPanel.Agent.Backends.Infrastructure;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace HyPanel.Agent.Tests;
@@ -60,7 +60,7 @@ public sealed class AgentUpdaterTests
         var state = State(AgentUpdateStatus.Downloading);
         await store.SaveAsync(state, CancellationToken.None);
         File.WriteAllText(AgentUpdater.StagingArchivePath(state.InstallPath), "partial");
-        var updater = CreateUpdater(store, new StaticHandler(Array.Empty<byte>()));
+        var updater = CreateUpdater(store, new StaticHandler([]));
 
         await updater.RecoverAsync(CancellationToken.None);
 
@@ -80,7 +80,7 @@ public sealed class AgentUpdaterTests
         File.WriteAllText(AgentUpdater.StagedExecutablePath(state.InstallPath), "staged");
         File.WriteAllText(AgentUpdater.StagingArchivePath(state.InstallPath), "archive");
         File.WriteAllText(AgentUpdater.RollbackArmedPath(state.InstallPath), "armed");
-        var updater = CreateUpdater(store, new StaticHandler(Array.Empty<byte>()));
+        var updater = CreateUpdater(store, new StaticHandler([]));
 
         await updater.MarkSyncSucceededAsync(CancellationToken.None);
 
@@ -96,7 +96,7 @@ public sealed class AgentUpdaterTests
     {
         var store = CreateStore();
         await store.SaveAsync(State(AgentUpdateStatus.RestartPending), CancellationToken.None);
-        var updater = CreateUpdater(store, new StaticHandler(Array.Empty<byte>()));
+        var updater = CreateUpdater(store, new StaticHandler([]));
 
         await updater.RecoverAsync(CancellationToken.None);
 
@@ -113,7 +113,7 @@ public sealed class AgentUpdaterTests
         File.WriteAllText(AgentUpdater.PreviousPath(state.InstallPath), "previous");
         File.WriteAllText(AgentUpdater.StagingArchivePath(state.InstallPath), "archive");
         File.WriteAllText(AgentUpdater.StagedExecutablePath(state.InstallPath), "staged");
-        var updater = CreateUpdater(store, new StaticHandler(Array.Empty<byte>()));
+        var updater = CreateUpdater(store, new StaticHandler([]));
 
         await updater.RecoverAsync(CancellationToken.None);
 

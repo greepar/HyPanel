@@ -1,6 +1,6 @@
-namespace HyPanel.Server.Security;
-
 using System.Security.Cryptography;
+
+namespace HyPanel.Server.Security;
 
 /// <summary>
 /// Generates fresh default secrets for newly created service instances. Values are only returned to the requesting

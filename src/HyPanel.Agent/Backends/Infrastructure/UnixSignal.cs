@@ -1,6 +1,6 @@
-namespace HyPanel.Agent.Backends.Infrastructure;
-
 using System.Runtime.InteropServices;
+
+namespace HyPanel.Agent.Backends.Infrastructure;
 
 internal static partial class UnixSignal
 {

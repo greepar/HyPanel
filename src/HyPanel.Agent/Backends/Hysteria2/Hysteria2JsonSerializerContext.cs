@@ -1,6 +1,6 @@
-namespace HyPanel.Agent.Backends.Hysteria2;
-
 using System.Text.Json.Serialization;
+
+namespace HyPanel.Agent.Backends.Hysteria2;
 
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
@@ -24,7 +24,7 @@ internal sealed class Hysteria2TrafficCounter
     public long Rx { get; init; }
 }
 
-internal sealed class Hysteria2Config : HyPanel.Agent.Backends.IUpstreamProxyConfig
+internal sealed class Hysteria2Config : IUpstreamProxyConfig
 {
     public string? UpstreamProxyType { get; init; }
 

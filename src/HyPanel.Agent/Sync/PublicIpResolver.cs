@@ -1,9 +1,9 @@
-namespace HyPanel.Agent;
-
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text.Json;
+
+namespace HyPanel.Agent;
 
 /// <summary>Looks up this host's public IPv4 and its country (ISO code, shown as a flag in the Panel).</summary>
 public sealed class PublicIpv4Resolver(HttpClient httpClient, TimeProvider timeProvider)
@@ -70,13 +70,12 @@ public sealed class PublicIpv6Resolver : PublicIpResolver
         address.AddressFamily == AddressFamily.InterNetworkV6 && (address.GetAddressBytes()[0] & 0xE0) == 0x20;
 
     private static IReadOnlyList<IPAddress> LocalGlobalAddresses() =>
-        NetworkInterface.GetAllNetworkInterfaces()
+        [.. NetworkInterface.GetAllNetworkInterfaces()
             .Where(networkInterface => networkInterface.OperationalStatus == OperationalStatus.Up)
             .SelectMany(networkInterface => networkInterface.GetIPProperties().UnicastAddresses)
             .Select(unicast => unicast.Address)
             .Where(IsGlobalUnicast)
-            .Distinct()
-            .ToArray();
+            .Distinct()];
 
     /// <summary>A client whose connections leave from <paramref name="source"/>, so routing rules keyed on it apply.</summary>
     private static HttpClient BoundClient(IPAddress source) => new(new SocketsHttpHandler

@@ -1,5 +1,3 @@
-namespace HyPanel.Server.Backup;
-
 using System.Collections.Concurrent;
 using System.Formats.Tar;
 using System.IO.Compression;
@@ -9,6 +7,8 @@ using System.Text.Json;
 using HyPanel.Server.Persistence;
 using HyPanel.Server.Security;
 using Microsoft.Data.Sqlite;
+
+namespace HyPanel.Server.Backup;
 
 internal sealed class BackupRestoreService
 {
@@ -62,7 +62,7 @@ internal sealed class BackupRestoreService
             }
             catch (BackupException) { }
         }
-        return result.OrderByDescending(static item => item.CreatedAtUtc).ToArray();
+        return [.. result.OrderByDescending(static item => item.CreatedAtUtc)];
     }
 
     public async Task<BackupSummary> CreateAsync(CancellationToken cancellationToken)

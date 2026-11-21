@@ -1,6 +1,6 @@
-namespace HyPanel.Server.Endpoints;
-
 using HyPanel.Server.Persistence;
+
+namespace HyPanel.Server.Endpoints;
 
 internal static class AdminServiceBatchEndpoints
 {
@@ -23,11 +23,11 @@ internal static class AdminServiceBatchEndpoints
             if (ServicePortConflicts.Find(item, after) is { } conflict)
                 return Results.Json(new ApiErrorResponse(conflict), ServerJsonSerializerContext.Default.ApiErrorResponse,
                     statusCode: StatusCodes.Status409Conflict);
-        var result = await repository.SetServicesEnabledBatchAsync(request.Items.Select(static item =>
-            new BatchServiceEnabledItemRecord(item.NodeId, item.ServiceId, item.Enabled)).ToArray(), ct);
+        var result = await repository.SetServicesEnabledBatchAsync([.. request.Items.Select(static item =>
+            new BatchServiceEnabledItemRecord(item.NodeId, item.ServiceId, item.Enabled))], ct);
         if (result is null) return Results.NotFound();
-        return Results.Json(new BatchServiceEnabledResponse(result.Select(static item =>
-                new BatchServiceEnabledNodeResponse(item.NodeId, item.Revision)).ToArray()),
+        return Results.Json(new BatchServiceEnabledResponse([.. result.Select(static item =>
+                new BatchServiceEnabledNodeResponse(item.NodeId, item.Revision))]),
             ServerJsonSerializerContext.Default.BatchServiceEnabledResponse);
     }
 }

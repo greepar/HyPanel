@@ -1,8 +1,8 @@
-namespace HyPanel.Server.Endpoints;
-
 using HyPanel.Server.Persistence;
 using HyPanel.Server.Releases;
 using HyPanel.Shared.Versioning;
+
+namespace HyPanel.Server.Endpoints;
 
 internal static class AdminNodesEndpoints
 {

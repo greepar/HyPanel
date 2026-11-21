@@ -124,6 +124,10 @@ export type HealthSummary = {
 
 export type PublicEndpoint = { host: string; port: number; tlsServerName: string | null }
 export type ServiceDiagnostic = { commandId: string; status: 'Pending' | 'Running' | 'Succeeded' | 'Failed' | 'Expired'; createdAtUtc: string; startedAtUtc: string | null; completedAtUtc: string | null; expiresAtUtc: string | null; errorCode: string | null; errorMessage: string | null; output: string | null }
+/** One output line of a service as the Server keeps it; `number` keeps rising across Agent restarts. */
+export type ServiceLogLine = { number: number; receivedAtUtc: string; text: string }
+/** `reset` means the Server lost the history the cursor points into (it restarted): start over. */
+export type ServiceLogPage = { lines: ServiceLogLine[]; cursor: number; reset: boolean }
 export type NodeIdentity = Pick<Node, 'id' | 'displayName'>
 export type ServiceRef = Service & { nodeId: string; nodeName: string }
 /** Traffic limit is edited in GiB; an empty reset day means usage never resets. */
@@ -156,9 +160,21 @@ export type BackendDefinition = {
   badge: string
   defaultVersion: string | null
   fields: BackendField[]
+  /** Program that runs it on the node (its released binary), e.g. 'xray' or 'hysteria2'. */
+  engine: string
+  /** What clients speak, e.g. 'vless-reality' or 'hysteria2'; several engines may serve one protocol. */
+  protocolId: string
+  features: BackendFeature[]
 }
 
+/** What a backend supports; the UI asks for features instead of checking backend names. */
+export type BackendFeature = 'multiUser' | 'controlPort' | 'routes' | 'relay' | 'certificate' | 'portHopping' | 'acmeCertificate'
 
-export type ServiceForm = { backendType: string; name: string; version: string; values: Record<string, string> }
+
+/** How traffic leaves: directly (type '') or through an HTTP / HTTPS / SOCKS5 proxy. */
+export type ExitForm = { type: '' | 'http' | 'https' | 'socks5'; host: string; port: string; username: string; password: string }
+/** An extra line of a REALITY service: same port and camouflage, its own subscription entry and exit. */
+export type RouteForm = { id: string; name: string; exit: ExitForm }
+export type ServiceForm = { backendType: string; name: string; version: string; values: Record<string, string>; routes: RouteForm[] }
 export type ServicePayload = { name: string; backendType: string; backendVersion: string; configSchemaVersion: 1; configJson: string }
 

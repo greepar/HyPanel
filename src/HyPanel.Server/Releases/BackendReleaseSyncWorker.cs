@@ -1,14 +1,14 @@
-namespace HyPanel.Server.Releases;
-
 using System.Collections.Concurrent;
 using System.Formats.Tar;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using HyPanel.Server.Persistence;
 using HyPanel.Shared.Contracts;
 using HyPanel.Shared.Versioning;
-using HyPanel.Server.Persistence;
+
+namespace HyPanel.Server.Releases;
 
 internal sealed class BackendReleaseSyncWorker(ILogger<BackendReleaseSyncWorker> logger, IHttpClientFactory clients,
     BackendArtifactCatalog catalog, SqliteServerRepository repository) : BackgroundService
@@ -224,7 +224,7 @@ internal sealed class BackendReleaseSyncWorker(ILogger<BackendReleaseSyncWorker>
             var artifact = new BackendArtifact(backendType, version, rid, fileName, sha, stream.Length, requiresAvx);
             BackendArtifactCatalog.ValidateArtifact(artifact, backendType, version);
             File.Move(extracted, Path.Combine(catalog.ReleasesDirectory, fileName), overwrite: true);
-            var updated = release with { Artifacts = release.Artifacts.Where(item => item.Rid != rid || item.RequiresAvx != requiresAvx).Append(artifact).ToArray() };
+            var updated = release with { Artifacts = [.. release.Artifacts.Where(item => item.Rid != rid || item.RequiresAvx != requiresAvx), artifact] };
             await WriteIndexAsync(updated, cancellationToken);
             catalog.Reload();
             logger.LogInformation("Cached backend {BackendType} {Version} for {Rid}.", backendType, version, rid);
@@ -274,7 +274,11 @@ internal sealed class BackendReleaseSyncWorker(ILogger<BackendReleaseSyncWorker>
         if (string.IsNullOrEmpty(expectedMember))
         {
             if (assetName.EndsWith(".gz", StringComparison.Ordinal))
-            { await using var input = new GZipStream(File.OpenRead(archive), CompressionMode.Decompress); await using var target = File.Create(output); await CopyBoundedAsync(input, target, cancellationToken); }
+            {
+                await using var input = new GZipStream(File.OpenRead(archive), CompressionMode.Decompress);
+                await using var target = File.Create(output);
+                await CopyBoundedAsync(input, target, cancellationToken);
+            }
             else File.Copy(archive, output);
             return;
         }
@@ -284,18 +288,27 @@ internal sealed class BackendReleaseSyncWorker(ILogger<BackendReleaseSyncWorker>
             var matches = expectedMember == "*.exe"
                 ? zip.Entries.Where(item => !item.FullName.Contains('/') && !item.FullName.Contains('\\')
                     && item.FullName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)).ToArray()
-                : zip.Entries.Where(item => item.FullName == expectedMember).ToArray();
+                : [.. zip.Entries.Where(item => item.FullName == expectedMember)];
             if (matches.Length != 1 || matches[0].Length <= 0) throw new InvalidDataException("Backend archive executable is missing.");
             if (matches[0].Length > MaximumDownloadBytes) throw new InvalidDataException("Backend executable is too large.");
-            await using var input = matches[0].Open(); await using var target = File.Create(output); await CopyBoundedAsync(input, target, cancellationToken); return;
+            await using var input = matches[0].Open();
+            await using var target = File.Create(output);
+            await CopyBoundedAsync(input, target, cancellationToken);
+            return;
         }
-        await using var file = File.OpenRead(archive); await using var gzip = new GZipStream(file, CompressionMode.Decompress);
-        using var tar = new TarReader(gzip); TarEntry? entry; var found = false;
-        while ((entry = await tar.GetNextEntryAsync(cancellationToken: cancellationToken)) is not null)
+        await using var file = File.OpenRead(archive);
+        await using var gzip = new GZipStream(file, CompressionMode.Decompress);
+        await using var tar = new TarReader(gzip);
+        var found = false;
+        while (await tar.GetNextEntryAsync(cancellationToken: cancellationToken) is { } entry)
         {
-            if (entry.EntryType is TarEntryType.SymbolicLink or TarEntryType.HardLink) throw new InvalidDataException("Backend archive links are forbidden.");
-            if (entry.Name.EndsWith('/' + expectedMember, StringComparison.Ordinal) || entry.Name == expectedMember)
-            { if (found || entry.DataStream is null) throw new InvalidDataException("Backend archive executable is ambiguous."); found = true; await using var target = File.Create(output); await CopyBoundedAsync(entry.DataStream, target, cancellationToken); }
+            if (entry.EntryType is TarEntryType.SymbolicLink or TarEntryType.HardLink)
+                throw new InvalidDataException("Backend archive links are forbidden.");
+            if (!entry.Name.EndsWith('/' + expectedMember, StringComparison.Ordinal) && entry.Name != expectedMember) continue;
+            if (found || entry.DataStream is null) throw new InvalidDataException("Backend archive executable is ambiguous.");
+            found = true;
+            await using var target = File.Create(output);
+            await CopyBoundedAsync(entry.DataStream, target, cancellationToken);
         }
         if (!found) throw new InvalidDataException("Backend archive executable is missing.");
     }

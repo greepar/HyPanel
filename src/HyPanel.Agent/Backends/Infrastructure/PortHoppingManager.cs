@@ -1,18 +1,19 @@
-namespace HyPanel.Agent.Backends.Infrastructure;
-
 using System.Diagnostics;
 using System.Text;
-using HyPanel.Agent.Backends.Hysteria2;
 using HyPanel.Shared.Contracts;
+using HyPanel.Shared.Networking;
+
+namespace HyPanel.Agent.Backends.Infrastructure;
 
 /// <summary>
-/// Hysteria2 port hopping: UDP traffic to the configured ports is redirected to the service's listen port with an
+/// UDP port hopping for backends that support it (<see cref="IPortHoppingBackend"/>): UDP traffic to the configured ports is redirected to the service's listen port with an
 /// nftables table owned by HyPanel (<c>inet hypanel_hop</c>). The whole table is replaced atomically on every apply,
 /// so removed services and disabled hopping leave no rules behind. Requires Linux, nft and CAP_NET_ADMIN.
 /// With <c>HYPANEL_PORT_HOPPING=relay</c> (set by the container entrypoint inside the Docker Desktop / OrbStack VM)
 /// the ports are relayed in user space by <see cref="UdpPortRelay"/> instead.
 /// </summary>
-public sealed class PortHoppingManager(ILogger<PortHoppingManager> logger, IConfiguration configuration, UdpPortRelay relay)
+public sealed class PortHoppingManager(ILogger<PortHoppingManager> logger, IConfiguration configuration, UdpPortRelay relay,
+    BackendProviderRegistry providers)
 {
     public const string TableName = "hypanel_hop";
     private string? appliedScript;
@@ -29,8 +30,8 @@ public sealed class PortHoppingManager(ILogger<PortHoppingManager> logger, IConf
     {
         var rules = new List<(Guid ServiceId, int ListenPort, string Ports)>();
         foreach (var service in desired?.Services ?? [])
-            if (service.Enabled && service.BackendType == "hysteria2" &&
-                Hysteria2Provider.PortHopping(service.ConfigJson) is { } hopping)
+            if (service.Enabled && providers.TryGet(service.BackendType, out var provider) &&
+                provider is IPortHoppingBackend backend && backend.PortHopping(service.ConfigJson) is { } hopping)
                 rules.Add((service.ServiceId, hopping.ListenPort, hopping.Ports.ToString()));
         HoppingServices = rules.Select(rule => rule.ServiceId).ToHashSet();
         if (useRelay)
@@ -39,7 +40,7 @@ public sealed class PortHoppingManager(ILogger<PortHoppingManager> logger, IConf
             return;
         }
 
-        var script = BuildScript(rules.Select(rule => (rule.ListenPort, rule.Ports)).ToArray());
+        var script = BuildScript([.. rules.Select(rule => (rule.ListenPort, rule.Ports))]);
         if (script == appliedScript) return;
         if (!OperatingSystem.IsLinux())
         {
@@ -79,7 +80,7 @@ public sealed class PortHoppingManager(ILogger<PortHoppingManager> logger, IConf
 
     private void ApplyRelay(IReadOnlyList<(Guid ServiceId, int ListenPort, string Ports)> rules)
     {
-        if (!TryBuildRelayRules(rules.Select(rule => (rule.ListenPort, rule.Ports)).ToArray(), out var relayRules, out var error))
+        if (!TryBuildRelayRules([.. rules.Select(rule => (rule.ListenPort, rule.Ports))], out var relayRules, out var error))
         {
             relay.Apply(new Dictionary<int, int>());
             LastError = error;
@@ -98,11 +99,11 @@ public sealed class PortHoppingManager(ILogger<PortHoppingManager> logger, IConf
     internal static bool TryBuildRelayRules(IReadOnlyList<(int ListenPort, string Ports)> rules,
         out Dictionary<int, int> relayRules, out string? error)
     {
-        relayRules = new Dictionary<int, int>();
+        relayRules = [];
         error = null;
         foreach (var (listenPort, ports) in rules)
         {
-            if (!HyPanel.Shared.Networking.PortSpec.TryParse(ports, out var spec)) continue;
+            if (!PortSpec.TryParse(ports, out var spec)) continue;
             foreach (var range in spec.Ranges)
             for (var port = range.From; port <= range.To; port++)
             {

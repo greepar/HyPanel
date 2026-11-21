@@ -22,7 +22,7 @@ journalctl -u hypanel-agent -n 100 --no-pager
 
 ## 客户端连不上
 
-- 确认云服务商安全组放行了服务端口（Hysteria2 是 UDP，REALITY / Shadowsocks 是 TCP）；
+- 确认云服务商安全组放行了服务端口（Hysteria2 是 UDP，REALITY 是 TCP）；
 - Hysteria2 使用域名证书时，确认 SNI 对应的域名正确；
 - 在面板更新订阅后，客户端需要重新拉取订阅。
 

@@ -1,9 +1,12 @@
-namespace HyPanel.Server.Persistence;
-
 using System.Security.Cryptography;
 using System.Text;
+using HyPanel.Server.Backends;
 using HyPanel.Server.Security;
+using HyPanel.Shared.Networking;
+using HyPanel.Shared.Serialization;
 using Microsoft.Data.Sqlite;
+
+namespace HyPanel.Server.Persistence;
 
 internal sealed partial class SqliteServerRepository
 {
@@ -260,7 +263,7 @@ internal sealed partial class SqliteServerRepository
         await using var c = await connectionFactory.OpenAsync(ct);
         await using var tx = (SqliteTransaction)await c.BeginTransactionAsync(ct);
         var backend = await GetBindingBackendAsync(c, tx, userId, serviceId, requireBinding: false, ct);
-        if (!HyPanel.Server.Backends.BackendCapabilities.IsMultiUser(backend))
+        if (!BackendCapabilities.IsMultiUser(backend))
         {
             await tx.RollbackAsync(ct);
             return false;
@@ -309,12 +312,12 @@ internal sealed partial class SqliteServerRepository
         await using (var select = c.CreateCommand())
         {
             select.Transaction = tx;
-            select.CommandText = """
+            select.CommandText = $"""
                 SELECT b.user_id,b.service_id,s.node_id,s.backend_type
                 FROM user_service_bindings b
                 JOIN service_instances s ON s.id=b.service_id
                 LEFT JOIN user_service_credentials k ON k.user_id=b.user_id AND k.service_id=b.service_id
-                WHERE k.user_id IS NULL AND s.backend_type IN ('xray','xray-ss','hysteria2')
+                WHERE k.user_id IS NULL AND s.backend_type IN {BackendCapabilities.MultiUserSqlList}
                 ORDER BY b.user_id,b.service_id;
                 """;
             await using var reader = await select.ExecuteReaderAsync(ct);
@@ -513,7 +516,8 @@ internal sealed partial class SqliteServerRepository
                                    k.nonce,k.ciphertext,k.tag,c.san,c.certificate_pem,n.display_name,
                                    COALESCE(CASE WHEN COALESCE(json_extract(s.config_json,'$.upstreamProxyType'),'')<>'' THEN rs.exit_country_code END,
                                             a.country_code),
-                                   CASE WHEN p.host IS NOT NULL OR s.ipv6_entry=0 THEN NULL WHEN rn.id IS NULL THEN a.public_ipv6 ELSE ra.public_ipv6 END
+                                   CASE WHEN p.host IS NOT NULL OR s.ipv6_entry=0 THEN NULL WHEN rn.id IS NULL THEN a.public_ipv6 ELSE ra.public_ipv6 END,
+                                   rs.route_exit_countries_json,a.country_code
                            FROM user_service_bindings b
                            JOIN service_instances s ON s.id=b.service_id
                            JOIN nodes n ON n.id=s.node_id
@@ -550,17 +554,42 @@ internal sealed partial class SqliteServerRepository
             var updated = SqliteValue.ToDateTimeOffset(r.GetString(7));
             // A node with a public IPv6 gets a second entry dialling it unless the service turned that off; an explicit
             // endpoint replaces both.
-            var hosts = new List<(string Host, string Name)>(2);
-            if (!r.IsDBNull(4)) hosts.Add((r.GetString(4), name));
-            if (!r.IsDBNull(15)) hosts.Add((r.GetString(15), name + " · IPv6"));
-            foreach (var (host, entryName) in hosts)
-                services.Add(new SubscriptionServiceRecord(SqliteValue.ToGuid(userId), serviceId, entryName, backend,
+            var hosts = new List<(string Host, string Suffix)>(2);
+            if (!r.IsDBNull(4)) hosts.Add((r.GetString(4), ""));
+            if (!r.IsDBNull(15)) hosts.Add((r.GetString(15), " · IPv6"));
+            // Extra lines of a REALITY service: flagged with their proxy's country, or the node's when they go direct.
+            var routes = BackendDefinitionCatalog.Has(backend, BackendFeatures.Routes)
+                ? ServiceRoute.Parse(r.GetString(3)) : [];
+            var routeCountries = routes.Count == 0 || r.IsDBNull(16) ? null : RouteCountries(r.GetString(16));
+            var nodeCountry = r.IsDBNull(17) ? null : r.GetString(17);
+            foreach (var (host, suffix) in hosts)
+                services.Add(new SubscriptionServiceRecord(SqliteValue.ToGuid(userId), serviceId, name + suffix, backend,
                     r.GetString(3), credential,
                     new ServicePublicEndpointRecord(serviceId, host, r.GetInt32(5), serverName, updated),
-                    SelfSignedFingerprint(pem)));
+                    SelfSignedFingerprint(pem),
+                    routes.Count == 0 ? null : routes.Select(route =>
+                    {
+                        var country = route.Proxy is null ? nodeCountry : routeCountries?.GetValueOrDefault(route.Id);
+                        var label = $"{r.GetString(1)} · {route.Name}{suffix}";
+                        return new SubscriptionRouteEntry(route.Id, country is null ? label : $"{CountryFlag(country)} {label}");
+                    }).ToArray()));
         }
 
         return services;
+    }
+
+    private static Dictionary<Guid, string>? RouteCountries(string json)
+    {
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize(json,
+                    HyPanelJsonSerializerContext.Default.RouteExitCountryArray)?
+                .ToDictionary(item => item.RouteId, item => item.CountryCode);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>Usage, limit and expiry for the Clash <c>subscription-userinfo</c> header.</summary>
@@ -590,8 +619,7 @@ internal sealed partial class SqliteServerRepository
         if (FirstDnsName(san) is { } concrete) return concrete;
         var wildcard = DnsNames(san).FirstOrDefault(name => name.StartsWith("*.", StringComparison.Ordinal));
         if (wildcard is null) return null;
-        var label = new string(nodeName.ToLowerInvariant()
-            .Select(character => char.IsAsciiLetterOrDigit(character) ? character : '-').ToArray()).Trim('-');
+        var label = new string([.. nodeName.ToLowerInvariant().Select(character => char.IsAsciiLetterOrDigit(character) ? character : '-')]).Trim('-');
         if (label.Length is 0 or > 63) label = "hy2";
         return label + wildcard[1..];
     }
@@ -630,22 +658,13 @@ internal sealed partial class SqliteServerRepository
         {
             using var certificate = System.Security.Cryptography.X509Certificates.X509Certificate2.CreateFromPem(pem);
             return certificate.SubjectName.RawData.AsSpan().SequenceEqual(certificate.IssuerName.RawData)
-                ? Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(certificate.RawData)).ToLowerInvariant()
+                ? Convert.ToHexString(SHA256.HashData(certificate.RawData)).ToLowerInvariant()
                 : null;
         }
-        catch (System.Security.Cryptography.CryptographicException)
+        catch (CryptographicException)
         {
             return null;
         }
-    }
-
-    private static async Task<bool> IsBoundAsync(SqliteConnection c, Guid user, Guid service, CancellationToken ct)
-    {
-        await using var cmd = c.CreateCommand();
-        cmd.CommandText = "SELECT 1 FROM user_service_bindings WHERE user_id=@user AND service_id=@service;";
-        cmd.Parameters.AddWithValue("@user", user.ToString("D"));
-        cmd.Parameters.AddWithValue("@service", service.ToString("D"));
-        return await cmd.ExecuteScalarAsync(ct) is not null;
     }
 
     private async Task<UserServiceCredentialRecord?> ReplaceServiceCredentialAsync(Guid userId, Guid serviceId,
@@ -654,7 +673,7 @@ internal sealed partial class SqliteServerRepository
         await using var c = await connectionFactory.OpenAsync(ct);
         await using var tx = (SqliteTransaction)await c.BeginTransactionAsync(ct);
         var backend = await GetBindingBackendAsync(c, tx, userId, serviceId, requireBinding: true, ct);
-        if (!HyPanel.Server.Backends.BackendCapabilities.IsMultiUser(backend))
+        if (!BackendCapabilities.IsMultiUser(backend))
         {
             await tx.RollbackAsync(ct);
             return null;

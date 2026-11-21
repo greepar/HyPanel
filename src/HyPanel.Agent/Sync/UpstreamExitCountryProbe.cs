@@ -1,10 +1,10 @@
-namespace HyPanel.Agent;
-
 using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
 using HyPanel.Shared.Contracts;
 using HyPanel.Shared.Networking;
+
+namespace HyPanel.Agent;
 
 /// <summary>
 /// Finds the country a service's traffic leaves from when it goes out through an upstream proxy, so subscriptions can
@@ -31,24 +31,41 @@ public sealed class UpstreamExitCountryProbe(ILogger<UpstreamExitCountryProbe> l
     }
 
     /// <summary>Exit country per service that has an upstream proxy and a known country.</summary>
-    public IReadOnlyDictionary<Guid, string> Get(IEnumerable<ServiceDesiredState> services)
+    public IReadOnlyDictionary<Guid, string> Get(IEnumerable<ServiceDesiredState> services) => Observe(services).Services;
+
+    /// <summary>
+    /// Known exit countries of every proxied service and of every proxied extra line (route) of a service. Proxies
+    /// shared by several services or routes are looked up once.
+    /// </summary>
+    public ExitCountries Observe(IEnumerable<ServiceDesiredState> services)
     {
         var now = timeProvider.GetUtcNow();
         var countries = new Dictionary<Guid, string>();
+        var routeCountries = new Dictionary<Guid, IReadOnlyList<RouteExitCountry>>();
         var live = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var service in services)
+        string? CountryOf(UpstreamProxy proxy)
         {
-            if (!service.Enabled || ProxyOf(service.ConfigJson) is not { } proxy) continue;
             var key = proxy.ToUrl();
             live.Add(key);
             var entry = entries.GetOrAdd(key, _ => new Entry());
             if (now >= entry.RefreshAt && Interlocked.Exchange(ref entry.Running, 1) == 0)
                 _ = RefreshAsync(proxy, entry);
-            if (Volatile.Read(ref entry.Country) is { } country) countries[service.ServiceId] = country;
+            return Volatile.Read(ref entry.Country);
+        }
+        foreach (var service in services)
+        {
+            if (!service.Enabled) continue;
+            if (ProxyOf(service.ConfigJson) is { } proxy && CountryOf(proxy) is { } country)
+                countries[service.ServiceId] = country;
+            var routes = ServiceRoute.Parse(service.ConfigJson)
+                .Where(route => route.Proxy is not null)
+                .Select(route => CountryOf(route.Proxy!) is { } code ? new RouteExitCountry(route.Id, code) : null)
+                .OfType<RouteExitCountry>().ToArray();
+            if (routes.Length > 0) routeCountries[service.ServiceId] = routes;
         }
         foreach (var key in entries.Keys)
             if (!live.Contains(key)) entries.TryRemove(key, out _);
-        return countries;
+        return new ExitCountries(countries, routeCountries);
     }
 
     private async Task RefreshAsync(UpstreamProxy proxy, Entry entry)
@@ -83,6 +100,9 @@ public sealed class UpstreamExitCountryProbe(ILogger<UpstreamExitCountryProbe> l
         var body = await response.Content.ReadAsByteArrayAsync(cancellationToken);
         return body.Length > MaxResponseBytes ? null : ParseCountry(body);
     }
+
+    public sealed record ExitCountries(IReadOnlyDictionary<Guid, string> Services,
+        IReadOnlyDictionary<Guid, IReadOnlyList<RouteExitCountry>> Routes);
 
     /// <summary>The upper-case ISO country of a <c>{"country":"GB",…}</c> body, or null.</summary>
     internal static string? ParseCountry(ReadOnlySpan<byte> body)

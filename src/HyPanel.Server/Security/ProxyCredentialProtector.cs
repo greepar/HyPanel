@@ -1,7 +1,7 @@
-namespace HyPanel.Server.Security;
-
 using System.Security.Cryptography;
 using System.Text;
+
+namespace HyPanel.Server.Security;
 
 internal sealed record ProtectedCredential(byte[] Nonce, byte[] Ciphertext, byte[] Tag);
 

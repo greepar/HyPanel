@@ -1,8 +1,8 @@
-namespace HyPanel.Server.Tests.Endpoints;
-
 using HyPanel.Server.Endpoints;
 using HyPanel.Server.Releases;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+
+namespace HyPanel.Server.Tests.Endpoints;
 
 [TestClass]
 public sealed class ReleaseEndpointsTests

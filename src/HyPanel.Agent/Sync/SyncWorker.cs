@@ -1,14 +1,14 @@
-namespace HyPanel.Agent;
-
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
-using HyPanel.Shared.Contracts;
-using HyPanel.Shared.Serialization;
 using HyPanel.Agent.Backends.Infrastructure;
 using HyPanel.Agent.Networking;
 using HyPanel.Agent.Reconciliation;
 using HyPanel.Agent.Updates;
+using HyPanel.Shared.Contracts;
+using HyPanel.Shared.Serialization;
+
+namespace HyPanel.Agent;
 
 public sealed class SyncWorker(
     ILogger<SyncWorker> logger,
@@ -41,7 +41,29 @@ public sealed class SyncWorker(
     internal const string RevokedMarkerFileName = "revoked";
     private static readonly TimeSpan SyncRequestTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan PanelMoveRetryDelay = TimeSpan.FromMinutes(10);
+    private static readonly Uri WatchPath = new("/api/agent/v1/watch", UriKind.Relative);
+    private static readonly TimeSpan WatchRequestTimeout = TimeSpan.FromSeconds(45);
+    /// <summary>New backend output syncs early, but not more often than this.</summary>
+    private static readonly TimeSpan LogSyncMinimumGap = TimeSpan.FromSeconds(2);
+    /// <summary>After applying a change, report the resulting service status this soon instead of a full interval later.</summary>
+    private const int ReportAfterApplySeconds = 1;
+    private const int MaximumLogBytesPerSync = 256 * 1024;
     private DateTimeOffset nextPanelMoveAttempt;
+
+    // Live logs: lines are numbered per service; the Panel answers with the last number it holds for this stream.
+    private readonly Guid logStreamId = Guid.NewGuid();
+    private Dictionary<Guid, long> logCursors = [];
+    private bool panelTakesLogs = true;
+    private HashSet<Guid> logServiceIds = [];
+    private DateTimeOffset nextLogProbe;
+    private readonly Dictionary<Guid, (string ConfigJson, IReadOnlyList<string> Secrets)> logSecrets = [];
+
+    // Early wake-ups of the sync loop: the Panel's watch says something changed, or a backend wrote output.
+    private readonly SemaphoreSlim wake = new(0, 1);
+    private volatile bool logsPending;
+    private AgentCredentials? watchCredentials;
+    private long lastSeenRevision = -1;
+    private TaskCompletionSource syncCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -59,7 +81,6 @@ public sealed class SyncWorker(
         {
             await updater.RecoverAsync(stoppingToken);
             credentials = await identityManager.EnsureIdentityAsync(stoppingToken);
-            state = await stateStore.LoadAsync(stoppingToken);
             await reconciler.RestoreAsync(credentials, stoppingToken);
             state = await stateStore.LoadAsync(stoppingToken);
             await portHopping.ApplyAsync(state.DesiredState, stoppingToken);
@@ -79,18 +100,27 @@ public sealed class SyncWorker(
         }
 
         var backoffSeconds = 0;
-        var nextDelaySeconds = DefaultIntervalSeconds;
+        processSupervisor.LogWritten += OnLogWritten;
+        watchCredentials = credentials;
+        _ = Task.Run(() => WatchLoopAsync(stoppingToken), CancellationToken.None);
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            int nextDelaySeconds;
             try
             {
                 var pendingResults = commandState.PendingResults.ToArray();
                 await reconciler.RefreshRuntimeStatesAsync(stoppingToken);
                 var pendingUsageBatches = usageStateStore.GetPendingBatchesSnapshot();
                 var updateReport = await updateStateStore.GetReportAsync(stoppingToken);
+                var sendLogs = panelTakesLogs || timeProvider.GetUtcNow() >= nextLogProbe;
+                logsPending = false;
+                var logs = sendLogs ? await CollectLogsAsync(stoppingToken) : null;
                 var response = await SyncAsync(credentials, state.AppliedRevision, WithPortHoppingErrors(reconciler.GetRuntimeStates()),
-                    pendingUsageBatches, pendingResults, updateReport, stoppingToken);
+                    pendingUsageBatches, pendingResults, updateReport, stoppingToken, logs);
+                lastSeenRevision = response.DesiredRevision;
+                if (logs is not null) AcceptLogCursors(response.LogCursors);
+                var reportSoon = false;
                 await updater.MarkSyncSucceededAsync(stoppingToken);
                 await usageStateStore.AcknowledgeAsync(pendingUsageBatches, response.AcceptedUsageBatchIds, stoppingToken);
                 if (response.DesiredState is not null)
@@ -101,14 +131,15 @@ public sealed class SyncWorker(
                         state = await stateStore.LoadAsync(stoppingToken);
                         await portHopping.ApplyAsync(state.DesiredState, stoppingToken);
                     }
+                    reportSoon = true;
                 }
 
                 if (response.Relays is not null)
                 {
                     var unbound = tcpRelay.Apply(response.Relays);
                     // The relay listens in user space, so the host firewall has to let the port in.
-                    await firewall.ApplyAsync("relay", response.Relays.Where(rule => !unbound.ContainsKey(rule.ListenPort))
-                        .Select(rule => new FirewallOpening("tcp", rule.ListenPort, null)).Distinct().ToArray(),
+                    await firewall.ApplyAsync("relay", [.. response.Relays.Where(rule => !unbound.ContainsKey(rule.ListenPort))
+                        .Select(rule => new FirewallOpening("tcp", rule.ListenPort, null)).Distinct()],
                         stoppingToken);
                 }
 
@@ -116,13 +147,14 @@ public sealed class SyncWorker(
                 {
                     commandState = commandState with
                     {
-                        PendingResults = commandState.PendingResults.Where(result =>
+                        PendingResults = [.. commandState.PendingResults.Where(result =>
                             result.Status == AgentCommandStatus.Running ||
-                            !pendingResults.Contains(result)).ToArray()
+                            !pendingResults.Contains(result))]
                     };
                     await commandStateStore.SaveAsync(commandState, stoppingToken);
                 }
 
+                if (response.Commands.Count > 0) reportSoon = true;
                 commandState = await ProcessCommandsAsync(response.Commands, commandState, credentials, stoppingToken);
                 if (response.AgentUpdate is not null)
                 {
@@ -130,12 +162,16 @@ public sealed class SyncWorker(
                 }
                 if (response.PanelUrl is { } panelUrl)
                     credentials = await TryMovePanelAsync(credentials, panelUrl, state.AppliedRevision, stoppingToken);
+                watchCredentials = credentials;
                 backoffSeconds = 0;
                 nextDelaySeconds = response.SyncIntervalSeconds is >= 1 and <= 300
                     ? response.SyncIntervalSeconds
                     : credentials.SyncIntervalSeconds is >= 1 and <= 300
                         ? credentials.SyncIntervalSeconds
                         : DefaultIntervalSeconds;
+                if (reportSoon) nextDelaySeconds = Math.Min(nextDelaySeconds, ReportAfterApplySeconds);
+                Interlocked.Exchange(ref syncCompleted,
+                    new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
             }
             catch (AgentRevokedException)
             {
@@ -179,9 +215,181 @@ public sealed class SyncWorker(
             }
 
             var jitterMilliseconds = Random.Shared.Next(0, 1001);
-            await Task.Delay(TimeSpan.FromSeconds(nextDelaySeconds) + TimeSpan.FromMilliseconds(jitterMilliseconds),
-                timeProvider, stoppingToken);
+            var delay = TimeSpan.FromSeconds(nextDelaySeconds) + TimeSpan.FromMilliseconds(jitterMilliseconds);
+            // A healthy link wakes early for Panel changes and new output; a failing one keeps its backoff.
+            if (backoffSeconds == 0) await WaitForWakeAsync(delay, stoppingToken);
+            else await Task.Delay(delay, timeProvider, stoppingToken);
         }
+    }
+
+    private async Task WaitForWakeAsync(TimeSpan delay, CancellationToken cancellationToken)
+    {
+        var started = timeProvider.GetUtcNow();
+        try
+        {
+            if (logsPending)
+            {
+                wake.Wait(0);
+                // Output already waiting: sync after the minimum gap rather than the full interval.
+                await Task.Delay(delay < LogSyncMinimumGap ? delay : LogSyncMinimumGap, timeProvider, cancellationToken);
+                return;
+            }
+            if (!await wake.WaitAsync(delay, cancellationToken)) return;
+            var elapsed = timeProvider.GetUtcNow() - started;
+            // Wake-ups from output are spaced out; a Panel change goes right away (logsPending stays false for it).
+            if (logsPending && elapsed < LogSyncMinimumGap)
+                await Task.Delay(LogSyncMinimumGap - elapsed, timeProvider, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private void Wake()
+    {
+        try
+        {
+            if (wake.CurrentCount == 0) wake.Release();
+        }
+        catch (SemaphoreFullException)
+        {
+        }
+    }
+
+    private void OnLogWritten()
+    {
+        if (!panelTakesLogs || logsPending) return;
+        logsPending = true;
+        Wake();
+    }
+
+    /// <summary>
+    /// Holds a long-poll open with the Panel; when it reports a change (an admin saved something), the sync loop runs
+    /// at once instead of waiting out its interval. A Panel without the endpoint is asked again every 10 minutes.
+    /// </summary>
+    private async Task WatchLoopAsync(CancellationToken stoppingToken)
+    {
+        var failures = 0;
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            var delay = TimeSpan.Zero;
+            try
+            {
+                var waitForSync = syncCompleted.Task;
+                if (watchCredentials is { } credentials && lastSeenRevision >= 0)
+                {
+                    var changed = await WatchOnceAsync(credentials, lastSeenRevision, stoppingToken);
+                    failures = 0;
+                    if (changed is null) delay = PanelMoveRetryDelay;
+                    else if (changed.Value)
+                    {
+                        Wake();
+                        // Watch again only after that sync, or a stale revision would return at once in a loop.
+                        await waitForSync.WaitAsync(TimeSpan.FromSeconds(30), timeProvider, stoppingToken)
+                            .ContinueWith(static _ => { }, TaskScheduler.Default);
+                    }
+                }
+                else delay = TimeSpan.FromSeconds(1);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                failures++;
+                delay = TimeSpan.FromSeconds(Math.Min(60, 2 << Math.Min(failures, 5)));
+                logger.LogDebug(exception, "Panel watch failed; retrying.");
+            }
+
+            try
+            {
+                // Never spin: at least a short pause between watches.
+                await Task.Delay(delay > TimeSpan.FromMilliseconds(250) ? delay : TimeSpan.FromMilliseconds(250),
+                    timeProvider, stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>True when the Panel has news, false when the wait ran out, null when the Panel has no watch endpoint.</summary>
+    private async Task<bool?> WatchOnceAsync(AgentCredentials credentials, long revision, CancellationToken cancellationToken)
+    {
+        using var message = new HttpRequestMessage(HttpMethod.Get,
+            new Uri(new Uri(credentials.PanelBaseUrl), $"{WatchPath}?revision={revision}"));
+        message.Headers.Add("X-HyPanel-Agent-Id", credentials.AgentId.ToString("D"));
+        message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credentials.AgentSecret);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(WatchRequestTimeout);
+        using var response = await httpClient.SendAsync(message, timeout.Token);
+        if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed) return null;
+        response.EnsureSuccessStatusCode();
+        var bytes = await response.Content.ReadAsByteArrayAsync(timeout.Token);
+        return JsonSerializer.Deserialize(bytes, HyPanelJsonSerializerContext.Default.AgentWatchResponse)?.Changed ?? false;
+    }
+
+    /// <summary>New output of every backend since the Panel's cursors, with secrets from the service config masked.</summary>
+    private async Task<IReadOnlyList<ServiceLogChunk>> CollectLogsAsync(CancellationToken cancellationToken)
+    {
+        var desired = (await stateStore.LoadAsync(cancellationToken)).DesiredState;
+        var configs = (desired?.Services ?? []).ToDictionary(service => service.ServiceId, service => service.ConfigJson);
+        logServiceIds = [.. configs.Keys];
+        var chunks = new List<ServiceLogChunk>();
+        var budget = MaximumLogBytesPerSync;
+        foreach (var (serviceId, firstSequence, lines) in processSupervisor.LogsAfter(logCursors))
+        {
+            // Output of a service the Panel no longer has would be refused and resent forever.
+            if (!configs.ContainsKey(serviceId)) continue;
+            if (budget <= 0) break;
+            var secrets = configs.TryGetValue(serviceId, out var config) ? SecretsFor(serviceId, config) : [];
+            var taken = new List<string>(lines.Count);
+            foreach (var line in lines.Take(1024))
+            {
+                var redacted = ServiceLogCollector.Redact(line, secrets);
+                budget -= System.Text.Encoding.UTF8.GetByteCount(redacted) + 8;
+                if (budget < 0 && taken.Count > 0) break;
+                taken.Add(redacted);
+            }
+            chunks.Add(new ServiceLogChunk(serviceId, firstSequence, taken));
+        }
+        return chunks;
+    }
+
+    private IReadOnlyList<string> SecretsFor(Guid serviceId, string configJson)
+    {
+        if (logSecrets.TryGetValue(serviceId, out var cached) && ReferenceEquals(cached.ConfigJson, configJson))
+            return cached.Secrets;
+        IReadOnlyList<string> secrets;
+        try
+        {
+            secrets = ServiceLogCollector.ReadSecrets(configJson);
+        }
+        catch (JsonException)
+        {
+            secrets = [];
+        }
+        logSecrets[serviceId] = (configJson, secrets);
+        return secrets;
+    }
+
+    private void AcceptLogCursors(IReadOnlyList<ServiceLogCursor>? cursors)
+    {
+        if (cursors is null)
+        {
+            // An older Panel ignores the logs; stop sending them and ask again later (it may get upgraded).
+            panelTakesLogs = false;
+            nextLogProbe = timeProvider.GetUtcNow() + PanelMoveRetryDelay;
+            return;
+        }
+        var wasOff = !panelTakesLogs;
+        panelTakesLogs = true;
+        logCursors = cursors.ToDictionary(cursor => cursor.ServiceId, cursor => cursor.Sequence);
+        // More output than one sync carries: keep going soon.
+        if (wasOff || processSupervisor.LogsAfter(logCursors).Any(item => logServiceIds.Contains(item.ServiceId)))
+            logsPending = true;
     }
 
     /// <summary>
@@ -227,19 +435,23 @@ public sealed class SyncWorker(
         IReadOnlyList<ServiceRuntimeState> services, IReadOnlyList<UsageBatch> usageBatches,
         IReadOnlyList<AgentCommandResult> results,
         AgentUpdateReport? updateReport,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<ServiceLogChunk>? logs = null)
     {
         var publicIpv4 = await publicIpv4Resolver.GetAsync(cancellationToken);
         var publicIpv6 = await publicIpv6Resolver.GetAsync(cancellationToken);
         var desired = (await stateStore.LoadAsync(cancellationToken)).DesiredState;
-        var exitCountries = exitCountryProbe.Get(desired?.Services ?? []);
-        if (exitCountries.Count > 0)
-            services = services.Select(state => exitCountries.TryGetValue(state.ServiceId, out var country)
-                ? state with { ExitCountryCode = country }
-                : state).ToArray();
+        var exitCountries = exitCountryProbe.Observe(desired?.Services ?? []);
+        if (exitCountries.Services.Count > 0 || exitCountries.Routes.Count > 0)
+            services = [.. services.Select(state => state with
+            {
+                ExitCountryCode = exitCountries.Services.GetValueOrDefault(state.ServiceId) ?? state.ExitCountryCode,
+                RouteExitCountries = exitCountries.Routes.GetValueOrDefault(state.ServiceId)
+            })];
         var request = new AgentSyncRequest(BuildInfo.Version, BuildInfo.RuntimeIdentifier, appliedRevision,
             metricsCollector.Collect(), services, usageBatches, results, updateReport, publicIpv4,
-            publicIpv4Resolver.CountryCode, CpuFeatures.SupportsX86_64V3, desired?.BackendArtifacts ?? [], publicIpv6);
+            publicIpv4Resolver.CountryCode, CpuFeatures.SupportsX64V3, desired?.BackendArtifacts ?? [], publicIpv6,
+            logs is null ? null : logStreamId, logs);
         using var message =
             new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(credentials.PanelBaseUrl), SyncPath));
         message.Headers.Add("X-HyPanel-Agent-Id", credentials.AgentId.ToString("D"));
@@ -299,8 +511,8 @@ public sealed class SyncWorker(
                 continue;
             }
             var running = new AgentCommandResult(command.CommandId, AgentCommandStatus.Running, startedAt, null, null,
-                null, null);
-            commandState = commandState with { PendingResults = commandState.PendingResults.Append(running).ToArray() };
+                null);
+            commandState = commandState with { PendingResults = [.. commandState.PendingResults, running] };
             await commandStateStore.SaveAsync(commandState, cancellationToken);
 
             var result = await ExecuteCommandAsync(command, credentials, startedAt, cancellationToken);
@@ -337,7 +549,7 @@ public sealed class SyncWorker(
         var pending = state.PendingResults.Where(item => item.CommandId != result.CommandId).Append(result).ToArray();
         var recent = state.RecentCompletedIds.Where(id => id != result.CommandId).Append(result.CommandId)
             .TakeLast(MaxRecentCommands).ToArray();
-        return state with { PendingResults = pending, RecentCompletedIds = recent };
+        return new AgentCommandStoreState(pending, recent);
     }
 
     private async Task<AgentCommandResult> ExecuteCommandAsync(
@@ -380,7 +592,7 @@ public sealed class SyncWorker(
                           !string.IsNullOrWhiteSpace(persistedCredentials.AgentSecret);
             return healthy
                 ? new AgentCommandResult(command.CommandId, AgentCommandStatus.Succeeded, startedAt,
-                    timeProvider.GetUtcNow(), null, null, null)
+                    timeProvider.GetUtcNow(), null, null)
                 : Failed(command.CommandId, startedAt, "credentials_unavailable", "Persisted credentials are unavailable.");
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
@@ -393,7 +605,7 @@ public sealed class SyncWorker(
 
     private AgentCommandResult Failed(Guid commandId, DateTimeOffset startedAt, string code, string message) =>
         new(commandId, AgentCommandStatus.Failed, startedAt, timeProvider.GetUtcNow(), code,
-            message.Length > 1000 ? message[..1000] + "…" : message, null);
+            message.Length > 1000 ? message[..1000] + "…" : message);
 
     private static bool IsTransient(Exception exception) => exception is HttpRequestException or TaskCanceledException;
     private sealed class AgentCredentialException : Exception;
@@ -403,9 +615,9 @@ public sealed class SyncWorker(
     private IReadOnlyList<ServiceRuntimeState> WithPortHoppingErrors(IReadOnlyList<ServiceRuntimeState> states) =>
         portHopping.LastError is not { } error
             ? states
-            : states.Select(state => portHopping.HoppingServices.Contains(state.ServiceId) && state.ErrorCode is null
+            : [.. states.Select(state => portHopping.HoppingServices.Contains(state.ServiceId) && state.ErrorCode is null
                 ? state with { ErrorCode = "port_hopping_failed", ErrorMessage = error }
-                : state).ToArray();
+                : state)];
 
     /// <summary>
     /// The Node was deleted in the Panel: stop every managed backend, forget the identity and local

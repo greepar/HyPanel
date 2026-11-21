@@ -1,7 +1,7 @@
-namespace HyPanel.Server.Tests;
-
 using HyPanel.Server;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+
+namespace HyPanel.Server.Tests;
 
 [TestClass]
 public sealed class PanelAddressTests

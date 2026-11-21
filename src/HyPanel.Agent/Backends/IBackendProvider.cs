@@ -1,6 +1,7 @@
-namespace HyPanel.Agent.Backends;
-
 using HyPanel.Shared.Contracts;
+using HyPanel.Shared.Networking;
+
+namespace HyPanel.Agent.Backends;
 
 public interface IBackendProvider
 {
@@ -27,6 +28,16 @@ public interface IBackendProvider
     ValueTask<IReadOnlyList<BackendUserTraffic>> CollectUserTrafficAsync(
         BackendInstanceContext instance,
         CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// A backend whose services can listen on extra UDP ports that the Agent redirects to the listen port
+/// (see <see cref="Infrastructure.PortHoppingManager"/>).
+/// </summary>
+public interface IPortHoppingBackend
+{
+    /// <summary>The listen port and the hopping ports of a service config, or null when it has none.</summary>
+    (int ListenPort, PortSpec Ports)? PortHopping(string configJson);
 }
 
 [Flags]

@@ -1,7 +1,7 @@
-namespace HyPanel.Server.Endpoints;
-
 using HyPanel.Server.Backup;
 using Microsoft.AspNetCore.Http.Features;
+
+namespace HyPanel.Server.Endpoints;
 
 internal static class AdminBackupEndpoints
 {

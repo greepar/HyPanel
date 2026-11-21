@@ -26,7 +26,7 @@ public sealed class ReleaseSyncWorkerTests
                 Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(), bytes.Length), Bytes: bytes);
         }).ToArray();
         var manifest = new AgentReleaseManifest(1, "1.3.0", DateTimeOffset.Parse("2026-09-16T00:00:00Z"),
-            assets.Select(item => item.Asset).ToArray());
+            [.. assets.Select(item => item.Asset)]);
         var handler = new ReleaseHandler(JsonSerializer.SerializeToUtf8Bytes(manifest,
             HyPanelJsonSerializerContext.Default.AgentReleaseManifest), assets.ToDictionary(item => item.Asset.FileName,
             item => item.Bytes), "unix-installer"u8.ToArray(), "powershell-installer"u8.ToArray());
@@ -106,9 +106,9 @@ public sealed class ReleaseSyncWorkerTests
     }
 
     private static AgentReleaseManifest CreateCachedManifest() => new(1, "1.2.0",
-        DateTimeOffset.Parse("2026-09-15T00:00:00Z"), ReleaseCatalog.SupportedRids.Select(rid => new AgentReleaseAsset(rid,
+        DateTimeOffset.Parse("2026-09-15T00:00:00Z"), [.. ReleaseCatalog.SupportedRids.Select(rid => new AgentReleaseAsset(rid,
             $"hypanel-agent-1.2.0-{rid}.{(rid.StartsWith("win-", StringComparison.Ordinal) ? "zip" : "tar.gz")}",
-            new string('a', 64), 1)).ToArray());
+            new string('a', 64), 1))]);
 
     private sealed class ClientFactory(HttpMessageHandler handler) : IHttpClientFactory
     {

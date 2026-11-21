@@ -1,6 +1,6 @@
-namespace HyPanel.Server.Persistence;
-
 using Microsoft.Data.Sqlite;
+
+namespace HyPanel.Server.Persistence;
 
 internal sealed record PasskeyRecord(string Id, Guid UserId, string Name, byte[] PublicKey, int Algorithm,
     long SignCount, DateTimeOffset CreatedAtUtc, DateTimeOffset? LastUsedAtUtc);

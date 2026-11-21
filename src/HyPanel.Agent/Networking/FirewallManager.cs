@@ -1,8 +1,8 @@
-namespace HyPanel.Agent.Networking;
-
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
+
+namespace HyPanel.Agent.Networking;
 
 /// <summary>An inbound packet class that must reach the host: TCP/UDP to a port, or the GRE protocol.</summary>
 public sealed record FirewallOpening(string Protocol, int? Port, string? Source)
@@ -40,7 +40,7 @@ public sealed class FirewallManager(ILogger<FirewallManager> logger, AgentEnroll
     private static readonly TimeSpan RetryInterval = TimeSpan.FromMinutes(1);
 
     private readonly SemaphoreSlim gate = new(1, 1);
-    private readonly Dictionary<string, HashSet<FirewallOpening>> owners = new();
+    private readonly Dictionary<string, HashSet<FirewallOpening>> owners = [];
     private readonly FirewallCommandRunner run = runner ?? RunProcessAsync;
     private readonly TimeProvider clock = time ?? TimeProvider.System;
     private State? applied;
@@ -63,7 +63,7 @@ public sealed class FirewallManager(ILogger<FirewallManager> logger, AgentEnroll
         try
         {
             if (openings.Count == 0) owners.Remove(owner);
-            else owners[owner] = openings.ToHashSet();
+            else owners[owner] = [.. openings];
             LastError = await ReconcileAsync(ct);
             return LastError;
         }
@@ -97,7 +97,7 @@ public sealed class FirewallManager(ILogger<FirewallManager> logger, AgentEnroll
                 signature = wanted;
                 verifiedAt = clock.GetUtcNow();
                 failedSignature = failedError = null;
-                applied = applied with { Openings = desired.Select(o => o.Key).ToHashSet(), Forwarding = false };
+                applied = applied with { Openings = [.. desired.Select(o => o.Key)], Forwarding = false };
                 Save(applied);
                 return null;
             }
@@ -241,7 +241,7 @@ public sealed class FirewallManager(ILogger<FirewallManager> logger, AgentEnroll
             return desired.Count == 0 ? null : "节点没有 iptables 或 firewalld，无法自动放行端口；如有防火墙请手动放行所需端口。";
         }
         // IPv6 entries reach the same ports; source-restricted openings name IPv4 peers and stay IPv4 only.
-        try { return await ReconcileChainAsync("ip6tables", desired.Where(o => o.Source is null).ToHashSet(), ct); }
+        try { return await ReconcileChainAsync("ip6tables", [.. desired.Where(o => o.Source is null)], ct); }
         catch (Win32Exception) { return null; }
     }
 

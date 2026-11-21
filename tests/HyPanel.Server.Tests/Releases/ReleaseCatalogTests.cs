@@ -115,9 +115,9 @@ public sealed class ReleaseCatalogTests
         var newer = CreateManifest() with
         {
             Version = "1.3.0",
-            Assets = SupportedRids.Select(rid => new AgentReleaseAsset(rid,
+            Assets = [.. SupportedRids.Select(rid => new AgentReleaseAsset(rid,
                 $"hypanel-agent-1.3.0-{rid}.{(rid.StartsWith("win-", StringComparison.Ordinal) ? "zip" : "tar.gz")}",
-                new string('b', 64), 2)).ToArray()
+                new string('b', 64), 2))]
         };
         fixture.WriteVersionedManifest(fixture.Manifest);
         fixture.WriteManifest(newer);
@@ -156,11 +156,11 @@ public sealed class ReleaseCatalogTests
         1,
         "1.2.3",
         new DateTimeOffset(2026, 9, 9, 12, 0, 0, TimeSpan.Zero),
-        SupportedRids.Select((rid, index) => new AgentReleaseAsset(
+        [.. SupportedRids.Select((rid, index) => new AgentReleaseAsset(
             rid,
             $"hypanel-agent-1.2.3-{rid}.{(rid.StartsWith("win-", StringComparison.Ordinal) ? "zip" : "tar.gz")}",
             string.Create(64, index, static (span, value) => span.Fill("0123456789abcdef"[value % 16])),
-            1)).ToArray());
+            1))]);
 
     private sealed class ReleaseFixture : IDisposable
     {

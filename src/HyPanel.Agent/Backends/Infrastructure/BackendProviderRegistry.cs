@@ -1,6 +1,7 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace HyPanel.Agent.Backends.Infrastructure;
 
-using System.Diagnostics.CodeAnalysis;
 /// <summary>Lookup for the statically linked backend providers registered with DI.</summary>
 public sealed class BackendProviderRegistry
 {

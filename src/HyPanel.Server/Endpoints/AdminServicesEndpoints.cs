@@ -1,12 +1,14 @@
-namespace HyPanel.Server.Endpoints;
-
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using HyPanel.Server.Persistence;
 using HyPanel.Server.Backends;
+using HyPanel.Server.Persistence;
 using HyPanel.Server.Releases;
+using HyPanel.Shared.Contracts;
+using HyPanel.Shared.Networking;
 using HyPanel.Shared.Versioning;
+
+namespace HyPanel.Server.Endpoints;
 
 internal static class AdminServicesEndpoints
 {
@@ -44,11 +46,23 @@ internal static class AdminServicesEndpoints
     }
 
     /// <summary>The message to show when the upstream proxy settings are incomplete or invalid; null when they are fine.</summary>
-    internal static string? UpstreamProxyError(string config)
+    internal static string? UpstreamProxyError(string config) => UpstreamProxyError(config, null);
+
+    /// <summary>
+    /// Like <see cref="UpstreamProxyError(string)"/>, plus the extra lines (routes): only REALITY services can have
+    /// them, since only Xray can tell users apart and route them to different exits on one port.
+    /// </summary>
+    internal static string? UpstreamProxyError(string config, string? backendType)
     {
         using var json = JsonDocument.Parse(config);
         if (json.RootElement.ValueKind != JsonValueKind.Object) return null;
         var root = json.RootElement;
+        if (root.TryGetProperty("routes", out var routes) && routes.ValueKind != JsonValueKind.Null)
+        {
+            if (backendType is not null && !BackendDefinitionCatalog.Has(backendType, BackendFeatures.Routes))
+                return "这种服务不支持多条线路。";
+            if (!ServiceRoute.TryParse(root, out _, out var routeError)) return routeError;
+        }
         string? Text(string name) => root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString() : null;
         int? port = null;
@@ -58,8 +72,33 @@ internal static class AdminServicesEndpoints
                 return "上游代理端口必须是 1 到 65535 之间的整数。";
             port = number;
         }
-        return HyPanel.Shared.Networking.UpstreamProxy.TryCreate(Text("upstreamProxyType"), Text("upstreamProxyHost"), port,
+        return UpstreamProxy.TryCreate(Text("upstreamProxyType"), Text("upstreamProxyHost"), port,
             Text("upstreamProxyUsername"), Text("upstreamProxyPassword"), out _, out var error) ? null : error;
+    }
+
+    /// <summary>The first Agent that understands extra lines; older ones reject the unknown field and stop the service.</summary>
+    internal const string RoutesMinimumAgentVersion = "0.5.34";
+
+    /// <summary>
+    /// Refuses a backend or extra lines on a node whose Agent is too old to run them, instead of saving a service the
+    /// node would stop.
+    /// </summary>
+    internal static async Task<string?> AgentSupportError(Guid nodeId, string backendType, string config,
+        SqliteServerRepository repository, CancellationToken ct)
+    {
+        var (required, feature) = BackendDefinitionCatalog.TryGet(backendType, out var definition)
+                                  && definition.MinimumAgentVersion is { } backendMinimum
+            ? (backendMinimum, definition.DisplayName)
+            : ServiceRoute.Parse(config).Count > 0
+                ? (RoutesMinimumAgentVersion, "多条线路")
+                : (null, null);
+        if (required is null) return null;
+        var version = await repository.GetNodeAgentVersionAsync(nodeId, ct);
+        return version is not null && SemanticVersion.TryParse(version, out var current)
+               && SemanticVersion.TryParse(required, out var minimum)
+               && current.CompareTo(minimum) < 0
+            ? $"这个节点的 Agent 是 {version}，需要更新到 {required} 或更新版本才能使用{feature}。"
+            : null;
     }
 
     private static IResult InvalidConfig(string message) =>
@@ -80,7 +119,8 @@ internal static class AdminServicesEndpoints
         var hasPort = root.ValueKind == JsonValueKind.Object && root.TryGetProperty("relayPort", out var port)
             && port.ValueKind != JsonValueKind.Null;
         if (!hasNode && !hasPort) return true;
-        if (SqliteServerRepository.Relay(config) is not { } relay || backend != "xray"
+        if (SqliteServerRepository.Relay(config) is not { } relay
+            || !BackendDefinitionCatalog.Has(backend, BackendFeatures.Relay)
             || relay.NodeId == Guid.Empty || relay.NodeId == nodeId || relay.Port is < 1 or > 65535) return false;
         // Port collisions are checked per protocol, against enabled services only, by ServicePortConflicts.
         return await repository.GetNodeAsync(relay.NodeId, ct) is not null;
@@ -120,6 +160,13 @@ internal static class AdminServicesEndpoints
             foreach (var pair in config)
                 if (IsSecretName(pair.Key) && pair.Value is JsonValue value && value.TryGetValue<string>(out var text))
                     secrets[pair.Key] = text;
+                // Route secrets come back as "routes.<id>.<key>".
+                else if (pair.Key == "routes" && pair.Value is JsonArray routes)
+                    foreach (var route in routes.OfType<JsonObject>())
+                        if (route["id"] is JsonValue id && id.TryGetValue<string>(out var routeId))
+                            foreach (var field in route)
+                                if (IsSecretName(field.Key) && field.Value is JsonValue secret && secret.TryGetValue<string>(out var routeText))
+                                    secrets[$"routes.{routeId}.{field.Key}"] = routeText;
         request.HttpContext.Response.Headers.CacheControl = "no-store";
         return Results.Json(secrets, ServerJsonSerializerContext.Default.DictionaryStringString);
     }
@@ -137,7 +184,9 @@ internal static class AdminServicesEndpoints
             !HasNoExitNode(configJson) ||
             !await HasValidRelayAsync(nodeId, Guid.Empty, backendType, configJson, repository, cancellationToken))
             return Results.BadRequest();
-        if (UpstreamProxyError(configJson) is { } createProxyError) return InvalidConfig(createProxyError);
+        if (UpstreamProxyError(configJson, backendType) is { } createProxyError) return InvalidConfig(createProxyError);
+        if (await AgentSupportError(nodeId, backendType, configJson, repository, cancellationToken) is { } createAgentError)
+            return InvalidConfig(createAgentError);
         if (ServicePortConflicts.Find(new(Guid.NewGuid(), nodeId, name, backendType, true, configJson),
                 await repository.GetServiceBindingSourcesAsync(cancellationToken)) is { } conflict)
             return PortConflict(conflict);
@@ -147,7 +196,7 @@ internal static class AdminServicesEndpoints
                 request.ConfigSchemaVersion, configJson, now, now), cancellationToken);
         if (result.Service is null) return Results.NotFound();
         // A new service is immediately usable: groups that auto-include new services grant it to their members.
-        if (Backends.BackendCapabilities.IsMultiUser(backendType))
+        if (BackendCapabilities.IsMultiUser(backendType))
             await repository.AddServiceToAutoGroupsAsync(result.Service.Id, cancellationToken);
         var revision = (await repository.GetNodeAsync(nodeId, cancellationToken))?.DesiredRevision ?? result.Revision;
         return Results.Json(new ServiceMutationResponse(result.Service.Id, revision),
@@ -165,19 +214,28 @@ internal static class AdminServicesEndpoints
             .FirstOrDefault(service => service.Id == serviceId);
         if (existing is null) return Results.NotFound();
         if (!TryValidateUpdate(request, out var name, out var version, out var configJson)) return Results.BadRequest();
+        // A service may move to another engine of the same protocol (official Hysteria2 ↔ Xray); clients keep working.
+        var backendType = request.BackendType ?? existing.BackendType;
+        if (backendType != existing.BackendType
+            && (!BackendDefinitionCatalog.TryGet(backendType, out var target)
+                || !BackendDefinitionCatalog.TryGet(existing.BackendType, out var current)
+                || target.ServiceProtocol.Id != current.ServiceProtocol.Id))
+            return InvalidConfig("只能在同一协议的不同内核之间切换。");
         if (!TryMergeRedactedSecrets(existing.ConfigJson, configJson, out configJson)) return Results.BadRequest();
-        if (!await HasValidCertificateAsync(existing.BackendType, configJson, repository, cancellationToken) ||
-            !HasValidPortHopping(existing.BackendType, configJson) ||
+        if (!await HasValidCertificateAsync(backendType, configJson, repository, cancellationToken) ||
+            !HasValidPortHopping(backendType, configJson) ||
             !HasNoExitNode(configJson) ||
-            !await HasValidRelayAsync(nodeId, serviceId, existing.BackendType, configJson, repository, cancellationToken))
+            !await HasValidRelayAsync(nodeId, serviceId, backendType, configJson, repository, cancellationToken))
             return Results.BadRequest();
-        if (UpstreamProxyError(configJson) is { } updateProxyError) return InvalidConfig(updateProxyError);
-        if (ServicePortConflicts.Find(new(serviceId, nodeId, name, existing.BackendType, request.Enabled, configJson),
+        if (UpstreamProxyError(configJson, backendType) is { } updateProxyError) return InvalidConfig(updateProxyError);
+        if (await AgentSupportError(nodeId, backendType, configJson, repository, cancellationToken) is { } updateAgentError)
+            return InvalidConfig(updateAgentError);
+        if (ServicePortConflicts.Find(new(serviceId, nodeId, name, backendType, request.Enabled, configJson),
                 await repository.GetServiceBindingSourcesAsync(cancellationToken)) is { } conflict)
             return PortConflict(conflict);
         var now = timeProvider.GetUtcNow();
         var result = await repository.UpdateServiceAsync(
-            new ServiceInstanceRecord(serviceId, nodeId, name, existing.BackendType, version, request.Enabled,
+            new ServiceInstanceRecord(serviceId, nodeId, name, backendType, version, request.Enabled,
                 request.ConfigSchemaVersion, configJson, existing.CreatedAtUtc, now), cancellationToken);
         return result.Service is null
             ? Results.NotFound()
@@ -336,13 +394,13 @@ internal static class AdminServicesEndpoints
     internal static bool TryBackendType(string? value, out string backendType)
     {
         backendType = value?.Trim().ToLowerInvariant() ?? string.Empty;
-        return backendType is "hysteria2" or "xray" or "xray-ss";
+        return BackendDefinitionCatalog.TryGet(backendType, out _);
     }
 
-    /// <summary>Hysteria2 port hopping is optional; when present it must be a valid port list or range set.</summary>
+    /// <summary>Port hopping is optional; when present it must be a valid port list or range set.</summary>
     internal static bool HasValidPortHopping(string backendType, string configJson)
     {
-        if (backendType != "hysteria2") return true;
+        if (!BackendDefinitionCatalog.Has(backendType, BackendFeatures.PortHopping)) return true;
         try
         {
             using var document = JsonDocument.Parse(configJson);
@@ -350,7 +408,7 @@ internal static class AdminServicesEndpoints
                 value.ValueKind == JsonValueKind.Null ||
                 value.ValueKind == JsonValueKind.String && string.IsNullOrWhiteSpace(value.GetString())) return true;
             return value.ValueKind == JsonValueKind.String &&
-                   HyPanel.Shared.Networking.PortSpec.TryParse(value.GetString(), out _);
+                   PortSpec.TryParse(value.GetString(), out _);
         }
         catch (JsonException) { return false; }
     }
@@ -358,13 +416,17 @@ internal static class AdminServicesEndpoints
     internal static async Task<bool> HasValidCertificateAsync(string backendType, string configJson,
         SqliteServerRepository repository, CancellationToken ct)
     {
-        if (backendType != "hysteria2") return true;
+        if (!BackendDefinitionCatalog.TryGet(backendType, out var definition)
+            || !definition.Has(BackendFeatures.Certificate)) return true;
         try
         {
             using var document = JsonDocument.Parse(configJson);
-            return document.RootElement.TryGetProperty("certificateId", out var property) &&
-                   Guid.TryParse(property.GetString(), out var id) &&
-                   await repository.GetCertificateWithKeyAsync(id, ct) is not null;
+            if (!document.RootElement.TryGetProperty("certificateId", out var property) ||
+                !Guid.TryParse(property.GetString(), out var id) ||
+                await repository.GetCertificateWithKeyAsync(id, ct) is not { } certificate) return false;
+            // ACME certificates are issued by the engine itself; engines that cannot do that need a stored one.
+            return certificate.Kind != TlsCertificateKinds.Acme
+                   || definition.Has(BackendFeatures.AcmeCertificate);
         }
         catch (JsonException) { return false; }
     }
@@ -436,6 +498,17 @@ internal static class AdminServicesEndpoints
 
     private static void MergeRedactedSecrets(JsonNode? existing, JsonNode? submitted)
     {
+        // Lists of objects with an "id" (routes) are matched by id, so reordering or adding lines keeps passwords.
+        if (existing is JsonArray existingArray && submitted is JsonArray submittedArray)
+        {
+            foreach (var item in submittedArray)
+                if (item is JsonObject submittedItem && submittedItem["id"]?.GetValueKind() == JsonValueKind.String)
+                    MergeRedactedSecrets(existingArray.OfType<JsonObject>().FirstOrDefault(candidate =>
+                        candidate["id"]?.GetValueKind() == JsonValueKind.String
+                        && string.Equals(candidate["id"]!.GetValue<string>(), submittedItem["id"]!.GetValue<string>(),
+                            StringComparison.OrdinalIgnoreCase)), submittedItem);
+            return;
+        }
         if (existing is not JsonObject existingObject || submitted is not JsonObject submittedObject) return;
         foreach (var pair in submittedObject.ToArray())
         {

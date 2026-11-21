@@ -1,6 +1,6 @@
-namespace HyPanel.Shared.Versioning;
-
 using System.Globalization;
+
+namespace HyPanel.Shared.Versioning;
 
 public readonly record struct SemanticVersion(int Major, int Minor, int Patch, string? PreRelease)
     : IComparable<SemanticVersion>

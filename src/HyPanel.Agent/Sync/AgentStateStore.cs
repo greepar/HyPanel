@@ -1,7 +1,7 @@
-namespace HyPanel.Agent;
-
 using System.Text.Json;
 using HyPanel.Shared.Contracts;
+
+namespace HyPanel.Agent;
 
 public sealed record AgentLocalState(long AppliedRevision, NodeDesiredState? DesiredState = null);
 

@@ -244,6 +244,55 @@ public sealed class XrayProviderTests
         }
     }
 
+    private static readonly Guid RouteId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+    private static readonly Guid UserId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+
+    [TestMethod]
+    public async Task RoutesShareThePortAndSendEachLinesUsersToItsOwnExit()
+    {
+        var config = CreateConfigJson().TrimEnd('}') +
+            $",\"routes\":[{{\"id\":\"{RouteId}\",\"name\":\"法国\",\"upstreamProxyType\":\"socks5\",\"upstreamProxyHost\":\"fr.example\",\"upstreamProxyPort\":1080}}]}}";
+        var desired = CreateDesiredState(configJson: config);
+        Assert.IsTrue((await provider.ValidateAsync(desired, CancellationToken.None)).IsValid);
+        using var document = JsonDocument.Parse((await provider.RenderConfigAsync(desired, CancellationToken.None)).Content);
+        var root = document.RootElement;
+
+        Assert.AreEqual(1, root.GetProperty("inbounds").GetArrayLength(), "one inbound, one port");
+        var clients = root.GetProperty("inbounds")[0].GetProperty("settings").GetProperty("clients");
+        Assert.AreEqual(2, clients.GetArrayLength());
+        Assert.AreEqual(ClientId, clients[0].GetProperty("id").GetString());
+        Assert.AreEqual(HyPanel.Shared.Networking.ServiceRoute.Credential(ClientId, RouteId), clients[1].GetProperty("id").GetString());
+        var routeEmail = clients[1].GetProperty("email").GetString();
+
+        var outbounds = root.GetProperty("outbounds");
+        Assert.AreEqual("direct", outbounds[0].GetProperty("tag").GetString(), "the default line still goes direct");
+        Assert.AreEqual("socks", outbounds[1].GetProperty("protocol").GetString());
+        Assert.AreEqual("blocked", outbounds[outbounds.GetArrayLength() - 1].GetProperty("tag").GetString());
+
+        var rule = root.GetProperty("routing").GetProperty("rules")[0];
+        Assert.AreEqual(outbounds[1].GetProperty("tag").GetString(), rule.GetProperty("outboundTag").GetString());
+        Assert.AreEqual(routeEmail, rule.GetProperty("user")[0].GetString());
+    }
+
+    [TestMethod]
+    public async Task RouteWithIncompleteProxyIsRejected()
+    {
+        var config = CreateConfigJson().TrimEnd('}') +
+            $",\"routes\":[{{\"id\":\"{RouteId}\",\"name\":\"x\",\"upstreamProxyType\":\"socks5\"}}]}}";
+        Assert.IsFalse((await provider.ValidateAsync(CreateDesiredState(configJson: config), CancellationToken.None)).IsValid);
+    }
+
+    [TestMethod]
+    public void StatsOfAllLinesAddUpPerUser()
+    {
+        var json = $$"""{"stat":[{"name":"user>>>hypanel-{{UserId:N}}>>>traffic>>>uplink","value":10},{"name":"user>>>hypanel-{{UserId:N}}-{{RouteId:N}}>>>traffic>>>uplink","value":5},{"name":"user>>>hypanel-{{UserId:N}}-{{RouteId:N}}>>>traffic>>>downlink","value":7}]}""";
+
+        var traffic = XrayProvider.ParseStats(json, [new BackendUser(UserId, ClientId)], DateTimeOffset.UnixEpoch).Single();
+
+        Assert.AreEqual(15, traffic.UploadBytes);
+        Assert.AreEqual(7, traffic.DownloadBytes);
+    }
+
     private static ServiceDesiredState CreateDesiredState(int schemaVersion = 1, string? configJson = null) =>
         new(Guid.NewGuid(), "test", "xray", "25.1.30", true, schemaVersion, configJson ?? CreateConfigJson(),
             [new BackendUser(Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), ClientId)], 20000);

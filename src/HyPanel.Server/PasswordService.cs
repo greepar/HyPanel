@@ -1,7 +1,7 @@
-namespace HyPanel.Server;
-
 using System.Security.Cryptography;
 using System.Text;
+
+namespace HyPanel.Server;
 
 internal sealed class PasswordService
 {

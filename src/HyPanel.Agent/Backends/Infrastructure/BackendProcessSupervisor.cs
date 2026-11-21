@@ -1,9 +1,9 @@
-namespace HyPanel.Agent.Backends.Infrastructure;
-
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using HyPanel.Shared.Contracts;
+
+namespace HyPanel.Agent.Backends.Infrastructure;
 
 public sealed record BackendProcessStatus(
     Guid ServiceId,
@@ -17,10 +17,29 @@ public sealed class BackendProcessSupervisor(ILogger<BackendProcessSupervisor> l
 {
     private readonly ConcurrentDictionary<Guid, ManagedProcess> processes = new();
 
+    /// <summary>Raised (from an output reader thread) whenever a backend writes a new line.</summary>
+    public event Action? LogWritten;
+
+    /// <summary>
+    /// Lines numbered above <paramref name="after"/> for every service that has some, oldest first. Numbers start at
+    /// 1 per service when this process starts and survive backend restarts.
+    /// </summary>
+    public IReadOnlyList<(Guid ServiceId, long FirstSequence, IReadOnlyList<string> Lines)> LogsAfter(
+        IReadOnlyDictionary<Guid, long> after)
+    {
+        var result = new List<(Guid, long, IReadOnlyList<string>)>();
+        foreach (var (serviceId, managed) in processes)
+        {
+            var (first, lines) = managed.LogsAfter(after.GetValueOrDefault(serviceId));
+            if (lines.Count > 0) result.Add((serviceId, first, lines));
+        }
+        return result;
+    }
+
     public async Task<BackendProcessStatus> StartAsync(Guid serviceId, BackendProcessSpec spec,
         CancellationToken cancellationToken)
     {
-        var managed = processes.GetOrAdd(serviceId, static id => new ManagedProcess(id));
+        var managed = processes.GetOrAdd(serviceId, id => new ManagedProcess(id, () => LogWritten?.Invoke()));
         await managed.Gate.WaitAsync(cancellationToken);
         try
         {
@@ -200,11 +219,12 @@ public sealed class BackendProcessSupervisor(ILogger<BackendProcessSupervisor> l
                                                                 char.IsAsciiLetterOrDigit(character) ||
                                                                 character == '_');
 
-    private sealed class ManagedProcess(Guid serviceId)
+    private sealed class ManagedProcess(Guid serviceId, Action? logWritten = null)
     {
-        private const int MaxLogEntries = 256;
+        private const int MaxLogEntries = 512;
         internal const int MaxLogEntryCharacters = 4096;
         private readonly Queue<string> logs = new();
+        private long lastSequence;
         public Guid ServiceId { get; } = serviceId;
         public SemaphoreSlim Gate { get; } = new(1, 1);
         public Process? Process { get; set; }
@@ -219,6 +239,20 @@ public sealed class BackendProcessSupervisor(ILogger<BackendProcessSupervisor> l
             {
                 if (logs.Count == MaxLogEntries) logs.Dequeue();
                 logs.Enqueue(line);
+                lastSequence++;
+            }
+            logWritten?.Invoke();
+        }
+
+        public (long FirstSequence, IReadOnlyList<string> Lines) LogsAfter(long after)
+        {
+            lock (logs)
+            {
+                var oldest = lastSequence - logs.Count + 1;
+                // A cursor behind the buffer (lines rolled out unsent) sends everything still held.
+                var skip = after >= oldest && after <= lastSequence ? after - oldest + 1 : 0;
+                var lines = logs.Skip((int)skip).ToArray();
+                return (oldest + skip, lines);
             }
         }
 
@@ -226,7 +260,7 @@ public sealed class BackendProcessSupervisor(ILogger<BackendProcessSupervisor> l
         {
             lock (logs)
                 return new(ServiceId, status, Process is { HasExited: false } ? Process.Id : null, ExitCode,
-                    logs.ToArray(), Error);
+                    [.. logs], Error);
         }
     }
 }

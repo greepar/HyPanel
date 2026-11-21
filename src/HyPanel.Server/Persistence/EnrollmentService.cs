@@ -1,6 +1,6 @@
-namespace HyPanel.Server.Persistence;
-
 using System.Security.Cryptography;
+
+namespace HyPanel.Server.Persistence;
 
 internal sealed class EnrollmentService(SqliteServerRepository repository, TimeProvider timeProvider)
 {

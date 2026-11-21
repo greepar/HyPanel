@@ -1,8 +1,8 @@
-namespace HyPanel.Agent.Backends.Infrastructure;
-
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+
+namespace HyPanel.Agent.Backends.Infrastructure;
 
 /// <summary>
 /// Port hopping without nftables, for Agents in the Linux VM of Docker Desktop or OrbStack: those forward only
@@ -18,7 +18,7 @@ public sealed class UdpPortRelay(ILogger<UdpPortRelay> logger) : IDisposable
     private static readonly TimeSpan SessionIdleTimeout = TimeSpan.FromMinutes(2);
 
     private readonly Lock gate = new();
-    private readonly Dictionary<int, Listener> listeners = new();
+    private readonly Dictionary<int, Listener> listeners = [];
     private Timer? sweeper;
 
     public int ListenerCount
@@ -70,7 +70,7 @@ public sealed class UdpPortRelay(ILogger<UdpPortRelay> logger) : IDisposable
     private void Sweep()
     {
         Listener[] snapshot;
-        lock (gate) snapshot = listeners.Values.ToArray();
+        lock (gate) snapshot = [.. listeners.Values];
         var cutoff = Environment.TickCount64 - (long)SessionIdleTimeout.TotalMilliseconds;
         foreach (var listener in snapshot) listener.CloseIdleSessions(cutoff);
     }

@@ -9,6 +9,7 @@
   --success: #1f8a53; --danger: #d0364b; --warning: #b26b00; --info: #3f5bd6;
   --shadow-sm: 0 1px 2px rgba(16,16,20,.04); --shadow: 0 12px 32px rgba(16,16,20,.10), 0 2px 6px rgba(16,16,20,.05);
   --radius: 12px; --radius-sm: 8px; --topbar: 60px;
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   color: var(--text); background: var(--bg);
 }
@@ -318,7 +319,11 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 .detail-tabs a { position: relative; flex: 0 0 auto; padding: 10px 2px; color: var(--muted); font-size: 13px; font-weight: 500; text-decoration: none }
 .detail-tabs a:hover { color: var(--text) }
 .detail-tabs a.active { color: var(--text) }
-.detail-tabs a.active::after { content: ""; position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; border-radius: 2px; background: var(--text) }
+.detail-tabs { position: relative }
+.detail-tabs a { transition: color .15s }
+/* Before the first measure the active tab draws its own underline; after it, one shared bar slides between tabs. */
+.detail-tabs:not(.measured) a.active::after { content: ""; position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; border-radius: 2px; background: var(--text) }
+.tab-indicator { position: absolute; bottom: 0; left: 0; height: 2px; border-radius: 2px; background: var(--text); transition: transform .32s var(--ease-out), width .32s var(--ease-out); pointer-events: none }
 
 /* ---------- services ---------- */
 .selection-bar { position: sticky; top: calc(var(--topbar) + 10px); z-index: 10; display: flex; align-items: center; gap: 12px; margin-bottom: 14px; padding: 10px 14px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow) }
@@ -557,3 +562,188 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 .qr-cover { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 6px; color: #171717; font-size: 13px; font-weight: 600 }
 .obfs-field { display: grid; gap: 8px; grid-column: 1 / -1 }
 .obfs-field .field-help { margin: 0 }
+
+/* ---------- motion: sections, tabs, live state ---------- */
+/* Content is visible by default; the entrance only settles it into place. */
+.route-view { animation: view-in .28s var(--ease-out) backwards }
+.tab-view { animation: tab-in .22s var(--ease-out) backwards }
+@keyframes view-in { from { opacity: 0; transform: translateY(6px) } }
+@keyframes tab-in { from { opacity: 0; transform: translateY(3px) } }
+/* A status that changes on its own (live update) cross-fades in so the change is noticed without a jolt. */
+.live-badge, .badge-applying { animation: badge-in .24s var(--ease-out) both }
+@keyframes badge-in { from { opacity: 0; transform: scale(.92) } }
+.button:active:not(:disabled), .icon-button:active:not(:disabled) { transform: scale(.97) }
+.button, .icon-button { transition: background .12s, border-color .12s, opacity .12s, transform .1s }
+
+.badge-applying { gap: 6px; color: var(--info); background: color-mix(in srgb, var(--info) 11%, transparent) }
+.badge-applying .pending-dot, .live-status .pending-dot { width: 7px; height: 7px; border: 0; background: currentColor; animation: breathe 1.4s ease-in-out infinite }
+.service-card.applying { border-color: color-mix(in srgb, var(--info) 40%, var(--border)) }
+.live-status { display: inline-flex; align-items: center; gap: 7px; color: var(--info) !important }
+@keyframes breathe { 0%, 100% { opacity: .35; transform: scale(.8) } 50% { opacity: 1; transform: scale(1) } }
+
+/* ---------- live log console ---------- */
+.log-console { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-sm) }
+.log-console > .notice { margin: 0 }
+.log-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px }
+.log-title { display: flex; min-width: 0; align-items: center; gap: 10px }
+.log-title h2 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.log-count { color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums }
+.live-chip { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 999px; color: var(--muted); background: var(--surface-2); font-size: 11px; font-weight: 600 }
+.live-chip i { position: relative; width: 7px; height: 7px; border-radius: 50%; background: var(--faint) }
+.live-chip.live { color: var(--success); background: color-mix(in srgb, var(--success) 11%, transparent) }
+.live-chip.live i { background: var(--success) }
+.live-chip.live i::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: var(--success); animation: ping 1.8s var(--ease-out) infinite }
+.live-chip.retrying, .live-chip.offline { color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent) }
+.live-chip.retrying i, .live-chip.offline i { background: var(--warning) }
+.live-chip.connecting i { animation: breathe 1.4s ease-in-out infinite }
+@keyframes ping { 0% { opacity: .7; transform: scale(1) } 80%, 100% { opacity: 0; transform: scale(2.6) } }
+.log-actions { display: flex; align-items: center; gap: 6px }
+.log-search { position: relative; display: flex; align-items: center }
+.log-search svg { position: absolute; left: 9px; color: var(--faint); pointer-events: none }
+.log-search input { width: 200px; min-height: 32px; padding: 5px 10px 5px 28px; font-size: 12px }
+.icon-button { display: grid; width: 32px; height: 32px; place-items: center; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--muted); background: var(--surface); cursor: pointer }
+.icon-button:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong) }
+.icon-button:disabled { cursor: not-allowed; opacity: .4 }
+.icon-button[aria-pressed="true"] { color: var(--accent-text); border-color: var(--accent); background: var(--accent) }
+
+/* The terminal stays dark in both themes: logs are read as program output, not page text. */
+.log-frame { --term-bg: #151618; --term-text: #d7dade; --term-dim: #7d838b; position: relative; overflow: hidden; border-radius: 10px; background: var(--term-bg); box-shadow: inset 0 0 0 1px rgba(255,255,255,.06) }
+.log-viewport { height: clamp(360px, calc(100vh - 360px), 900px); overflow: auto; padding: 10px 0; color: var(--term-text); font: 12px/1.65 var(--mono); scrollbar-color: #3a3d42 transparent; scrollbar-width: thin; outline: none }
+.log-viewport:focus-visible { box-shadow: inset 0 0 0 2px rgba(255,255,255,.25) }
+.log-viewport::-webkit-scrollbar { width: 10px; height: 10px }
+.log-viewport::-webkit-scrollbar-thumb { border: 3px solid var(--term-bg); border-radius: 999px; background: #3a3d42 }
+.log-viewport ::selection { color: #fff; background: rgba(138,180,248,.35) }
+.log-lines { margin: 0; padding: 0; list-style: none }
+/* Wrapped continuation lines hang 2ch in, so each entry's start stays easy to find. */
+.log-line { padding: 0 16px 0 calc(16px + 2ch); text-indent: -2ch; white-space: pre-wrap; overflow-wrap: anywhere }
+.log-line:hover { background: rgba(255,255,255,.035) }
+.log-line.level-warn { background: rgba(253,214,99,.06) }
+.log-line.level-error { color: #f6aea8; background: rgba(242,139,130,.09) }
+/* New lines arrive under a brief wash of light that drains away: the focal "it's live" cue. */
+.log-line.fresh { animation: line-arrive 1.1s var(--ease-out) both }
+@keyframes line-arrive { from { background-color: rgba(138,180,248,.16) } }
+.log-empty { display: grid; height: 100%; place-items: center; padding: 24px; color: var(--term-dim); font-family: inherit; text-align: center }
+.log-jump { position: absolute; right: 16px; bottom: 14px; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 0; border-radius: 999px; color: #151618; background: #e8eaed; box-shadow: 0 6px 18px rgba(0,0,0,.4); cursor: pointer; font-size: 12px; font-weight: 600; animation: jump-in .22s var(--ease-out) both }
+@keyframes jump-in { from { opacity: 0; transform: translateY(8px) } }
+.ansi-bold { font-weight: 700 } .ansi-dim { opacity: .65 }
+.ansi-black { color: #6e7681 } .ansi-red { color: #f28b82 } .ansi-green { color: #81c995 } .ansi-yellow { color: #fdd663 }
+.ansi-blue { color: #8ab4f8 } .ansi-magenta { color: #d7aefb } .ansi-cyan { color: #78d9ec } .ansi-white { color: #e8eaed }
+.ansi-bright-black { color: #9aa0a6 } .ansi-bright-red { color: #f6aea8 } .ansi-bright-green { color: #a8dab5 } .ansi-bright-yellow { color: #fde293 }
+.ansi-bright-blue { color: #aecbfa } .ansi-bright-magenta { color: #e9d2fd } .ansi-bright-cyan { color: #a1e4f2 } .ansi-bright-white { color: #ffffff }
+
+@media (max-width: 720px) {
+  .log-console { padding: 12px }
+  .log-actions { width: 100% }
+  .log-search { flex: 1 }
+  .log-search input { width: 100% }
+  .log-viewport { height: clamp(320px, calc(100vh - 300px), 700px); font-size: 11px }
+  .log-line { padding: 0 12px 0 calc(12px + 2ch) }
+}
+
+/* Reduced motion keeps the meaning (fades, colour) and drops the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .route-view, .tab-view { animation: fade-in .15s ease-out backwards !important; animation-duration: .15s !important }
+  .tab-indicator { transition: none !important }
+  .live-chip.live i::after, .badge-applying .pending-dot, .live-status .pending-dot { animation: none !important }
+  .log-line.fresh { animation-duration: 1.1s !important }
+}
+
+/* ---------- service editor ---------- */
+/* One column of quiet sections: what is usually edited sits up front, generated keys and rarely touched settings fold
+   away behind disclosures that state their current value. */
+.modal-wide { width: min(760px, 100%) }
+.service-editor { gap: 0; padding: 0 }
+.service-editor > * { margin: 0 24px }
+.service-editor .backend-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 4px; margin-bottom: 20px }
+.backend-option { padding: 10px 12px; transition: border-color .12s, box-shadow .12s }
+.backend-option strong { font-size: 13px }
+.editor-section { display: grid; gap: 14px; padding: 20px 0; border-top: 1px solid var(--border) }
+.service-editor > .editor-section:first-of-type { border-top: 0; padding-top: 4px }
+.backend-picker + .editor-section { border-top: 1px solid var(--border) !important; padding-top: 20px !important }
+.editor-section-head { display: grid; gap: 2px }
+.editor-section-head h3 { font-size: 14px }
+.editor-section-head p { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.55 }
+.editor-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 12px }
+.editor-grid > label, .exit-fields > label { display: grid; gap: 6px; min-width: 0; color: var(--muted); font-size: 12px; font-weight: 500 }
+.editor-grid > label > input, .editor-grid > label > .password-field, .exit-fields input { color: var(--text) }
+.editor-grid .span-2 { grid-column: span 2 }
+.editor-grid .wide, .editor-grid .editor-toggle { grid-column: 1 / -1 }
+.editor-grid input.mono { font-family: var(--mono); font-size: 12px }
+.editor-toggle { display: grid; gap: 6px }
+.editor-toggle > small { color: var(--muted); font-size: 12px }
+.editor-toggle > label:not(.switch) { display: grid; gap: 6px; max-width: 50%; color: var(--muted); font-size: 12px; font-weight: 500 }
+
+.editor-disclosure { padding: 0; border-top: 1px solid var(--border) }
+.editor-disclosure > summary { display: flex; align-items: baseline; gap: 10px; padding: 16px 0; cursor: pointer; list-style: none; font-size: 14px; font-weight: 600 }
+.editor-disclosure > summary::-webkit-details-marker { display: none }
+.editor-disclosure > summary::before { content: ""; align-self: center; width: 6px; height: 6px; margin-right: 2px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform .2s var(--ease-out) }
+.editor-disclosure[open] > summary::before { transform: rotate(45deg) translate(-1px, -1px) }
+.editor-disclosure > summary small { overflow: hidden; color: var(--muted); font-size: 12px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap }
+.editor-disclosure > summary:hover small { color: var(--text) }
+.editor-disclosure[open] { padding-bottom: 20px }
+.editor-disclosure[open] > :not(summary) { animation: tab-in .2s var(--ease-out) backwards }
+.editor-disclosure > .field-help { margin: -4px 0 14px }
+.editor-disclosure > .button { margin-top: 14px }
+.editor-disclosure > .editor-toggle { margin-top: 16px }
+.editor-section > .editor-disclosure { border-top: 0; margin-top: -6px }
+.editor-section > .editor-disclosure > summary { padding: 6px 0; font-size: 13px; font-weight: 500 }
+.editor-section > .editor-disclosure[open] { padding-bottom: 0 }
+
+/* Lines: one row per line, name on the left and exit on the right; proxy details unfold under it. */
+.route-list { display: grid; margin: 0; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); list-style: none }
+.route-item { display: grid; gap: 12px; padding: 12px 14px; transition: background .15s }
+.route-item + .route-item { border-top: 1px solid var(--border) }
+.route-item:has(.exit-fields) { background: var(--surface-2) }
+.route-item { animation: tab-in .22s var(--ease-out) backwards }
+.route-head { display: grid; grid-template-columns: minmax(0, 1fr) 200px 32px; gap: 10px; align-items: center }
+/* The default line has no delete button; its exit still lines up with the others. */
+.route-head:not(:has(.icon-button)) > .exit-picker { grid-column: 2 }
+.route-name { display: grid; min-width: 0 }
+.route-name strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap }
+.route-name small { color: var(--muted); font-size: 11.5px }
+.route-name-input { height: 34px; font-weight: 600 }
+.exit-picker .select-trigger { height: 34px }
+.exit-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, .8fr) minmax(0, 1fr) minmax(0, 1fr); gap: 10px }
+.route-item .icon-button:hover:not(:disabled) { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)) }
+.add-route { display: inline-flex; align-items: center; justify-self: start; gap: 6px; height: 32px; padding: 0 12px 0 10px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); color: var(--muted); background: transparent; cursor: pointer; font-size: 13px; font-weight: 500; transition: color .12s, border-color .12s, background .12s }
+.add-route:hover { border-style: solid; color: var(--text); background: var(--surface-2) }
+.editor-section > .field-help { margin: 0 }
+
+.editor-footer { position: sticky; bottom: 0; z-index: 2; display: flex; justify-content: flex-end; gap: 8px; margin: 0 !important; padding: 14px 24px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(8px) }
+
+@media (max-width: 720px) {
+  .service-editor > * { margin: 0 16px }
+  .service-editor .backend-picker { grid-template-columns: 1fr }
+  .editor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) }
+  .editor-grid .span-2 { grid-column: 1 / -1 }
+  .route-head { grid-template-columns: minmax(0, 1fr) 32px }
+  .route-head .exit-picker, .route-head:not(:has(.icon-button)) > .exit-picker { grid-column: 1 / -1; grid-row: 2 }
+  .exit-fields { grid-template-columns: repeat(6, minmax(0, 1fr)) }
+  .exit-fields > label { grid-column: span 3 }
+  .exit-fields > .exit-host { grid-column: span 4 }
+  .exit-fields > .exit-port { grid-column: span 2 }
+  .editor-footer { padding: 12px 16px }
+}
+.modal-wide > header { padding: 20px 24px 14px }
+.route-strip { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 16px; border-top: 1px solid var(--border) }
+.route-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 24px; padding: 0 9px; overflow: hidden; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap }
+.route-chip b { color: var(--text); font-weight: 600 }
+
+.engine-picker { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; align-items: center; margin-bottom: 18px !important }
+.engine-picker > span { color: var(--muted); font-size: 12px; font-weight: 500 }
+.engine-picker > .segmented { justify-self: start }
+.engine-picker > small { grid-column: 2; color: var(--muted); font-size: 12px }
+
+/* Backup restore: a quiet drop zone instead of the browser's file input. */
+.file-drop { position: relative; display: flex; align-items: center; gap: 12px; margin-top: 12px; padding: 14px 16px; border: 1px dashed var(--border-strong); border-radius: var(--radius); color: var(--text); background: var(--surface); cursor: pointer; transition: border-color .15s, background .15s }
+.file-drop:hover, .file-drop.dragging { border-color: var(--text); background: var(--surface-2) }
+.file-drop.dragging { border-style: solid }
+.file-drop.busy { cursor: progress; opacity: .7 }
+.file-drop input { position: absolute; width: 1px; height: 1px; min-height: 0; padding: 0; opacity: 0; pointer-events: none }
+.file-drop:has(input:focus-visible) { outline: 2px solid color-mix(in srgb, var(--text) 45%, transparent); outline-offset: 2px }
+.file-drop-icon { display: grid; flex: 0 0 auto; width: 36px; height: 36px; place-items: center; border-radius: 10px; color: var(--muted); background: var(--surface-3); transition: color .15s, transform .2s var(--ease-out) }
+.file-drop:hover .file-drop-icon, .file-drop.dragging .file-drop-icon { color: var(--text) }
+.file-drop.dragging .file-drop-icon { transform: translateY(-2px) }
+.file-drop-text { display: grid; min-width: 0 }
+.file-drop-text strong { overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap }
+.file-drop-text small { color: var(--muted); font-size: 12px }

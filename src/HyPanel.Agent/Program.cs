@@ -1,12 +1,12 @@
-namespace HyPanel.Agent;
-
 using HyPanel.Agent.Backends;
 using HyPanel.Agent.Backends.Hysteria2;
 using HyPanel.Agent.Backends.Infrastructure;
 using HyPanel.Agent.Backends.Xray;
-using HyPanel.Agent.Reconciliation;
 using HyPanel.Agent.Networking;
+using HyPanel.Agent.Reconciliation;
 using HyPanel.Agent.Updates;
+
+namespace HyPanel.Agent;
 
 public static class Program
 {
@@ -28,7 +28,7 @@ public static class Program
         builder.Services.AddSingleton<AgentCredentialStore>();
         builder.Services.AddSingleton<IEnrollmentClient, EnrollmentClient>();
         builder.Services.AddSingleton<AgentIdentityManager>();
-        builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+        builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<HttpMessageHandler>(_ => new SocketsHttpHandler { AllowAutoRedirect = false });
         builder.Services.AddSingleton(sp =>
             new HttpClient(sp.GetRequiredService<HttpMessageHandler>(), disposeHandler: false)
@@ -46,7 +46,7 @@ public static class Program
         builder.Services.AddSingleton<UpstreamExitCountryProbe>();
         builder.Services.AddSingleton<IBackendProvider, Hysteria2Provider>();
         builder.Services.AddSingleton<IBackendProvider, XrayProvider>();
-        builder.Services.AddSingleton<IBackendProvider, XrayShadowsocksProvider>();
+        builder.Services.AddSingleton<IBackendProvider, XrayHysteria2Provider>();
         builder.Services.AddSingleton<BackendProviderRegistry>();
         builder.Services.AddSingleton<BackendBinaryManager>();
         builder.Services.AddSingleton<BackendInstanceStore>();

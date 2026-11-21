@@ -1,6 +1,6 @@
-namespace HyPanel.Server.Endpoints;
-
 using HyPanel.Server.Updates;
+
+namespace HyPanel.Server.Endpoints;
 
 internal static class ServerUpdateEndpoints
 {

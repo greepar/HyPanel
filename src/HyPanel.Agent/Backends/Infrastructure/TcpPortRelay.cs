@@ -1,9 +1,9 @@
-namespace HyPanel.Agent.Backends.Infrastructure;
-
 using System.Buffers;
 using System.Net;
 using System.Net.Sockets;
 using HyPanel.Shared.Contracts;
+
+namespace HyPanel.Agent.Backends.Infrastructure;
 
 /// <summary>
 /// Forwards TCP ports to the node that really runs a service, in user space and without any system component.
@@ -19,8 +19,8 @@ public sealed class TcpPortRelay(ILogger<TcpPortRelay> logger) : IDisposable
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
 
     private readonly Lock gate = new();
-    private readonly Dictionary<int, Listener> listeners = new();
-    private readonly Dictionary<int, string> failures = new();
+    private readonly Dictionary<int, Listener> listeners = [];
+    private readonly Dictionary<int, string> failures = [];
 
     public int ListenerCount
     {
@@ -142,10 +142,10 @@ public sealed class TcpPortRelay(ILogger<TcpPortRelay> logger) : IDisposable
                     connect.CancelAfter(ConnectTimeout);
                     var addresses = await Dns.GetHostAddressesAsync(Host, AddressFamily.InterNetwork, connect.Token);
                     await upstream.ConnectAsync(addresses, TargetPort, connect.Token);
-                    foreach (var socket in new[] { client, upstream })
+                    foreach (var end in new[] { client, upstream })
                     {
-                        socket.NoDelay = true;
-                        socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+                        end.NoDelay = true;
+                        end.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
                     }
                     await Task.WhenAll(PumpAsync(client, upstream, token), PumpAsync(upstream, client, token));
                 }
