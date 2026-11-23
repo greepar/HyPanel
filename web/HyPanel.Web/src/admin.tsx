@@ -2129,9 +2129,10 @@ function ServiceCard({
           <button className="button button-secondary" type="button" onClick={edit}>编辑</button>
           <button className="more-button" type="button" title="删除服务" onClick={remove}>删除</button>
           <label className="switch" title={service.enabled ? "已启用" : "已停用"}>
-            <input type="checkbox" checked={service.enabled} onChange={(event) => enabled(event.currentTarget.checked)} />
+            {/* The label text goes on the input: every span directly inside .switch is drawn as the track. */}
+            <input type="checkbox" checked={service.enabled} aria-label={`${service.enabled ? "停用" : "启用"} ${service.name}`}
+              onChange={(event) => enabled(event.currentTarget.checked)} />
             <span />
-            <span className="sr-only">{service.enabled ? "停用" : "启用"} {service.name}</span>
           </label>
         </div>
       </div>
