@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import { Plus, Trash2, Upload } from "lucide-preact";
+import { ChevronRight, Plus, Trash2, Upload } from "lucide-preact";
 import { ApiError, type ApiClient, type InstallPlatform } from "./api";
 import { useAutoRefresh, readCache, writeCache, dropCache, setLiveClient } from "./hooks";
 import { LiveLogPanel } from "./logs";
 import { OwnSubscription } from "./subscription";
 import { PasskeyPanel } from "./passkey";
+import { UsageBreakdownView, type UsageEntry } from "./usage";
+import { BackendMark } from "./logos";
 import {
   backendFor,
   supports,
@@ -14,7 +16,6 @@ import {
   formFor,
   parseConfig,
   payloadFor,
-  serviceFacts,
   setBackendDefinitions,
 } from "./backend";
 import type {
@@ -43,6 +44,7 @@ import type {
   User,
   UserForm,
   UserGroup,
+  PreviousUsage,
 } from "./domain";
 import {
   copyText,
@@ -439,9 +441,14 @@ function CertificatePanel({ api, certificates, setCertificates, setError }: { ap
         </div>
       </>}
       {draft.kind === "Acme" && <>
-        <p className="field-help">由节点上的 Hysteria 自动向 Let's Encrypt 申请并在到期前自动续签，无需任何维护。域名需解析到使用该证书的节点。</p>
+        <p className="field-help">由节点上的 Hysteria 自动向 Let's Encrypt 申请并在到期前自动续签，无需任何维护。域名需解析到使用该证书的节点。泛域名（如 <code>*.example.com</code>）需要用 Cloudflare DNS 验证。</p>
         <div className="form-grid">
-          <label>域名<input required placeholder="hy.example.com" value={draft.domain} onInput={event => change("domain", event.currentTarget.value)} /></label>
+          <label>域名<input required placeholder="hy.example.com 或 *.example.com" value={draft.domain} onInput={event => {
+            const domain = event.currentTarget.value;
+            change("domain", domain);
+            // Let's Encrypt signs wildcards only through DNS, so a wildcard switches the challenge for the admin.
+            if (domain.trim().startsWith("*.") && draft.acmeChallenge !== "cloudflare") change("acmeChallenge", "cloudflare");
+          }} /></label>
           <label>联系邮箱<input required type="email" placeholder="用于证书到期通知" value={draft.acmeEmail} onInput={event => change("acmeEmail", event.currentTarget.value)} /></label>
           <label>验证方式<Select ariaLabel="验证方式" value={draft.acmeChallenge} onChange={value => change("acmeChallenge", value as AcmeChallenge)}
             options={(Object.keys(acmeChallengeLabels) as AcmeChallenge[]).map(value => ({ value, label: acmeChallengeLabels[value] }))} /></label>
@@ -1797,7 +1804,6 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
     null,
   );
   const [selected, setSelected] = useState<string[]>([]);
-  const [endpointKey, setEndpointKey] = useState(0);
   // Services touched since the node last caught up: their badge says 下发中 until the Agent applies the revision.
   const [touched, setTouched] = useState<{ ids: Set<string>; revision: number } | null>(null);
   const applyingNode = node.online && node.appliedRevision !== null && node.appliedRevision < node.desiredRevision;
@@ -1896,7 +1902,6 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
     }
     setEditor(null);
     if (serviceId) touch([serviceId]);
-    setEndpointKey((key) => key + 1);
     setError(node.online ? `已保存“${payload.name}”，正在下发到节点…` : `已保存“${payload.name}”，节点上线后生效。`);
     await loadServices(nodeId, undefined, true);
   };
@@ -2013,9 +2018,6 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
             {services.map((service) => (
               <ServiceCard
                 key={service.id}
-                api={api}
-                nodeId={nodeId}
-                publicIpv4={node.publicIpv4 ?? null}
                 service={service}
                 selected={selected.includes(service.id)}
                 select={() =>
@@ -2027,15 +2029,8 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
                 }
                 edit={() => setEditor({ service })}
                 remove={() => void remove(service)}
-              enabled={(value) => void enabled(service, value)}
-               refresh={() => loadServices(nodeId, undefined, true)}
-               onPolicyChange={(serviceId, policy) => {
-                 override(serviceId, { backendUpdatePolicy: policy });
-                 setServices((current) => current.map((item) => (item.id === serviceId ? { ...item, backendUpdatePolicy: policy } : item)));
-               }}
-               setError={setError}
-               endpointKey={endpointKey}
-               applying={applyingNode && !!touched?.ids.has(service.id)}
+                enabled={(value) => void enabled(service, value)}
+                applying={applyingNode && !!touched?.ids.has(service.id)}
               />
             ))}
           </div>
@@ -2044,7 +2039,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
         <section className="card">
           <Empty
             title="这个节点还没有服务"
-            description="添加 Hysteria 2 或 Xray REALITY 实例。"
+            description="添加 Hysteria 2、REALITY、AnyTLS 或 SS2022 实例。"
             action={
               <button
                 className="button button-primary"
@@ -2071,6 +2066,11 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
           save={save}
           close={() => setEditor(null)}
           setError={setError}
+          refresh={() => loadServices(nodeId, undefined, true)}
+          onPolicyChange={(serviceId, policy) => {
+            override(serviceId, { backendUpdatePolicy: policy });
+            setServices((current) => current.map((item) => (item.id === serviceId ? { ...item, backendUpdatePolicy: policy } : item)));
+          }}
         />
       )}
     </section>
@@ -2078,88 +2078,31 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
 }
 
 function ServiceCard({
-  api,
-  nodeId,
-  publicIpv4,
   service,
   selected,
   select,
   edit,
   remove,
   enabled,
-  refresh,
-  onPolicyChange,
-  setError,
-  endpointKey,
   applying,
 }: {
-  api: ApiClient;
-  nodeId: string;
-  publicIpv4: string | null;
   service: Service;
-  endpointKey: number;
   applying: boolean;
   selected: boolean;
   select: () => void;
   edit: () => void;
   remove: () => void;
   enabled: (value: boolean) => void;
-  refresh: () => Promise<void>;
-  onPolicyChange?: (serviceId: string, policy: "Auto" | "Manual") => void;
-  setError: (value: string) => void;
 }) {
   const backend = backendFor(service.backendType);
-  const facts = serviceFacts(service);
   const status = service.runtime?.status ?? 0;
-  const [endpoint, setEndpoint] = useState<PublicEndpoint | null>(null);
-  const [updatingBackend, setUpdatingBackend] = useState(false);
-  const listenPort = Number(parseConfig(service.configJson)?.listenPort) || null;
   const config = parseConfig(service.configJson);
   const defaultExit = exitFrom(config);
   const routes = Array.isArray(config.routes)
     ? (config.routes as Record<string, unknown>[]).map((item) => ({ id: String(item.id), name: String(item.name ?? ""), exit: exitFrom(item) }))
     : [];
-  const autoAddress = publicIpv4 && listenPort ? `${publicIpv4}:${listenPort}` : null;
-  // Refetched after every save (endpointKey), so a new custom address shows without a reload.
-  useEffect(() => {
-    void api.endpoint(nodeId, service.id).then((value) => setEndpoint(value ?? null), () => undefined);
-  }, [nodeId, service.id, endpointKey]);
-  const updateBackend = async () => {
-    if (
-      !service.latestBackendVersion ||
-      !confirm(
-        `将“${service.name}”更新到 ${service.latestBackendVersion}？仅此服务会重启，失败时自动回滚。`,
-      )
-    )
-      return;
-    setUpdatingBackend(true);
-    try {
-      const result = await api.updateBackend(nodeId, service.id);
-      setError(`已请求更新 ${service.name} 到 ${result.version}。`);
-      await refresh();
-    } catch (reason) {
-      setError(messageFor(reason, "无法请求后端更新"));
-    } finally {
-      setUpdatingBackend(false);
-    }
-  };
-  const backendPolicy = async (enabled: boolean) => {
-    // Optimistic: keep the switch where the admin put it until the Server confirms.
-    const previous = service.backendUpdatePolicy;
-    onPolicyChange?.(service.id, enabled ? "Auto" : "Manual");
-    try {
-      await api.setBackendUpdatePolicy(
-        nodeId,
-        service.id,
-        enabled ? "Auto" : "Manual",
-      );
-      setError(`后端自动更新已${enabled ? "开启" : "关闭"}。`);
-      await refresh();
-    } catch (reason) {
-      onPolicyChange?.(service.id, previous);
-      setError(messageFor(reason, "无法修改后端更新策略"));
-    }
-  };
+  const version = service.runtime?.backendVersion ?? service.backendVersion;
+  const updatable = !!service.latestBackendVersion && service.latestBackendVersion !== version;
   return (
     <article className={`service-card ${selected ? "selected" : ""} ${applying ? "applying" : ""}`}>
       <div className="service-card-main">
@@ -2167,7 +2110,7 @@ function ServiceCard({
           <input type="checkbox" checked={selected} onChange={select} />
           <span className="sr-only">选择 {service.name}</span>
         </label>
-        <span className="backend-mark">{backend.badge}</span>
+        <BackendMark badge={backend.badge} />
         <div className="service-identity">
           <div>
             <h3>{service.name}</h3>
@@ -2177,36 +2120,20 @@ function ServiceCard({
               <StatusBadge status={status} enabled={service.enabled} />
             )}
           </div>
-          <p>{backend.name}</p>
-          <small>
-            {backend.core} · 当前 {service.runtime?.backendVersion ?? "未知"} · 目标 {service.backendVersion} · 最新 {service.latestBackendVersion ?? "未知"}
-          </small>
+          <p>
+            {backendLabel(service.backendType)} <span className="mono">v{version}</span>
+            {updatable && <button className="update-hint" type="button" onClick={edit}>可更新到 {service.latestBackendVersion}</button>}
+          </p>
         </div>
         <div className="row-actions">
-          <button
-            className="button button-secondary"
-            type="button"
-            onClick={edit}
-          >
-            编辑
-          </button>
-          <button
-            className="more-button"
-            type="button"
-            title="删除服务"
-            onClick={remove}
-          >
-            删除
-          </button>
+          <button className="button button-secondary" type="button" onClick={edit}>编辑</button>
+          <button className="more-button" type="button" title="删除服务" onClick={remove}>删除</button>
+          <label className="switch" title={service.enabled ? "已启用" : "已停用"}>
+            <input type="checkbox" checked={service.enabled} onChange={(event) => enabled(event.currentTarget.checked)} />
+            <span />
+            <span className="sr-only">{service.enabled ? "停用" : "启用"} {service.name}</span>
+          </label>
         </div>
-      </div>
-      <div className="service-facts">
-        {facts.map((fact, index) => (
-          <span key={`${index}-${fact}`}>
-            <b>{["监听地址", "协议参数", "传输能力"][index]}</b>
-            {fact}
-          </span>
-        ))}
       </div>
       {routes.length > 0 && (
         <div className="route-strip" aria-label="线路">
@@ -2222,44 +2149,83 @@ function ServiceCard({
           <span>{service.runtime.errorMessage}</span>
         </div>
       )}
-      <div className="service-footer">
-        <div className="row-actions">
-          <button
-            className="button button-secondary"
-            type="button"
-            disabled={updatingBackend || !service.latestBackendVersion || service.backendVersion === service.latestBackendVersion}
-            onClick={() => void updateBackend()}
-          >
-            {updatingBackend ? "准备更新…" : `更新到 ${service.latestBackendVersion ?? "最新版"}`}
-          </button>
-        </div>
+    </article>
+  );
+}
+
+/** The engine as one short line: the official Hysteria server reads "Hysteria 2 Official", others use their name. */
+const backendLabel = (backendType: string) =>
+  backendType === "hysteria2" ? "Hysteria 2 Official" : backendFor(backendType).name;
+
+/** Backend version, one-click update and the auto-update policy; lives in the editor so the card stays short. */
+function BackendUpdates({
+  api,
+  nodeId,
+  service,
+  refresh,
+  onPolicyChange,
+  setError,
+}: {
+  api: ApiClient;
+  nodeId: string;
+  service: Service;
+  refresh: () => Promise<void>;
+  onPolicyChange: (serviceId: string, policy: "Auto" | "Manual") => void;
+  setError: (value: string) => void;
+}) {
+  const [updating, setUpdating] = useState(false);
+  // The editor holds a snapshot of the service, so the switch keeps its own state.
+  const [auto, setAuto] = useState(service.backendUpdatePolicy === "Auto");
+  const current = service.runtime?.backendVersion ?? "未知";
+  const latest = service.latestBackendVersion;
+  const update = async () => {
+    if (!latest || !confirm(`将“${service.name}”更新到 ${latest}？仅此服务会重启，失败时自动回滚。`)) return;
+    setUpdating(true);
+    try {
+      const result = await api.updateBackend(nodeId, service.id);
+      setError(`已请求更新 ${service.name} 到 ${result.version}。`);
+      await refresh();
+    } catch (reason) {
+      setError(messageFor(reason, "无法请求后端更新"));
+    } finally {
+      setUpdating(false);
+    }
+  };
+  const policy = async (enabled: boolean) => {
+    const previous = service.backendUpdatePolicy;
+    setAuto(enabled);
+    onPolicyChange(service.id, enabled ? "Auto" : "Manual");
+    try {
+      await api.setBackendUpdatePolicy(nodeId, service.id, enabled ? "Auto" : "Manual");
+      setError(`后端自动更新已${enabled ? "开启" : "关闭"}。`);
+      await refresh();
+    } catch (reason) {
+      setAuto(previous === "Auto");
+      onPolicyChange(service.id, previous);
+      setError(messageFor(reason, "无法修改后端更新策略"));
+    }
+  };
+  return (
+    <section className="editor-section">
+      <header className="editor-section-head">
+        <h3>后端</h3>
+        <p className="mono">当前 {current} · 目标 {service.backendVersion} · 最新 {latest ?? "未知"}</p>
+      </header>
+      <div className="backend-updates">
+        <button
+          className="button button-secondary"
+          type="button"
+          disabled={updating || !latest || service.backendVersion === latest}
+          onClick={() => void update()}
+        >
+          {updating ? "准备更新…" : latest && service.backendVersion !== latest ? `更新到 ${latest}` : "已是最新"}
+        </button>
         <label className="switch">
-          <input
-            type="checkbox"
-            checked={service.backendUpdatePolicy === "Auto"}
-            onChange={(event) => void backendPolicy(event.currentTarget.checked)}
-          />
+          <input type="checkbox" checked={auto} onChange={(event) => void policy(event.currentTarget.checked)} />
           <span />自动更新后端
         </label>
       </div>
-      <div className="service-footer">
-        <div className="row-actions">
-          <span className="connection-address" title="在“编辑”中可以自定义">
-            连接地址 <b className="mono">{endpoint ? `${endpoint.host}:${endpoint.port}` : autoAddress ?? "等待节点上报公网 IP"}</b>
-            {endpoint ? "（自定义）" : "（自动）"}
-          </span>
-        </div>
-        <label className="switch">
-          <input
-            type="checkbox"
-            checked={service.enabled}
-            onChange={(event) => enabled(event.currentTarget.checked)}
-          />
-          <span />
-          {service.enabled ? "已启用" : "已停用"}
-        </label>
-      </div>
-    </article>
+    </section>
   );
 }
 
@@ -2274,6 +2240,8 @@ function ServiceEditor({
   save,
   close,
   setError,
+  refresh,
+  onPolicyChange,
 }: {
   service: Service | null;
   nodeId: string;
@@ -2285,8 +2253,10 @@ function ServiceEditor({
   save: (form: ServiceForm, service: Service | null, address: PublicEndpoint | null, ipv6Entry: boolean) => Promise<void>;
   close: () => void;
   setError: (value: string) => void;
+  refresh: () => Promise<void>;
+  onPolicyChange: (serviceId: string, policy: "Auto" | "Manual") => void;
 }) {
-  // Optional subscription connection address; all fields empty means automatic (node IP + listen port).
+  // A custom subscription address set by an earlier version is kept as is; the editor no longer edits it.
   const [address, setAddress] = useState({ host: "", port: "", sni: "" });
   const [ipv6Entry, setIpv6Entry] = useState(service?.ipv6Entry ?? true);
   useEffect(() => {
@@ -2313,7 +2283,7 @@ function ServiceEditor({
   const [generating, setGenerating] = useState(false);
   // New services are named "<node>-<protocol>" (made unique on the node) until the admin types a name.
   const defaultName = (backendType: string) => {
-    const base = `${nodeName}-${{ hysteria2: "hy2", "xray-hysteria2": "hy2", xray: "reality" }[backendType] ?? backendType}`;
+    const base = `${nodeName}-${{ hysteria2: "hy2", "xray-hysteria2": "hy2", xray: "reality", "mihomo-reality": "reality", "mihomo-anytls": "anytls", "mihomo-ss2022": "ss2022" }[backendType] ?? backendType}`;
     let name = base;
     for (let index = 2; existingNames.includes(name); index++) name = `${base}-${index}`;
     return name;
@@ -2569,14 +2539,13 @@ function ServiceEditor({
       routes: next.features.includes("routes") ? current.routes : [],
     });
   // Fields are placed by role: what an admin usually edits up front, generated keys and fixed values tucked away.
-  const keyFields = new Set(["realityPrivateKey", "realityPublicKey", "shortId", "authPassword"]);
+  const keyFields = new Set(["realityPrivateKey", "realityPublicKey", "shortId", "authPassword", "serverKey"]);
   const advancedKeys = new Set(["listenHost"]);
   const portField = definition.fields.find((field) => field.key === "listenPort");
   const primaryFields = definition.fields.filter(
     (field) => field !== portField && !keyFields.has(field.key) && !advancedKeys.has(field.key) && field.kind !== "fixed",
   );
   const secretFields = definition.fields.filter((field) => keyFields.has(field.key));
-  const advancedFields = definition.fields.filter((field) => advancedKeys.has(field.key) || field.kind === "fixed");
   const multiRoute = definition.features.includes("routes");
   const defaultExit = exitFrom(form.values);
   const setDefaultExit = (exit: ExitForm) =>
@@ -2590,8 +2559,6 @@ function ServiceEditor({
     });
   const setRoute = (id: string, patch: Partial<RouteForm>) =>
     setForm((current) => current && { ...current, routes: current.routes.map((route) => (route.id === id ? { ...route, ...patch } : route)) });
-  const customAddress = Boolean(address.host.trim() || address.port.trim() || address.sni.trim());
-  const autoAddress = `${publicIpv4 ?? "节点公网 IP"}:${form.values.listenPort || "端口"}`;
   const relayNode = relayNodes.find((item) => item.id === form.values.relayNodeId);
   return (
     <Modal
@@ -2609,7 +2576,7 @@ function ServiceEditor({
               return (
                 <label className={selected ? "backend-option selected" : "backend-option"} key={first.protocolId}>
                   <input type="radio" checked={selected} onChange={() => !selected && switchBackend(first)} />
-                  <span className="backend-mark">{first.badge}</span>
+                  <BackendMark badge={first.badge} />
                   <span>
                     <strong>{first.protocol}</strong>
                     <small>{group.length > 1 ? `${group.length} 种内核可选` : first.core}</small>
@@ -2752,58 +2719,36 @@ function ServiceEditor({
           </section>
         )}
 
-        <details className="editor-disclosure" open={customAddress || undefined}>
-          <summary>
-            <span>订阅地址</span>
-            <small className="mono">{customAddress ? `${address.host || publicIpv4}:${address.port || form.values.listenPort}` : `自动 · ${autoAddress}`}</small>
-          </summary>
-          <p className="field-help">只有通过域名、CDN 或端口转发访问时才需要填写；填写后订阅只保留这一个入口。</p>
-          <div className="editor-grid">
-            <label>
-              域名或 IP
-              <input placeholder={publicIpv4 ? `自动：${publicIpv4}` : "自动：节点公网 IP"} value={address.host}
-                onInput={(event) => setAddress({ ...address, host: event.currentTarget.value })} />
-            </label>
-            <label>
-              端口
-              <input type="number" min="1" max="65535" placeholder={`自动：${String(form.values.listenPort ?? "监听端口")}`}
-                value={address.port} onInput={(event) => setAddress({ ...address, port: event.currentTarget.value })} />
-            </label>
-            {definition.features.includes("certificate") && (
-              <label>
-                SNI
-                <input placeholder="自动：证书域名" value={address.sni} onInput={(event) => setAddress({ ...address, sni: event.currentTarget.value })} />
+        {publicIpv6 && (
+          <section className="editor-section">
+            <header className="editor-section-head">
+              <h3>IPv6</h3>
+              <p>节点有公网 IPv6 {publicIpv6}。</p>
+            </header>
+            <div className="editor-toggle">
+              <label className="switch">
+                <input type="checkbox" checked={ipv6Entry} disabled={Boolean(address.host.trim())}
+                  onChange={(event) => setIpv6Entry(event.currentTarget.checked)} />
+                <span />
+                提供 IPv6 入口
               </label>
-            )}
-          </div>
-          <div className="editor-toggle">
-            <label className="switch">
-              <input type="checkbox" checked={ipv6Entry} disabled={Boolean(address.host.trim())}
-                onChange={(event) => setIpv6Entry(event.currentTarget.checked)} />
-              <span />
-              提供 IPv6 入口
-            </label>
-            <small>
-              {address.host.trim()
-                ? "已填写连接地址，订阅只使用该地址。"
-                : publicIpv6 ? `订阅多一条「IPv6」入口，连接 ${publicIpv6}。` : "节点暂未检测到公网 IPv6。"}
-            </small>
-          </div>
-        </details>
+              <small>{address.host.trim() ? "这个服务设置了自定义连接地址，订阅只使用该地址。" : "订阅多一条「IPv6」入口，客户端直接连这个地址。"}</small>
+            </div>
+            <div className="editor-toggle">
+              <label className="switch">
+                <input type="checkbox" checked={form.values.ipv4Only === "true"}
+                  onChange={(event) => change("ipv4Only", event.currentTarget.checked ? "true" : "")} />
+                <span />
+                禁用 IPv6 出口
+              </label>
+              <small>直连出站只用 IPv4，网站看到的是节点的 IPv4 地址。走代理的线路不受影响。</small>
+            </div>
+          </section>
+        )}
 
-        <details className="editor-disclosure">
-          <summary>
-            <span>高级</span>
-            <small className="mono">{form.values.listenHost || "0.0.0.0"} · v{form.version || "?"}</small>
-          </summary>
-          <div className="editor-grid">
-            <label>
-              后端版本
-              <input required className="mono" value={form.version} onInput={(event) => setForm({ ...form, version: event.currentTarget.value })} />
-            </label>
-            {advancedFields.map(renderField)}
-          </div>
-        </details>
+        {service && (
+          <BackendUpdates api={api} nodeId={nodeId} service={service} refresh={refresh} onPolicyChange={onPolicyChange} setError={setError} />
+        )}
 
         <footer className="editor-footer">
           <button className="button button-secondary" type="button" onClick={close}>取消</button>
@@ -2873,6 +2818,8 @@ function UsersPage({ api, setError }: PageProps) {
   const [groupEditor, setGroupEditor] = useState<{ group: UserGroup | null; name: string; autoInclude: boolean; serviceIds: string[] } | null>(null);
   const [services, setServices] = useState<ServiceRef[]>(() => readCache<ServiceRef[]>("users:services") ?? []);
   const [usage, setUsage] = useState<Usage[]>(() => readCache<Usage[]>("users:usage") ?? []);
+  const [previous, setPrevious] = useState<PreviousUsage[]>(() => readCache<PreviousUsage[]>("users:previous") ?? []);
+  const [breakdown, setBreakdown] = useState<User | null>(null);
   const [loading, setLoading] = useState(() => !readCache("users:list"));
   const [loadError, setLoadError] = useState("");
   const [editor, setEditor] = useState<{
@@ -2886,11 +2833,12 @@ function UsersPage({ api, setError }: PageProps) {
       setLoadError("");
     }
     try {
-      const [nextUsers, nodes, nextUsage, nextGroups] = await Promise.all([
+      const [nextUsers, nodes, nextUsage, nextGroups, nextPrevious] = await Promise.all([
         api.users(),
         api.nodes(),
         api.usage(),
         api.groups(),
+        api.previousUsage().catch(() => [] as PreviousUsage[]),
       ]);
       const nested = await Promise.all(
         nodes.map(async (node) =>
@@ -2905,6 +2853,8 @@ function UsersPage({ api, setError }: PageProps) {
       setGroups(nextGroups);
       setServices(nested.flat());
       setUsage(nextUsage);
+      setPrevious(nextPrevious);
+      writeCache("users:previous", nextPrevious);
       writeCache("users:list", nextUsers);
       writeCache("users:groups", nextGroups);
       writeCache("users:services", nested.flat());
@@ -3138,10 +3088,14 @@ function UsersPage({ api, setError }: PageProps) {
                   </div>
                 </header>
                 <div className="user-facts">
-                  <span>
+                  <button className="usage-fact" type="button" title="查看各节点用量" onClick={() => setBreakdown(user)}>
                     <b>已用流量</b>
-                    {formatBytes(total)}
-                  </span>
+                    <span>{formatBytes(total)}<ChevronRight size={13} aria-hidden="true" /></span>
+                    {(() => {
+                      const last = previous.find((item) => item.userId === user.id);
+                      return last && <small>上期 {formatBytes(last.entries.reduce((sum, entry) => sum + entry.uploadBytes + entry.downloadBytes, 0))}</small>;
+                    })()}
+                  </button>
                   <span>
                     <b>流量上限</b>
                     {user.trafficLimitBytes === null
@@ -3196,6 +3150,15 @@ function UsersPage({ api, setError }: PageProps) {
             }
           />
         </section>
+      )}
+      {breakdown && (
+        <UsageBreakdown
+          user={breakdown}
+          usage={usage.filter((row) => row.userId === breakdown.id)}
+          services={services}
+          previous={previous.find((item) => item.userId === breakdown.id) ?? null}
+          close={() => setBreakdown(null)}
+        />
       )}
       {groupEditor && (
         <Modal
@@ -3521,3 +3484,30 @@ const toLocalDate = (value: string | null) =>
         .toISOString()
         .slice(0, 16)
     : "";
+
+/** Where a user's traffic went, per node and service; the admin's view of the same breakdown users see. */
+function UsageBreakdown({ user, usage, services, previous, close }: {
+  user: User;
+  usage: Usage[];
+  services: ServiceRef[];
+  previous: PreviousUsage | null;
+  close: () => void;
+}) {
+  const byId = new Map(services.map((service) => [service.id, service]));
+  const current: UsageEntry[] = usage.map((row) => {
+    const service = byId.get(row.serviceId);
+    return {
+      serviceId: row.serviceId,
+      nodeKey: service?.nodeId ?? "deleted",
+      nodeName: service?.nodeName ?? "已删除的服务",
+      serviceName: service?.name ?? "已删除",
+      upload: row.uploadBytes,
+      download: row.downloadBytes,
+    };
+  });
+  return (
+    <Modal title={`${user.username} 的流量`} description="按节点和服务统计，上传与下载合计。" close={close}>
+      <UsageBreakdownView current={current} previous={previous} />
+    </Modal>
+  );
+}

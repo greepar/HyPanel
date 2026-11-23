@@ -228,7 +228,7 @@ internal sealed partial class SqliteServerRepository
         try
         {
             await IncrementBoundNodeRevisionsAsync(c, tx, id, ct);
-            foreach (var table in new[] { "usage_totals", "user_service_credentials", "user_service_bindings", "user_sessions", "user_passkeys" })
+            foreach (var table in new[] { "usage_totals", "usage_previous_period", "user_service_credentials", "user_service_bindings", "user_sessions", "user_passkeys" })
             {
                 await using var child = c.CreateCommand();
                 child.Transaction = tx;
@@ -420,6 +420,58 @@ internal sealed partial class SqliteServerRepository
         return ids;
     }
 
+    /// <summary>A user's usage in the current period per service, with the names of the service and its node.</summary>
+    public async Task<IReadOnlyList<PreviousUsageEntryRecord>> GetNamedUsageAsync(Guid userId, CancellationToken ct)
+    {
+        var rows = new List<PreviousUsageEntryRecord>();
+        await using var c = await connectionFactory.OpenAsync(ct);
+        await using var cmd = c.CreateCommand();
+        cmd.CommandText = """
+                          SELECT t.service_id,COALESCE(n.display_name,''),COALESCE(s.name,''),a.country_code,t.upload_bytes,t.download_bytes
+                          FROM usage_totals t
+                          LEFT JOIN service_instances s ON s.id=t.service_id
+                          LEFT JOIN nodes n ON n.id=s.node_id
+                          LEFT JOIN agents a ON a.node_id=s.node_id
+                          WHERE t.user_id=@user AND t.upload_bytes+t.download_bytes>0
+                          ORDER BY t.upload_bytes+t.download_bytes DESC;
+                          """;
+        cmd.Parameters.AddWithValue("@user", userId.ToString("D"));
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+            rows.Add(new PreviousUsageEntryRecord(SqliteValue.ToGuid(r.GetString(0)), r.GetString(1), r.GetString(2),
+                r.IsDBNull(3) ? null : r.GetString(3), r.GetInt64(4), r.GetInt64(5)));
+        return rows;
+    }
+
+    /// <summary>Every user's last closed period (the usage their latest reset cleared), per service.</summary>
+    public async Task<IReadOnlyList<PreviousUsagePeriodRecord>> GetPreviousUsageAsync(Guid? userId, CancellationToken ct)
+    {
+        var periods = new List<PreviousUsagePeriodRecord>();
+        await using var c = await connectionFactory.OpenAsync(ct);
+        await using var cmd = c.CreateCommand();
+        cmd.CommandText = """
+                          SELECT u.id,u.previous_period_start_utc,u.previous_period_end_utc,
+                                 p.service_id,p.node_name,p.service_name,p.country_code,p.upload_bytes,p.download_bytes
+                          FROM users u LEFT JOIN usage_previous_period p ON p.user_id=u.id
+                          WHERE u.previous_period_end_utc IS NOT NULL AND (@user IS NULL OR u.id=@user)
+                          ORDER BY u.id,p.upload_bytes+p.download_bytes DESC;
+                          """;
+        cmd.Parameters.AddWithValue("@user", userId is null ? DBNull.Value : userId.Value.ToString("D"));
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+        {
+            var id = SqliteValue.ToGuid(r.GetString(0));
+            if (periods.Count == 0 || periods[^1].UserId != id)
+                periods.Add(new PreviousUsagePeriodRecord(id, SqliteValue.ToDateTimeOffset(r.GetString(1)),
+                    SqliteValue.ToDateTimeOffset(r.GetString(2)), new List<PreviousUsageEntryRecord>()));
+            if (r.IsDBNull(3)) continue;
+            ((List<PreviousUsageEntryRecord>)periods[^1].Entries).Add(new PreviousUsageEntryRecord(
+                SqliteValue.ToGuid(r.GetString(3)), r.GetString(4), r.GetString(5), r.IsDBNull(6) ? null : r.GetString(6),
+                r.GetInt64(7), r.GetInt64(8)));
+        }
+        return periods;
+    }
+
     public async Task<IReadOnlyList<UsageTotalRecord>> GetUsageTotalsAsync(Guid? userId, Guid? serviceId,
         CancellationToken ct)
     {
@@ -549,7 +601,7 @@ internal sealed partial class SqliteServerRepository
             // is sent as SNI; a self-signed certificate is pinned by fingerprint instead of verified by a CA.
             var san = r.IsDBNull(11) ? null : r.GetString(11);
             var pem = r.IsDBNull(12) ? null : r.GetString(12);
-            var serverName = r.IsDBNull(6) ? ServerNameFor(san, r.GetString(13)) : r.GetString(6);
+            var serverName = r.IsDBNull(6) ? ServerNameFor(san, r.GetString(13), serviceId) : r.GetString(6);
             var name = r.IsDBNull(14) ? r.GetString(1) : $"{CountryFlag(r.GetString(14))} {r.GetString(1)}";
             var updated = SqliteValue.ToDateTimeOffset(r.GetString(7));
             // A node with a public IPv6 gets a second entry dialling it unless the service turned that off; an explicit
@@ -611,17 +663,29 @@ internal sealed partial class SqliteServerRepository
 
     /// <summary>
     /// SNI for a subscription entry: the certificate's first concrete DNS name, or, when it only covers a wildcard
-    /// (<c>*.example.com</c>), a name under that wildcard derived from the node (<c>uk.example.com</c>). Hysteria
-    /// rejects handshakes whose SNI is not covered by the certificate, so an empty SNI would never connect.
+    /// (<c>*.example.com</c>), a name under that wildcard derived from the node. Hysteria rejects handshakes whose
+    /// SNI is not covered by the certificate, so an empty SNI would never connect. The SNI travels in clear text, so
+    /// the node name goes in as lower-case hex (<c>jp-nb</c> → <c>6a702d6e62</c>) instead of spelling it out.
     /// </summary>
-    internal static string? ServerNameFor(string? san, string nodeName)
+    /// <remarks>
+    /// A node without a name gets a random-looking label derived from <paramref name="seed"/> (the service), so it is
+    /// the same on every subscription fetch; without a seed it is freshly random.
+    /// </remarks>
+    internal static string? ServerNameFor(string? san, string nodeName, Guid? seed = null)
     {
         if (FirstDnsName(san) is { } concrete) return concrete;
         var wildcard = DnsNames(san).FirstOrDefault(name => name.StartsWith("*.", StringComparison.Ordinal));
         if (wildcard is null) return null;
-        var label = new string([.. nodeName.ToLowerInvariant().Select(character => char.IsAsciiLetterOrDigit(character) ? character : '-')]).Trim('-');
-        if (label.Length is 0 or > 63) label = "hy2";
-        return label + wildcard[1..];
+        var suffix = wildcard[1..];
+        // A DNS label holds at most 63 characters and a whole name 253; whole bytes only, so cut at an even length.
+        var room = Math.Min(62, (253 - suffix.Length) & ~1);
+        var label = Convert.ToHexStringLower(System.Text.Encoding.UTF8.GetBytes(nodeName.Trim()));
+        if (label.Length > room) label = label[..room];
+        if (label.Length == 0)
+            label = Convert.ToHexStringLower(seed is { } value
+                ? System.Security.Cryptography.SHA256.HashData(value.ToByteArray())[..5]
+                : System.Security.Cryptography.RandomNumberGenerator.GetBytes(5));
+        return label + suffix;
     }
 
     private static IEnumerable<string> DnsNames(string? san)
@@ -635,6 +699,9 @@ internal sealed partial class SqliteServerRepository
                 yield return name;
         }
     }
+
+    /// <summary>The name an ACME certificate is requested for, wildcard included (<c>*.example.com</c>).</summary>
+    internal static string? AcmeDomain(string? san) => DnsNames(san).FirstOrDefault();
 
     internal static string? FirstDnsName(string? san)
     {
@@ -828,6 +895,27 @@ internal sealed partial class SqliteServerRepository
         CancellationToken ct)
     {
         await using var tx = (SqliteTransaction)await c.BeginTransactionAsync(ct);
+        await using (var keep = c.CreateCommand())
+        {
+            // The period being closed, per service, replaces the one kept from the reset before.
+            keep.Transaction = tx;
+            keep.CommandText = """
+                               UPDATE users SET previous_period_start_utc=COALESCE(traffic_reset_at_utc,previous_period_end_utc,created_at_utc),
+                                                previous_period_end_utc=@now
+                               WHERE id=@id;
+                               DELETE FROM usage_previous_period WHERE user_id=@id;
+                               INSERT INTO usage_previous_period (user_id,service_id,node_name,service_name,country_code,upload_bytes,download_bytes)
+                               SELECT t.user_id,t.service_id,COALESCE(n.display_name,''),COALESCE(s.name,''),a.country_code,t.upload_bytes,t.download_bytes
+                               FROM usage_totals t
+                               LEFT JOIN service_instances s ON s.id=t.service_id
+                               LEFT JOIN nodes n ON n.id=s.node_id
+                               LEFT JOIN agents a ON a.node_id=s.node_id
+                               WHERE t.user_id=@id AND t.upload_bytes+t.download_bytes>0;
+                               """;
+            keep.Parameters.AddWithValue("@id", userId.ToString("D"));
+            keep.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(now));
+            await keep.ExecuteNonQueryAsync(ct);
+        }
         await using (var mark = c.CreateCommand())
         {
             mark.Transaction = tx;

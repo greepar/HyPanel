@@ -102,3 +102,77 @@ internal sealed class VlessRealityProtocol : ServiceProtocol
                 .Append("\n      support-x25519mlkem768: true\n");
     }
 }
+
+/// <summary>
+/// AnyTLS: TLS with the service's certificate, each user logging in with their own password (their credential). The
+/// TLS handshake and its padding make it look like ordinary HTTPS.
+/// </summary>
+internal sealed class AnyTlsProtocol : ServiceProtocol
+{
+    public static AnyTlsProtocol Instance { get; } = new();
+
+    public override string Id => "anytls";
+
+    public override ListenTransport Transport => ListenTransport.Tcp;
+
+    public override SubscriptionProxy Project(SubscriptionServiceRecord service, JsonElement config, string name,
+        string credential)
+    {
+        var endpoint = service.PublicEndpoint;
+        return new AnyTlsProxy(name, endpoint.Host, endpoint.Port, endpoint.TlsServerName, credential,
+            service.PinnedCertificateSha256);
+    }
+
+    private sealed record AnyTlsProxy(
+        string Name,
+        string Host,
+        int Port,
+        string? TlsServerName,
+        string Password,
+        string? PinnedSha256) : SubscriptionProxy(Name, Host, Port)
+    {
+        public override void AppendMihomo(StringBuilder yaml)
+        {
+            yaml.Append("  - name: ").Append(Quote(Name)).Append("\n    type: anytls\n    server: ")
+                .Append(Quote(Host)).Append("\n    port: ").Append(Port).Append("\n    password: ")
+                .Append(Quote(Password)).Append("\n    udp: true\n    client-fingerprint: chrome\n")
+                .Append(PinnedSha256 is null
+                    ? "    skip-cert-verify: false\n"
+                    : "    skip-cert-verify: true\n    fingerprint: " + Quote(PinnedSha256) + "\n");
+            if (!string.IsNullOrEmpty(TlsServerName))
+                yaml.Append("    sni: ").Append(Quote(TlsServerName)).Append('\n');
+        }
+    }
+}
+
+/// <summary>
+/// Shadowsocks 2022 (<see cref="Shadowsocks2022.Cipher"/>) with sing-mux. TCP and UDP on the same port; each user sends
+/// <c>serverKey:userKey</c>, the user key derived from their credential. Clients multiplex streams with h2mux.
+/// </summary>
+internal sealed class Shadowsocks2022Protocol : ServiceProtocol
+{
+    public static Shadowsocks2022Protocol Instance { get; } = new();
+
+    public override string Id => "shadowsocks-2022";
+
+    public override ListenTransport Transport => ListenTransport.Tcp | ListenTransport.Udp;
+
+    public override SubscriptionProxy? Project(SubscriptionServiceRecord service, JsonElement config, string name,
+        string credential)
+    {
+        if (!TryString(config, "serverKey", out var serverKey)) return null;
+        var endpoint = service.PublicEndpoint;
+        return new Shadowsocks2022Proxy(name, endpoint.Host, endpoint.Port,
+            $"{serverKey}:{Shadowsocks2022.UserKey(credential)}");
+    }
+
+    private sealed record Shadowsocks2022Proxy(string Name, string Host, int Port, string Password)
+        : SubscriptionProxy(Name, Host, Port)
+    {
+        public override void AppendMihomo(StringBuilder yaml) =>
+            yaml.Append("  - name: ").Append(Quote(Name)).Append("\n    type: ss\n    server: ").Append(Quote(Host))
+                .Append("\n    port: ").Append(Port).Append("\n    cipher: ").Append(Shadowsocks2022.Cipher)
+                .Append("\n    password: ").Append(Quote(Password))
+                .Append("\n    udp: true\n    smux:\n      enabled: true\n      protocol: h2mux\n");
+    }
+}

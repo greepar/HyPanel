@@ -34,6 +34,20 @@ public sealed class Hysteria2ProviderTests
         Assert.IsFalse((await RenderYamlAsync(CreateConfigJson())).Contains("outbounds:"));
 
     [TestMethod]
+    public async Task Ipv4OnlyDirectOutboundUsesModeFour()
+    {
+        var yaml = await RenderYamlAsync(CreateConfigJson().TrimEnd('}') + ",\"ipv4Only\":true}");
+        StringAssert.Contains(yaml, "outbounds:\n  - name: direct\n    type: direct\n    direct:\n      mode: 4\n");
+    }
+
+    [TestMethod]
+    public async Task Ipv4OnlyLeavesAnUpstreamProxyAlone()
+    {
+        var yaml = await RenderYamlAsync(WithProxy(CreateConfigJson(), "socks5", port: 1080).TrimEnd('}') + ",\"ipv4Only\":true}");
+        Assert.IsFalse(yaml.Contains("type: direct"));
+    }
+
+    [TestMethod]
     public async Task Socks5UpstreamProxyBecomesTheOnlyOutbound()
     {
         var yaml = await RenderYamlAsync(WithProxy(CreateConfigJson(), "socks5", port: 1080));
@@ -262,6 +276,24 @@ public sealed class Hysteria2ProviderTests
         var yaml = Encoding.UTF8.GetString((await provider.RenderConfigAsync(desired, CancellationToken.None)).Content.Span);
         StringAssert.Contains(yaml, "  cert: \"/etc/ssl/hy/fullchain.pem\"");
         StringAssert.Contains(yaml, "  key: \"/etc/ssl/hy/privkey.pem\"");
+    }
+
+    [TestMethod]
+    [DataRow(AcmeChallenges.Cloudflare, true)]
+    [DataRow(AcmeChallenges.Http, false)]
+    public async Task ValidateAsync_WildcardAcmeDomain_NeedsTheDnsChallenge(string challenge, bool valid)
+    {
+        var desired = CreateDesiredState() with
+        {
+            TlsCertificate = new TlsCertificateAsset(CertificateId, string.Empty, null, null, TlsCertificateKinds.Acme,
+                AcmeDomains: ["*.example.com"], AcmeEmail: "ops@example.com", AcmeChallenge: challenge,
+                AcmeDnsToken: challenge == AcmeChallenges.Cloudflare ? "cf-token-123" : null)
+        };
+
+        Assert.AreEqual(valid, (await provider.ValidateAsync(desired, CancellationToken.None)).IsValid);
+        if (valid)
+            StringAssert.Contains(Encoding.UTF8.GetString((await provider.RenderConfigAsync(desired, CancellationToken.None)).Content.Span),
+                "acme:\n  domains:\n    - \"*.example.com\"");
     }
 
     [TestMethod]

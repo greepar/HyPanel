@@ -142,7 +142,7 @@ internal static class AgentSyncEndpoints
                         tls = certificate.Kind switch
                         {
                             TlsCertificateKinds.Acme => new TlsCertificateAsset(certificate.Id, string.Empty, null, null,
-                                TlsCertificateKinds.Acme, AcmeDomains: [SqliteServerRepository.FirstDnsName(certificate.San)!],
+                                TlsCertificateKinds.Acme, AcmeDomains: [SqliteServerRepository.AcmeDomain(certificate.San)!],
                                 AcmeEmail: certificate.AcmeEmail, AcmeChallenge: certificate.AcmeChallenge,
                                 AcmeDnsToken: certificate.AcmeDnsToken),
                             _ => new TlsCertificateAsset(certificate.Id, certificate.Fingerprint!,
@@ -190,14 +190,15 @@ internal static class AgentSyncEndpoints
                 .Cast<BackendArtifact>()
                 .DistinctBy(static artifact => (artifact.BackendType, artifact.Version, artifact.Rid))];
 
-    private static bool TryCertificateId(string json, out Guid id)
+    internal static bool TryCertificateId(string json, out Guid id)
     {
         id = Guid.Empty;
         try
         {
             using var document = JsonDocument.Parse(json);
-            return document.RootElement.TryGetProperty("certificateId", out var value) &&
-                   Guid.TryParse(value.GetString(), out id);
+            return document.RootElement.ValueKind == JsonValueKind.Object &&
+                   document.RootElement.TryGetProperty("certificateId", out var value) &&
+                   value.ValueKind == JsonValueKind.String && Guid.TryParse(value.GetString(), out id);
         }
         catch (JsonException) { return false; }
     }

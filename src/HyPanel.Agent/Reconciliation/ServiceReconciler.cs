@@ -1,3 +1,4 @@
+using HyPanel.Agent.Networking;
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -68,6 +69,7 @@ public sealed class ServiceReconciler(
             var failed = preflight.Failures.Count > 0;
             var failedServiceIds = preflight.Failures.Select(failure => failure.ServiceId).ToHashSet();
             var firstErrorCode = preflight.Failures.FirstOrDefault()?.Code;
+            string? firstErrorMessage = null;
             var appliedChanges = new List<Guid>();
             Guid failedService = Guid.Empty;
             foreach (var failure in preflight.Failures)
@@ -131,9 +133,10 @@ public sealed class ServiceReconciler(
                         await RollbackAsync(changed, cancellationToken);
                         if (exception is BackendBackoffException)
                             continue;
+                        firstErrorMessage ??= DetailMessage(exception);
                         if (changed.Count == 0 ||
                             !await SetRolledBackAsync(plan.Desired.ServiceId, desiredState, cancellationToken))
-                            SetFailed(plan.Desired.ServiceId, ErrorCode(exception));
+                            SetFailed(plan.Desired.ServiceId, ErrorCode(exception), DetailMessage(exception));
                     }
                 }
 
@@ -162,7 +165,7 @@ public sealed class ServiceReconciler(
                 }
                 return failed
                     ? new ApplyResult(false, firstErrorCode ?? "apply_failed",
-                        SafeMessage(firstErrorCode ?? "apply_failed"))
+                        firstErrorMessage ?? SafeMessage(firstErrorCode ?? "apply_failed"))
                     : new ApplyResult(true, null, null);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -241,11 +244,14 @@ public sealed class ServiceReconciler(
                         : process.Status == ServiceRuntimeStatus.Running
                             ? ServiceRuntimeStatus.Failed
                             : process.Status;
-                    var errorCode = item.Value.ErrorCode == "backend_update_rolled_back"
+                    // A new config blocked by a taken port leaves the old instance running; keep saying why until an
+                    // apply succeeds.
+                    var errorCode = item.Value.ErrorCode is "backend_update_rolled_back" or "port_in_use"
                         ? item.Value.ErrorCode
                         : status == ServiceRuntimeStatus.Failed ? "health_check_failed" : null;
                     runtimeStates[item.Key] = State(item.Key, status, metadata.DesiredState.BackendVersion,
-                        metadata.ConfigSha256, traffic, errorCode);
+                        metadata.ConfigSha256, traffic, errorCode,
+                        errorCode == "port_in_use" ? item.Value.ErrorMessage : null);
                     if (status == ServiceRuntimeStatus.Running &&
                         recoveryStates.TryGetValue(item.Key, out var recovery) &&
                         timeProvider.GetUtcNow() - recovery.StartedAt >= StableProcessWindow)
@@ -319,6 +325,9 @@ public sealed class ServiceReconciler(
         runtimeStates[plan.Desired.ServiceId] = State(plan.Desired.ServiceId, ServiceRuntimeStatus.Installing,
             plan.Desired.BackendVersion, prior?.ConfigSha256, null, null);
         var binaryPath = await binaryManager.EnsureAsync(plan.Artifact!, cancellationToken);
+        var running = processSupervisor.GetStatus(plan.Desired.ServiceId).Status == ServiceRuntimeStatus.Running;
+        if (isChanged || !running)
+            await EnsurePortsFreeAsync(plan.TcpPorts, plan.UdpPorts, running ? prior : null, cancellationToken);
         if (isChanged && prior is not null)
         {
             await instanceStore.SaveLastKnownGoodAsync(plan.Desired.ServiceId, cancellationToken);
@@ -358,6 +367,32 @@ public sealed class ServiceReconciler(
         reportedFailures.TryRemove(plan.Desired.ServiceId, out _);
     }
 
+    /// <summary>
+    /// Fails with <see cref="PortInUseException"/> when another program holds one of the ports, before the old
+    /// instance is touched. Ports the service's own running instance (<paramref name="running"/>) holds are skipped.
+    /// </summary>
+    private async Task EnsurePortsFreeAsync(IReadOnlyList<int> tcpPorts, IReadOnlyList<int> udpPorts,
+        BackendInstanceMetadata? running, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<int> ownTcp = [], ownUdp = [];
+        if (running is not null && providers.TryGet(running.DesiredState.BackendType, out var provider))
+        {
+            try
+            {
+                var current = await provider.ValidateAsync(running.DesiredState, cancellationToken);
+                ownTcp = current.TcpPorts ?? [];
+                ownUdp = current.UdpPorts ?? [];
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // An old config this Agent can no longer read: probe every port.
+            }
+        }
+        if (PortProbe.FindTaken(tcpPorts.Except(ownTcp), udpPorts.Except(ownUdp),
+                processSupervisor.RunningProcessIds()) is { } holder)
+            throw new PortInUseException(holder);
+    }
+
     private async Task RecoverProcessAsync(Guid serviceId, BackendInstanceMetadata metadata,
         BackendInstanceContext context, BackendTrafficSnapshot? traffic,
         CancellationToken cancellationToken)
@@ -380,6 +415,19 @@ public sealed class ServiceReconciler(
         runtimeStates[serviceId] = State(serviceId, ServiceRuntimeStatus.Restarting,
             metadata.DesiredState.BackendVersion, metadata.ConfigSha256, traffic, "backend_restarting");
         var provider = providers.GetRequired(metadata.DesiredState.BackendType);
+        try
+        {
+            var validation = await provider.ValidateAsync(metadata.DesiredState, cancellationToken);
+            await EnsurePortsFreeAsync(validation.TcpPorts ?? [], validation.UdpPorts ?? [], null, cancellationToken);
+        }
+        catch (PortInUseException exception)
+        {
+            // Still retried on the backoff schedule, so the service comes back once the other program lets go.
+            LogFailureOnce(serviceId, "port_in_use");
+            runtimeStates[serviceId] = State(serviceId, ServiceRuntimeStatus.Failed,
+                metadata.DesiredState.BackendVersion, metadata.ConfigSha256, traffic, "port_in_use", exception.Message);
+            return;
+        }
         var spec = await provider.CreateProcessSpecAsync(context, cancellationToken);
         var started = await processSupervisor.StartAsync(serviceId, spec, cancellationToken);
         if (started.Status != ServiceRuntimeStatus.Running)
@@ -497,7 +545,8 @@ public sealed class ServiceReconciler(
                     failures.Add(new ServiceFailure(service.ServiceId, "invalid_rendered_config"));
                     continue;
                 }
-                plans.Add(new ServicePlan(service, service.Enabled ? matches[0] : null, provider, config));
+                plans.Add(new ServicePlan(service, service.Enabled ? matches[0] : null, provider, config,
+                    validation.TcpPorts!, validation.UdpPorts!));
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -643,14 +692,19 @@ public sealed class ServiceReconciler(
             ? "disk_full"
             : exception is BackendBackoffException
                 ? "backend_restart_backoff"
+            : exception is PortInUseException
+                ? "port_in_use"
             : "apply_failed";
 
-    private void SetFailed(Guid serviceId, string code)
+    /// <summary>A message for the admin when the failure carries one of its own (which port, which program).</summary>
+    private static string? DetailMessage(Exception exception) => exception is PortInUseException ? exception.Message : null;
+
+    private void SetFailed(Guid serviceId, string code, string? message = null)
     {
         if (serviceId != Guid.Empty)
             runtimeStates[serviceId] = State(serviceId, ServiceRuntimeStatus.Failed,
                 runtimeStates.TryGetValue(serviceId, out var current) ? current.BackendVersion : null,
-                current?.AppliedConfigSha256, current?.Traffic, code);
+                current?.AppliedConfigSha256, current?.Traffic, code, message);
     }
 
     private void LogFailureOnce(Guid serviceId, string code)
@@ -698,9 +752,9 @@ public sealed class ServiceReconciler(
     }
 
     private ServiceRuntimeState State(Guid id, ServiceRuntimeStatus status, string? version, string? configSha,
-        BackendTrafficSnapshot? traffic, string? errorCode)
+        BackendTrafficSnapshot? traffic, string? errorCode, string? detail = null)
     {
-        var message = errorCode is null ? null : SafeMessage(errorCode);
+        var message = errorCode is null ? null : detail ?? SafeMessage(errorCode);
         return new ServiceRuntimeState(id, status, version, configSha, traffic,
             timeProvider.GetUtcNow(), errorCode, message);
     }
@@ -715,6 +769,7 @@ public sealed class ServiceReconciler(
         "invalid_control_port" => "The service's control port is invalid.",
         "unsupported_schema" => "The service configuration schema is not supported by this Agent.",
         "port_conflict" => "Another service on this node already uses one of this service's ports.",
+        "port_in_use" => "Another program on the node already uses one of this service's ports.",
         "runtime_refresh_failed" => "Runtime status could not be refreshed.",
         "health_check_failed" => "Service health check failed.",
         "process_failed" => "Backend process is not running.",
@@ -729,12 +784,17 @@ public sealed class ServiceReconciler(
         ServiceDesiredState Desired,
         BackendArtifact? Artifact,
         IBackendProvider Provider,
-        RenderedBackendConfig Config);
+        RenderedBackendConfig Config,
+        IReadOnlyList<int> TcpPorts,
+        IReadOnlyList<int> UdpPorts);
 
     private sealed record RecoveryState(string Key, int Attempts, DateTimeOffset NextAttemptAt,
         DateTimeOffset StartedAt);
 
     private sealed class BackendBackoffException : InvalidOperationException;
+
+    /// <summary>Another program holds one of the service's ports; the message names it for the admin.</summary>
+    private sealed class PortInUseException(PortHolder holder) : InvalidOperationException(holder.Describe());
 
     private sealed record ServiceFailure(Guid ServiceId, string Code);
 

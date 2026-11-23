@@ -95,6 +95,13 @@ export type Usage = {
   downloadBytes: number
   updatedAtUtc: string
 }
+/** The period a user's latest traffic reset closed, per service (names as they were then). */
+export type PreviousUsage = {
+  userId: string
+  startUtc: string
+  endUtc: string
+  entries: { serviceId: string; nodeName: string; serviceName: string; countryCode: string | null; uploadBytes: number; downloadBytes: number }[]
+}
 export type UserServiceAccess = { serviceId: string; credentialStatus: 'Active' | 'Revoked' | 'Unsupported'; multiUser: boolean; perUserTraffic: boolean; trafficStats: boolean }
 
 export type HealthIssue = {

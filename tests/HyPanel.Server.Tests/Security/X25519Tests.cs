@@ -81,7 +81,7 @@ public sealed class X25519Tests
     public void Catalog_EveryBackendDefinesListenAndConfigKeys()
     {
         var types = BackendDefinitionCatalog.All.Select(item => item.BackendType).ToArray();
-        CollectionAssert.AreEqual(new[] { "hysteria2", "xray-hysteria2", "xray" }, types);
+        CollectionAssert.AreEqual(new[] { "hysteria2", "xray-hysteria2", "xray", "mihomo-reality", "mihomo-anytls", "mihomo-ss2022" }, types);
 
         foreach (var definition in BackendDefinitionCatalog.All)
         {

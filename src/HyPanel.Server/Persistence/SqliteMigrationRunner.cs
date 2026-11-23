@@ -4,7 +4,7 @@ namespace HyPanel.Server.Persistence;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 31;
+    public const long CurrentSchemaVersion = 32;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -697,6 +697,24 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             await ExecuteAsync(connection, transaction, """
                 ALTER TABLE service_runtime_states ADD COLUMN route_exit_countries_json TEXT NULL;
                 INSERT INTO schema_migrations (version, applied_at_utc) VALUES (31, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                """, cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, 32, cancellationToken))
+        {
+            // The usage a reset cleared, kept per service until the next reset so the last period stays visible.
+            // Names are copied: the service or node may be deleted while the record should still read sensibly.
+            await ExecuteAsync(connection, transaction, """
+                ALTER TABLE users ADD COLUMN previous_period_start_utc TEXT NULL;
+                ALTER TABLE users ADD COLUMN previous_period_end_utc TEXT NULL;
+                CREATE TABLE usage_previous_period (
+                    user_id TEXT NOT NULL, service_id TEXT NOT NULL,
+                    node_name TEXT NOT NULL, service_name TEXT NOT NULL, country_code TEXT NULL,
+                    upload_bytes INTEGER NOT NULL CHECK (upload_bytes >= 0),
+                    download_bytes INTEGER NOT NULL CHECK (download_bytes >= 0),
+                    PRIMARY KEY (user_id, service_id)
+                );
+                INSERT INTO schema_migrations (version, applied_at_utc) VALUES (32, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
                 """, cancellationToken);
         }
 

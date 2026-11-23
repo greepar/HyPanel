@@ -215,3 +215,12 @@ internal sealed record HealthSummaryResponse(
     DateTimeOffset ObservedAtUtc,
     HealthSummaryCounts Counts,
     HealthSummaryIssue[] Issues);
+
+internal sealed record PreviousUsagePeriodResponse(Guid UserId, DateTimeOffset StartUtc, DateTimeOffset EndUtc,
+    PreviousUsageEntryResponse[] Entries);
+
+internal sealed record PreviousUsageEntryResponse(Guid ServiceId, string NodeName, string ServiceName, string? CountryCode,
+    long UploadBytes, long DownloadBytes);
+
+/// <summary>The signed-in user's usage per node and service: this period, and the one their last reset closed.</summary>
+internal sealed record OwnUsageBreakdownResponse(PreviousUsageEntryResponse[] Current, PreviousUsagePeriodResponse? Previous);

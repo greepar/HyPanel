@@ -149,3 +149,10 @@ internal sealed record SubscriptionServiceRecord(
 
 /// <summary>An extra line of a REALITY service as a subscription entry: same server, its own name and UUID.</summary>
 internal sealed record SubscriptionRouteEntry(Guid RouteId, string Name);
+
+/// <summary>The period a user's latest traffic reset closed, with what each service carried in it.</summary>
+internal sealed record PreviousUsagePeriodRecord(Guid UserId, DateTimeOffset StartUtc, DateTimeOffset EndUtc,
+    IReadOnlyList<PreviousUsageEntryRecord> Entries);
+
+internal sealed record PreviousUsageEntryRecord(Guid ServiceId, string NodeName, string ServiceName, string? CountryCode,
+    long UploadBytes, long DownloadBytes);

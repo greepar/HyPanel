@@ -58,6 +58,8 @@ namespace HyPanel.Server.Endpoints;
 [JsonSerializable(typeof(RotateSubscriptionTokenResponse))]
 [JsonSerializable(typeof(UserServiceAccessResponse[]))]
 [JsonSerializable(typeof(UsageTotalResponse[]))]
+[JsonSerializable(typeof(PreviousUsagePeriodResponse[]))]
+[JsonSerializable(typeof(OwnUsageBreakdownResponse))]
 [JsonSerializable(typeof(Guid[]))]
 [JsonSerializable(typeof(ServicePublicEndpointRequest))]
 [JsonSerializable(typeof(ServicePublicEndpointResponse))]

@@ -8,7 +8,8 @@ internal static class BackendReleaseSources
     public static readonly IReadOnlyList<BackendReleaseSource> All =
     [
         new("hysteria2", "HyNetwork/hysteria", HysteriaAsset, static _ => string.Empty),
-        new("xray", "XTLS/Xray-core", XrayAsset, static rid => rid.StartsWith("win-", StringComparison.Ordinal) ? "xray.exe" : "xray")
+        new("xray", "XTLS/Xray-core", XrayAsset, static rid => rid.StartsWith("win-", StringComparison.Ordinal) ? "xray.exe" : "xray"),
+        new("mihomo", "MetaCubeX/mihomo", MihomoAsset, static rid => rid.StartsWith("win-", StringComparison.Ordinal) ? "*.exe" : string.Empty)
     ];
 
     public static bool IsBackendType(string value) => All.Any(item => item.BackendType == value);
@@ -30,6 +31,21 @@ internal static class BackendReleaseSources
         "linux-x64" or "linux-musl-x64" => "hysteria-linux-amd64-avx",
         "osx-x64" => "hysteria-darwin-amd64-avx",
         "win-x64" => "hysteria-windows-amd64-avx.exe",
+        _ => null
+    };
+
+    /// <summary>
+    /// Mihomo's baseline builds: <c>amd64-v1</c> runs on any x86-64 CPU (the plain <c>amd64</c> build needs v3). Single
+    /// gzipped binaries, zipped on Windows.
+    /// </summary>
+    private static string? MihomoAsset(string rid, string version) => rid switch
+    {
+        "linux-x64" or "linux-musl-x64" => $"mihomo-linux-amd64-v1-v{version}.gz",
+        "linux-arm64" or "linux-musl-arm64" => $"mihomo-linux-arm64-v{version}.gz",
+        "osx-x64" => $"mihomo-darwin-amd64-v1-v{version}.gz",
+        "osx-arm64" => $"mihomo-darwin-arm64-v{version}.gz",
+        "win-x64" => $"mihomo-windows-amd64-v1-v{version}.zip",
+        "win-arm64" => $"mihomo-windows-arm64-v{version}.zip",
         _ => null
     };
 

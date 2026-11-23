@@ -91,6 +91,7 @@ export function formFor(service: Service, definition: BackendDefinition): Servic
     values.relayNodeId = typeof config.relayNodeId === 'string' ? config.relayNodeId : ''
     values.relayPort = config.relayPort == null ? '' : String(config.relayPort)
   }
+  values.ipv4Only = config.ipv4Only === true ? 'true' : ''
   const routes = Array.isArray(config.routes)
     ? (config.routes as Record<string, unknown>[]).filter(item => item && typeof item.id === 'string')
         .map(item => ({ id: String(item.id), name: String(item.name ?? ''), exit: exitFrom(item) }))
@@ -127,6 +128,7 @@ export function payloadFor(form: ServiceForm, definition: BackendDefinition): Se
     config.relayNodeId = form.values.relayNodeId
     config.relayPort = port
   }
+  if (form.values.ipv4Only === 'true') config.ipv4Only = true
   writeExit(exitFrom(form.values), config, '默认线路')
   if (supports(form.backendType, 'routes') && form.routes.length) {
     const names = new Set<string>([form.name.trim().toLowerCase()])
@@ -148,12 +150,4 @@ function fixedValue(field: BackendField): unknown {
   if (field.fixedKind === 'boolean') return field.fixed === 'true'
   if (field.fixedKind === 'number') return Number(field.fixed)
   return field.fixed
-}
-
-export const serviceFacts = (service: Service) => {
-  const c = parseConfig(service.configJson)
-  const listen = `${String(c.listenHost ?? '0.0.0.0')}:${String(c.listenPort ?? '—')}`
-  if (service.backendType === 'hysteria2') return [listen, `${c.upMbps ?? '?'} / ${c.downMbps ?? '?'} Mbps`, c.obfsPassword ? 'Salamander 混淆' : '无混淆']
-  if (service.backendType === 'xray') return [listen, String(c.serverName ?? '未设置 SNI'), 'Vision + REALITY']
-  return [listen, '自定义后端', '']
 }

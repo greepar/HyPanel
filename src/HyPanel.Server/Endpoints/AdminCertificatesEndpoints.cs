@@ -45,6 +45,7 @@ internal static class AdminCertificatesEndpoints
         var access = await auth.AuthorizeAsync(request, ct);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
         if (!TryLoadPathFiles(ref body, out var fileError)) return Error(fileError);
+        if (WildcardNeedsDns(body)) return Error(WildcardChallengeError);
         if (!TryCreate(Guid.NewGuid(), body, time.GetUtcNow(), requireToken: true, out var value))
             return Error(body.Kind == "Path" ? "文件中的证书无效、已过期或与私钥不匹配。" : "提交内容无效，请检查表单。");
         if (value.Kind == "Path") value = value with { SourceCheckedAtUtc = time.GetUtcNow() };
@@ -62,6 +63,7 @@ internal static class AdminCertificatesEndpoints
         if (existing is null) return Results.NotFound();
         var keepsToken = existing.HasAcmeDnsToken && string.IsNullOrWhiteSpace(body.AcmeDnsToken);
         if (!TryLoadPathFiles(ref body, out var fileError)) return Error(fileError);
+        if (WildcardNeedsDns(body)) return Error(WildcardChallengeError);
         if (!TryCreate(id, body, time.GetUtcNow(), requireToken: !keepsToken, out var value))
             return Error(body.Kind == "Path" ? "文件中的证书无效、已过期或与私钥不匹配。" : "提交内容无效，请检查表单。");
         value = value with
@@ -88,6 +90,13 @@ internal static class AdminCertificatesEndpoints
 
     internal static bool TryCreate(Guid id, CertificateUploadRequest body, DateTimeOffset now,
         out CertificateRecord value) => TryCreate(id, body, now, requireToken: true, out value);
+
+    internal const string WildcardChallengeError = "泛域名证书只能通过 Cloudflare DNS 验证申请。";
+
+    /// <summary>Let's Encrypt issues wildcard names only through a DNS-01 challenge.</summary>
+    private static bool WildcardNeedsDns(CertificateUploadRequest body) =>
+        body.Kind == "Acme" && body.Domain?.Trim().StartsWith("*.", StringComparison.Ordinal) == true
+                            && body.AcmeChallenge?.Trim() != "cloudflare";
 
     private static IResult Error(string message) => Results.Json(new CertificateErrorResponse(message),
         ServerJsonSerializerContext.Default.CertificateErrorResponse, statusCode: StatusCodes.Status400BadRequest);
@@ -162,7 +171,7 @@ internal static class AdminCertificatesEndpoints
         var email = body.AcmeEmail?.Trim();
         var challenge = body.AcmeChallenge?.Trim();
         var token = string.IsNullOrWhiteSpace(body.AcmeDnsToken) ? null : body.AcmeDnsToken.Trim();
-        if (!TryDomain(body.Domain, out var domain) || email is not { Length: >= 3 and <= 254 } ||
+        if (!TryDomain(body.Domain, out var domain, allowWildcard: challenge == "cloudflare") || email is not { Length: >= 3 and <= 254 } ||
             email.Count(static character => character == '@') != 1 || email.Any(char.IsWhiteSpace) ||
             challenge is not ("http" or "tls" or "cloudflare") ||
             challenge == "cloudflare" && requireToken && token is null ||
@@ -176,11 +185,13 @@ internal static class AdminCertificatesEndpoints
     private static bool IsPanelPath(string? path) => path is { Length: > 1 and <= 1024 } &&
         (path.StartsWith('/') || path.Length > 2 && path[1] == ':') && !path.Any(char.IsControl) && !path.Contains("..");
 
-    internal static bool TryDomain(string? input, out string domain)
+    /// <summary>A DNS name; with <paramref name="allowWildcard"/>, also <c>*.example.com</c> (one leading label).</summary>
+    internal static bool TryDomain(string? input, out string domain, bool allowWildcard = false)
     {
         domain = input?.Trim().TrimEnd('.').ToLowerInvariant() ?? string.Empty;
-        return domain.Length is > 0 and <= 253 && !domain.Contains('*') &&
-               Uri.CheckHostName(domain) == UriHostNameType.Dns && domain.Contains('.');
+        var name = allowWildcard && domain.StartsWith("*.", StringComparison.Ordinal) ? domain[2..] : domain;
+        return domain.Length is > 0 and <= 253 && !name.Contains('*') &&
+               Uri.CheckHostName(name) == UriHostNameType.Dns && name.Contains('.');
     }
 
     private static CertificateResponse Map(CertificateRecord value) => new(value.Id, value.Name, value.Kind,

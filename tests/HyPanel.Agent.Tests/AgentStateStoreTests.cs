@@ -36,16 +36,20 @@ public sealed class AgentStateStoreTests
     }
 
     [TestMethod]
-    public async Task LoadAsync_CorruptDesiredState_FailsWithoutReplacingFile()
+    [DataRow("{not-json")]
+    [DataRow("")]
+    public async Task LoadAsync_CorruptState_IsSetAsideAndStartsFromRevisionZero(string content)
     {
+        // An empty file is what a hard power-off left behind on XFS; the Agent must come back up, not crash-loop.
         Directory.CreateDirectory(dataDirectory);
-        await File.WriteAllTextAsync(Path.Combine(dataDirectory, "state.json"), "{not-json");
+        await File.WriteAllTextAsync(Path.Combine(dataDirectory, "state.json"), content);
         var store = new AgentStateStore(new AgentEnrollmentOptions(null, null, dataDirectory));
 
-        var exception = await Assert.ThrowsExactlyAsync<InvalidDataException>(() =>
-            store.LoadAsync(CancellationToken.None));
+        var state = await store.LoadAsync(CancellationToken.None);
 
-        StringAssert.Contains(exception.Message, "corrupt");
-        Assert.IsTrue(File.Exists(Path.Combine(dataDirectory, "state.json")));
+        Assert.AreEqual(0L, state.AppliedRevision);
+        Assert.IsNull(state.DesiredState);
+        Assert.IsFalse(File.Exists(Path.Combine(dataDirectory, "state.json")));
+        Assert.AreEqual(1, Directory.GetFiles(dataDirectory, "state.corrupt-*.json").Length);
     }
 }

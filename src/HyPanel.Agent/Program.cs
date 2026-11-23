@@ -1,3 +1,4 @@
+using HyPanel.Agent.Backends.Mihomo;
 using HyPanel.Agent.Backends;
 using HyPanel.Agent.Backends.Hysteria2;
 using HyPanel.Agent.Backends.Infrastructure;
@@ -47,6 +48,9 @@ public static class Program
         builder.Services.AddSingleton<IBackendProvider, Hysteria2Provider>();
         builder.Services.AddSingleton<IBackendProvider, XrayProvider>();
         builder.Services.AddSingleton<IBackendProvider, XrayHysteria2Provider>();
+        builder.Services.AddSingleton<IBackendProvider, MihomoRealityProvider>();
+        builder.Services.AddSingleton<IBackendProvider, MihomoAnyTlsProvider>();
+        builder.Services.AddSingleton<IBackendProvider, MihomoShadowsocksProvider>();
         builder.Services.AddSingleton<BackendProviderRegistry>();
         builder.Services.AddSingleton<BackendBinaryManager>();
         builder.Services.AddSingleton<BackendInstanceStore>();

@@ -1,4 +1,4 @@
-import type { ServiceLogPage, BackendDefinition, Backup, BackupValidation, Certificate, CertificateRequest, GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Usage, User, UserGroup } from './domain'
+import type { ServiceLogPage, BackendDefinition, Backup, BackupValidation, Certificate, CertificateRequest, GlobalSettings, HealthSummary, Node, NodeIdentity, PublicEndpoint, ServerUpdate, Service, ServiceDiagnostic, Usage, User, UserGroup, PreviousUsage } from './domain'
 
 
 export type InstallPlatform = 'unix' | 'powershell' | 'docker'
@@ -67,6 +67,7 @@ export class ApiClient {
   saveGroup = (id: string | null, value: { name: string; autoIncludeNewServices: boolean; serviceIds: string[] }) => this.request<UserGroup>(id ? `/api/admin/v1/groups/${id}` : '/api/admin/v1/groups', { method: id ? 'PUT' : 'POST', body: JSON.stringify(value) })
   deleteGroup = (id: string) => this.request<void>(`/api/admin/v1/groups/${id}`, { method: 'DELETE' })
   usage = () => this.request<Usage[]>('/api/admin/v1/usage')
+  previousUsage = () => this.request<PreviousUsage[]>('/api/admin/v1/usage/previous')
   serverUpdate = () => this.request<ServerUpdate>('/api/admin/v1/server-update')
   updateServer = () => this.request<{ version: string }>('/api/admin/v1/server-update', { method: 'POST' })
   settings = () => this.request<GlobalSettings>('/api/admin/v1/settings')

@@ -39,7 +39,7 @@ public sealed class AgentCredentialStore(AgentEnrollmentOptions options, ILogger
                 credentials,
                 AgentJsonSerializerContext.Default.AgentCredentials);
 
-            await File.WriteAllBytesAsync(temporaryPath, credentialBytes, cancellationToken);
+            await AtomicFile.WriteSyncedAsync(temporaryPath, credentialBytes, cancellationToken);
             SetOwnerOnlyPermissions(temporaryPath, cancellationToken);
 
             cancellationToken.ThrowIfCancellationRequested();

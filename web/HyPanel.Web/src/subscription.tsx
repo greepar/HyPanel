@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'preact/hooks'
 import QRCode from 'qrcode'
 import { Eye, EyeOff } from 'lucide-preact'
 import type { ApiClient } from './api'
-import type { Usage, User } from './domain'
+import type { PreviousUsage, Usage, User } from './domain'
+import { namedEntry, UsageBreakdownView } from './usage'
 import { PasskeyPanel } from './passkey'
 import { useAutoRefresh, readCache, writeCache } from './hooks'
 import { copyText, Empty, ErrorState, formatBytes, Loading, messageFor, Page, Stat } from './ui'
@@ -10,6 +11,7 @@ import { copyText, Empty, ErrorState, formatBytes, Loading, messageFor, Page, St
 export function SubscriptionPage({ api, setError }: { api: ApiClient; setError: (value: string) => void }) {
   const [me, setMe] = useState<User | null>(() => readCache<User>('subscription:me') ?? null)
   const [usage, setUsage] = useState<Usage[]>(() => readCache<Usage[]>('subscription:usage') ?? [])
+  const [breakdown, setBreakdown] = useState<OwnUsageBreakdown | null>(() => readCache<OwnUsageBreakdown>('subscription:breakdown') ?? null)
   const [loading, setLoading] = useState(() => !readCache('subscription:me'))
   const [loadError, setLoadError] = useState('')
 
@@ -20,12 +22,16 @@ export function SubscriptionPage({ api, setError }: { api: ApiClient; setError: 
       setLoadError('')
     }
     try {
-      const [user, rows] = await Promise.all([
+      const [user, rows, named] = await Promise.all([
         api.request<User>('/api/user/v1/me'),
         api.request<Usage[]>('/api/user/v1/usage'),
+        // Older Servers have no breakdown; the totals above still work.
+        api.request<OwnUsageBreakdown>('/api/user/v1/usage/breakdown').catch(() => null),
       ])
       setMe(user)
       setUsage(rows)
+      setBreakdown(named)
+      if (named) writeCache('subscription:breakdown', named)
       writeCache('subscription:me', user)
       writeCache('subscription:usage', rows)
     } catch (reason) {
@@ -58,13 +64,16 @@ export function SubscriptionPage({ api, setError }: { api: ApiClient; setError: 
         {me.trafficLimitBytes !== null && <div className="progress" role="progressbar" aria-label="流量额度使用率" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Number(percent.toFixed(1))}><span style={{ width: `${percent}%` }} /></div>}
       </section>
       <section className="card panel">
-        <div className="section-heading"><div><h2>服务用量</h2><p>数据由 Agent 按服务幂等上报。</p></div></div>
-        {usage.length ? <div className="usage-list">{usage.map(row => <div key={row.serviceId}><code>{row.serviceId}</code><span>上传 {formatBytes(row.uploadBytes)}</span><span>下载 {formatBytes(row.downloadBytes)}</span><strong>{formatBytes(row.uploadBytes + row.downloadBytes)}</strong></div>)}</div> : <Empty title="暂无用量数据" description="服务开始产生并上报流量后，这里会显示明细。" />}
+        <div className="section-heading"><div><h2>各节点用量</h2><p>本期按节点和服务统计；上期在每次流量重置时记录。</p></div></div>
+        <UsageBreakdownView current={(breakdown?.current ?? []).map(namedEntry)} previous={breakdown?.previous ?? null} />
       </section>
       <PasskeyPanel api={api} setError={setError} />
     </> : null}
   </Page>
 }
+
+type NamedUsage = PreviousUsage['entries'][number]
+type OwnUsageBreakdown = { current: NamedUsage[]; previous: PreviousUsage | null }
 
 type SubscriptionResponse = { subscriptionToken: string; subscriptionUrl?: string | null }
 /** The Server builds the link from the configured panel address; older Servers only return the token. */

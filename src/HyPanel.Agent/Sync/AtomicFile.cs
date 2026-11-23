@@ -9,7 +9,7 @@ internal static class AtomicFile
         var temporary = Path.Combine(directory, $".{fileName}.{Guid.NewGuid():N}.tmp");
         try
         {
-            await File.WriteAllBytesAsync(temporary, bytes, cancellationToken);
+            await WriteSyncedAsync(temporary, bytes, cancellationToken);
             RestrictToOwner(temporary);
             cancellationToken.ThrowIfCancellationRequested();
             File.Move(temporary, destination, overwrite: true);
@@ -21,6 +21,18 @@ internal static class AtomicFile
                 File.Delete(temporary);
             }
         }
+    }
+
+    /// <summary>
+    /// Writes the bytes and forces them to disk before returning. Without this a rename can reach the disk before the
+    /// data does, and a hard power-off leaves an empty file in place of the old one (seen on XFS after a host reset).
+    /// </summary>
+    public static async Task WriteSyncedAsync(string path, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
+    {
+        await using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 4096,
+            FileOptions.Asynchronous);
+        await stream.WriteAsync(bytes, cancellationToken);
+        stream.Flush(flushToDisk: true);
     }
 
     public static void Quarantine(string path)

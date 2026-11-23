@@ -300,7 +300,10 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
                 TlsCertificateKinds.Path => IsAbsolutePath(tls.CertificatePath) && IsAbsolutePath(tls.PrivateKeyPath)
                                             && !PathsEqual(tls.CertificatePath!, tls.PrivateKeyPath!),
                 TlsCertificateKinds.Acme => tls.AcmeDomains is { Count: > 0 } domains
-                                            && domains.All(IsDnsName)
+                                            && domains.All(domain => IsDnsName(domain)
+                                                // Let's Encrypt issues *.example.com only through a DNS challenge.
+                                                || tls.AcmeChallenge == AcmeChallenges.Cloudflare
+                                                && domain.StartsWith("*.", StringComparison.Ordinal) && IsDnsName(domain[2..]))
                                             && tls.AcmeEmail is { Length: > 3 } email && email.Contains('@')
                                             && tls.AcmeChallenge is AcmeChallenges.Http or AcmeChallenges.Tls
                                                 or AcmeChallenges.Cloudflare
@@ -439,6 +442,15 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
                 yaml.Append("      url: ").Append(QuoteYaml(proxy.ToUrl())).AppendLine();
                 yaml.AppendLine("      insecure: false");
             }
+        }
+        else if (config.Ipv4Only == true)
+        {
+            // Mode 4 resolves and dials IPv4 only, so the node's IPv6 is never used for egress.
+            yaml.AppendLine("outbounds:");
+            yaml.AppendLine("  - name: direct");
+            yaml.AppendLine("    type: direct");
+            yaml.AppendLine("    direct:");
+            yaml.AppendLine("      mode: 4");
         }
 
         return yaml.ToString();

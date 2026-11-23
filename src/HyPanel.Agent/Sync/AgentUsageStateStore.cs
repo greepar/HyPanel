@@ -91,6 +91,8 @@ public sealed class AgentUsageStateStore(AgentEnrollmentOptions options)
                 ];
             }
             var observed = counters.Values.OrderBy(item => item.ServiceId).ThenBy(item => item.UserId).ToArray();
+            // Idle services report the same counters every sync; rewriting the file then only wears the disk.
+            if (deltas.Count == 0 && observed.SequenceEqual(lastObserved)) return;
             var state = new AgentUsageStoreState(batches, observed);
             ValidateState(state);
             await PersistAsync(state, cancellationToken);
@@ -237,10 +239,12 @@ public sealed class AgentUsageStateStore(AgentEnrollmentOptions options)
             return JsonSerializer.Deserialize(bytes, AgentSyncJsonSerializerContext.Default.AgentUsageStoreState)
                    ?? throw new JsonException("The Agent usage state file is empty.");
         }
-        catch (JsonException exception)
+        catch (JsonException)
         {
-            throw new InvalidDataException(
-                "The Agent usage state file is corrupt; restore it to preserve idempotent accounting.", exception);
+            // A torn write (power loss) must not keep the Agent and its services down. Setting the file aside loses
+            // only the traffic not yet acknowledged by the Panel; counting restarts from the next observation.
+            AtomicFile.Quarantine(StatePath);
+            return new AgentUsageStoreState([], []);
         }
     }
 

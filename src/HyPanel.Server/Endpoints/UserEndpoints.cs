@@ -28,7 +28,9 @@ internal static class UserEndpoints
         endpoints.MapPost("/api/admin/v1/users/{id:guid}/services/{serviceId:guid}/credential/rotate", RotateCredentialAsync);
         endpoints.MapPost("/api/admin/v1/users/{id:guid}/services/{serviceId:guid}/credential/revoke", RevokeCredentialAsync);
         endpoints.MapGet("/api/admin/v1/usage", GetAdminUsageAsync);
+        endpoints.MapGet("/api/admin/v1/usage/previous", GetPreviousUsageAsync);
         endpoints.MapGet("/api/user/v1/usage", GetUserUsageAsync);
+        endpoints.MapGet("/api/user/v1/usage/breakdown", GetOwnUsageBreakdownAsync);
         endpoints.MapPost("/api/user/v1/subscription-token/rotate", RotateOwnSubscriptionTokenAsync);
         endpoints.MapGet("/api/user/v1/subscription-token", GetOwnTokenAsync);
     }
@@ -240,6 +242,33 @@ internal static class UserEndpoints
         return Results.Json([.. (await r.GetUsageTotalsAsync(userId, serviceId, ct)).Select(ToResponse)],
             ServerJsonSerializerContext.Default.UsageTotalResponseArray);
     }
+
+    private static async Task<IResult> GetPreviousUsageAsync(Guid? userId, HttpRequest request,
+        AdminAuthorization authorization, SqliteServerRepository r, CancellationToken ct)
+    {
+        var access = await authorization.AuthorizeAsync(request, ct);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        return Results.Json([.. (await r.GetPreviousUsageAsync(userId, ct)).Select(period =>
+                new PreviousUsagePeriodResponse(period.UserId, period.StartUtc, period.EndUtc,
+                    [.. period.Entries.Select(ToResponse)]))],
+            ServerJsonSerializerContext.Default.PreviousUsagePeriodResponseArray);
+    }
+
+    private static async Task<IResult> GetOwnUsageBreakdownAsync(HttpRequest request, UserAuthentication a,
+        SqliteServerRepository r, CancellationToken ct)
+    {
+        var user = await a.AuthenticateAsync(request, ct);
+        if (user is null) return Results.Unauthorized();
+        var previous = (await r.GetPreviousUsageAsync(user.Id, ct)).SingleOrDefault();
+        return Results.Json(new OwnUsageBreakdownResponse(
+                [.. (await r.GetNamedUsageAsync(user.Id, ct)).Select(ToResponse)],
+                previous is null ? null : new PreviousUsagePeriodResponse(previous.UserId, previous.StartUtc,
+                    previous.EndUtc, [.. previous.Entries.Select(ToResponse)])),
+            ServerJsonSerializerContext.Default.OwnUsageBreakdownResponse);
+    }
+
+    private static PreviousUsageEntryResponse ToResponse(PreviousUsageEntryRecord entry) =>
+        new(entry.ServiceId, entry.NodeName, entry.ServiceName, entry.CountryCode, entry.UploadBytes, entry.DownloadBytes);
 
     private static async Task<IResult> GetUserUsageAsync(HttpRequest request, UserAuthentication a,
         SqliteServerRepository r, CancellationToken ct)

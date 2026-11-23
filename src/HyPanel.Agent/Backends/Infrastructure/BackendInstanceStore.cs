@@ -187,7 +187,7 @@ public sealed class BackendInstanceStore(AgentEnrollmentOptions options)
         var temporary = ManagedPath(directory, $".{name}.{Guid.NewGuid():N}.tmp");
         try
         {
-            await File.WriteAllBytesAsync(temporary, content, cancellationToken);
+            await AtomicFile.WriteSyncedAsync(temporary, content, cancellationToken);
             if (!OperatingSystem.IsWindows())
                 File.SetUnixFileMode(temporary, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             cancellationToken.ThrowIfCancellationRequested();

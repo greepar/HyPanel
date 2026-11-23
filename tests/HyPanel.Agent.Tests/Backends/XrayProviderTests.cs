@@ -39,6 +39,22 @@ public sealed class XrayProviderTests
     }
 
     [TestMethod]
+    public async Task Ipv4OnlyDirectOutboundResolvesIpv4Only()
+    {
+        var outbounds = await RenderOutboundsAsync(CreateConfigJson().TrimEnd('}') + ",\"ipv4Only\":true}");
+        Assert.AreEqual("freedom", outbounds[0].GetProperty("protocol").GetString());
+        Assert.AreEqual("UseIPv4", outbounds[0].GetProperty("settings").GetProperty("domainStrategy").GetString());
+        Assert.IsFalse(outbounds[0].GetProperty("settings").TryGetProperty("servers", out _));
+    }
+
+    [TestMethod]
+    public async Task DirectOutboundHasNoSettingsByDefault()
+    {
+        var outbounds = await RenderOutboundsAsync(CreateConfigJson());
+        Assert.IsFalse(outbounds[0].TryGetProperty("settings", out _));
+    }
+
+    [TestMethod]
     public async Task Socks5UpstreamProxyIsTheDefaultOutboundWithCredentials()
     {
         var outbounds = await RenderOutboundsAsync(WithProxy(CreateConfigJson(), "socks5", port: 1080));

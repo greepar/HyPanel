@@ -3,9 +3,9 @@
 HyPanel 把服务拆成两层：
 
 - **协议**：客户端说的语言，决定订阅里怎么写，例如 Hysteria2、VLESS + REALITY。
-- **内核（engine）**：在节点上实际运行的程序，例如官方 Hysteria 2、Xray-core，以后也可以是 Mihomo。
+- **内核（engine）**：在节点上实际运行的程序，例如官方 Hysteria 2、Xray-core、Mihomo。
 
-一个“后端类型”（服务里存的 `backend_type`，如 `hysteria2`、`xray-hysteria2`、`xray`）就是“某个协议跑在某个内核上”。同一协议可以有多个内核，已有服务可以在它们之间切换，订阅不变。
+一个“后端类型”（服务里存的 `backend_type`，如 `hysteria2`、`xray-hysteria2`、`xray`、`mihomo-reality`）就是“某个协议跑在某个内核上”。同一协议可以有多个内核，已有服务可以在它们之间切换，订阅不变。
 
 ## 需要改的地方
 
@@ -41,3 +41,23 @@ Xray 内核的协议都继承 `XrayEngineProvider<TConfig>`。引擎部分是共
 3. 入站 `BuildInbound`：把传入的 `XrayClientIdentity` 列表写成这个协议的用户。
 
 然后在 Agent 的 `Program.cs` 注册 Provider，在面板的目录里加一条 `engine: "xray"` 的定义即可。参考 `XrayProvider`（REALITY）和 `XrayHysteria2Provider`。
+
+## 跑在 Mihomo 上的协议
+
+Mihomo 内核的协议都继承 `MihomoEngineProvider<TConfig>`，用 Mihomo 的 `listeners` 作服务端。目前有：
+
+| 后端类型 | 协议 | 说明 |
+| --- | --- | --- |
+| `mihomo-reality` | VLESS + Vision + REALITY | 字段与 `xray` 相同，服务可以在 Xray 和 Mihomo 之间切换，订阅不变；握手目标总是直连（`reality-config.proxy: DIRECT`），与 Xray 一致 |
+| `mihomo-anytls` | AnyTLS | 需要上传或节点本地路径的证书（Mihomo 不能自己申请 ACME）；每个用户用自己的凭据作密码 |
+| `mihomo-ss2022` | Shadowsocks 2022 + sing-mux | `2022-blake3-aes-128-gcm`，TCP 与 UDP 同端口；客户端密码是「服务端密钥:用户密钥」，用户密钥由凭据派生（`Shadowsocks2022.UserKey`）；订阅开启 h2mux，服务端自动接受 |
+
+引擎部分共用：
+
+- 配置以 JSON 写入（Mihomo 当作 YAML 读取），启动参数 `-d <实例目录> -f <配置>`。Mihomo 只读实例目录里的文件，协议需要的外部目录（如节点本地证书）通过 `SafePaths` 放进 `SAFE_PATHS` 环境变量。
+- 默认出口：`MATCH,DIRECT`，或 `MATCH,upstream` 走上游代理；禁用 IPv6 出口时写 `ipv6: false`。
+- 多条线路：三种协议都支持。每个用户在每条线路上用派生凭据登录（用户名 `hypanel-<用户>-<线路>`，与 Xray 相同），`IN-USER` 规则把这些用户名送到线路自己的出口，其余走默认出口。
+- 流量统计：Agent 对每个服务常驻一个到 `127.0.0.1:<控制端口>/connections` 的 WebSocket（每 500 毫秒推送一次打开的连接，`MihomoConnectionWatcher`），按连接增量归到 `inboundUser`；连接关闭前最后不到半秒的流量，用进程总流量对账后分给刚关闭连接的用户（`MihomoTrafficTracker`）。推送断开时退回到每次同步读一次。节点总量准确，用户之间的分配接近准确。
+- 二进制使用 `MetaCubeX/mihomo` 发布的 `amd64-v1` 构建，兼容所有 x86-64 CPU。
+
+新协议需要：配置类（实现 `IMihomoServiceConfig` 并加到 `MihomoJsonSerializerContext`）、`IsValidProtocolConfig`、`BuildListener`（返回不含 `name`/`listen`/`port` 的监听器），同时占用 UDP 时覆盖 `AlsoListensOnUdp`。

@@ -173,6 +173,44 @@ public sealed class AgentUsageStateStoreTests
     }
 
     [TestMethod]
+    [DataRow("")]
+    [DataRow("{\"pendingBatches\":")]
+    public async Task LoadAsync_CorruptFile_IsSetAsideInsteadOfStoppingTheAgent(string content)
+    {
+        Directory.CreateDirectory(dataDirectory);
+        await File.WriteAllTextAsync(Path.Combine(dataDirectory, "usage-state.json"), content);
+
+        var state = await CreateStore().LoadAsync(CancellationToken.None);
+
+        Assert.AreEqual(0, state.PendingBatches.Count);
+        Assert.IsFalse(File.Exists(Path.Combine(dataDirectory, "usage-state.json")));
+        Assert.AreEqual(1, Directory.GetFiles(dataDirectory, "usage-state.corrupt-*.json").Length);
+    }
+
+    [TestMethod]
+    public async Task RecordCumulativeAsync_UnchangedCountersDoNotRewriteTheFile()
+    {
+        var serviceId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var observedAt = DateTimeOffset.Parse("2026-09-10T12:34:56+00:00");
+        var store = CreateStore();
+        await store.LoadAsync(CancellationToken.None);
+        await store.RecordCumulativeAsync(serviceId,
+            [new BackendUserTraffic(userId, 100, 200, observedAt)], CancellationToken.None);
+        var path = Path.Combine(dataDirectory, "usage-state.json");
+        var written = File.GetLastWriteTimeUtc(path);
+        File.SetLastWriteTimeUtc(path, written.AddDays(-1));
+
+        await store.RecordCumulativeAsync(serviceId,
+            [new BackendUserTraffic(userId, 100, 200, observedAt.AddSeconds(8))], CancellationToken.None);
+
+        Assert.AreEqual(written.AddDays(-1), File.GetLastWriteTimeUtc(path), "Idle counters must not touch the disk.");
+        await store.RecordCumulativeAsync(serviceId,
+            [new BackendUserTraffic(userId, 120, 200, observedAt.AddSeconds(16))], CancellationToken.None);
+        Assert.AreNotEqual(written.AddDays(-1), File.GetLastWriteTimeUtc(path));
+    }
+
+    [TestMethod]
     public async Task EnsureBaselinesAsync_CapturesFirstObservationAndDoesNotResetExistingCounter()
     {
         var serviceId = Guid.NewGuid();

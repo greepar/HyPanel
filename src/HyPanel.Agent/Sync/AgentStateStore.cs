@@ -26,10 +26,12 @@ public sealed class AgentStateStore(AgentEnrollmentOptions options)
                 throw new InvalidDataException("The Agent state file is invalid.");
             return state;
         }
-        catch (JsonException exception)
+        catch (Exception exception) when (exception is JsonException or InvalidDataException)
         {
-            throw new InvalidDataException("The Agent state file is corrupt; restore it or remove it explicitly.",
-                exception);
+            // A torn write (power loss) must not keep the Agent down: set the file aside and start from revision 0,
+            // which makes the Panel send the full desired state again.
+            AtomicFile.Quarantine(StatePath);
+            return new AgentLocalState(0);
         }
     }
 

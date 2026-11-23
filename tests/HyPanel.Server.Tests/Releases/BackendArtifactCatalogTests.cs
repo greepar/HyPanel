@@ -172,7 +172,7 @@ public sealed class BackendArtifactCatalogTests
     [TestMethod]
     public void ReleaseSources_MapEveryFrozenRidWithoutCallerControlledUrls()
     {
-        CollectionAssert.AreEquivalent(new[] { "hysteria2", "xray" },
+        CollectionAssert.AreEquivalent(new[] { "hysteria2", "xray", "mihomo" },
             BackendReleaseSources.All.Select(item => item.BackendType).ToArray());
         foreach (var source in BackendReleaseSources.All)
         foreach (var rid in ReleaseCatalog.SupportedRids)

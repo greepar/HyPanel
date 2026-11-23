@@ -112,13 +112,19 @@ internal sealed class XrayOutbound
     /// Xray sends everything through the first outbound: the upstream proxy when one is configured (it fails closed,
     /// there is no fallback to a direct connection), otherwise a direct connection.
     /// </summary>
-    public static XrayOutbound[] Create(UpstreamProxy? proxy) =>
-        [For(proxy, proxy is null ? "direct" : "upstream"), new XrayOutbound { Protocol = "blackhole", Tag = "blocked" }];
+    public static XrayOutbound[] Create(UpstreamProxy? proxy, bool ipv4Only = false) =>
+        [For(proxy, proxy is null ? "direct" : "upstream", ipv4Only), new XrayOutbound { Protocol = "blackhole", Tag = "blocked" }];
 
     /// <summary>One way out: a direct connection, or through the proxy (failing closed when it is down).</summary>
-    public static XrayOutbound For(UpstreamProxy? proxy, string tag)
+    public static XrayOutbound For(UpstreamProxy? proxy, string tag, bool ipv4Only = false)
     {
-        if (proxy is null) return new XrayOutbound { Protocol = "freedom", Tag = tag };
+        if (proxy is null)
+            return new XrayOutbound
+            {
+                Protocol = "freedom",
+                Tag = tag,
+                Settings = ipv4Only ? new XrayProxyOutboundSettings { DomainStrategy = "UseIPv4" } : null
+            };
         var server = new XrayProxyServer
         {
             Address = proxy.Host,
@@ -137,9 +143,13 @@ internal sealed class XrayOutbound
     }
 }
 
+/// <summary>Outbound settings: <see cref="Servers"/> for a proxy, <see cref="DomainStrategy"/> for a direct exit.</summary>
 internal sealed class XrayProxyOutboundSettings
 {
-    public required XrayProxyServer[] Servers { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public XrayProxyServer[]? Servers { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? DomainStrategy { get; init; }
 }
 
 internal sealed class XrayProxyServer

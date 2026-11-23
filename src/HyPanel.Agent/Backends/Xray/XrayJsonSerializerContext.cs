@@ -53,6 +53,8 @@ internal sealed class XrayConfig : IXrayServiceConfig
 
     /// <summary>Extra lines on the same port, each with its own exit; see <see cref="HyPanel.Shared.Networking.ServiceRoute"/>.</summary>
     public XrayRouteConfig?[]? Routes { get; init; }
+
+    public bool? Ipv4Only { get; init; }
 }
 
 internal sealed class XrayRouteConfig : IUpstreamProxyConfig
@@ -105,4 +107,6 @@ internal sealed class XrayHysteria2Config : IXrayServiceConfig
     public string? PortHopping { get; init; }
 
     public XrayRouteConfig?[]? Routes { get; init; }
+
+    public bool? Ipv4Only { get; init; }
 }

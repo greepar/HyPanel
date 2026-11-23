@@ -71,22 +71,37 @@ internal static class BackendDefinitionCatalog
             Hysteria2Defaults, MinimumAgentVersion: "0.5.34"),
         new("xray", "Xray REALITY", "Xray-core", "VLESS + TCP + REALITY", "VLESS Vision 与 REALITY 握手。", "XR",
             "26.3.27",
-            [
-                .. Listen("443"),
-                Field("realityPrivateKey", "REALITY 私钥", "password", required: true, secret: true, generate: true),
-                Field("realityPublicKey", "REALITY 公钥", "text", required: true, generate: true),
-                Field("shortId", "Short ID", "text", required: true, generate: true),
-                Field("serverName", "服务器名称 / SNI", "text", required: true, generate: true,
-                    defaultValue: "www.cloudflare.com"),
-                Field("destination", "伪装目标", "text", required: true, generate: true,
-                    defaultValue: "www.cloudflare.com:443"),
-                Field("fingerprint", "浏览器指纹", "select", required: true, defaultValue: "chrome",
-                    options: Fingerprints),
-                FixedField("flow", "流控", "xtls-rprx-vision", "string")
-            ],
+            RealityFields(),
             "xray", VlessRealityProtocol.Instance,
             BackendFeatures.MultiUser | BackendFeatures.ControlPort | BackendFeatures.Routes | BackendFeatures.Relay,
-            RealityDefaults)
+            RealityDefaults),
+        // VLESS + REALITY on Mihomo: the same fields, so a service switches between Xray and Mihomo freely.
+        new("mihomo-reality", "REALITY · Mihomo 内核", "Mihomo", "VLESS + TCP + REALITY",
+            "与 Xray 版本完全兼容，订阅不变，同样支持一个端口多条线路。", "XR", "1.19.34", RealityFields(),
+            "mihomo", VlessRealityProtocol.Instance,
+            BackendFeatures.MultiUser | BackendFeatures.ControlPort | BackendFeatures.Routes | BackendFeatures.Relay,
+            RealityDefaults, MinimumAgentVersion: "0.5.36"),
+        new("mihomo-anytls", "AnyTLS · Mihomo 内核", "Mihomo", "AnyTLS",
+            "普通 TLS 外观并填充流量特征，需要一张证书。", "AT", "1.19.34",
+            [
+                .. Listen("443"),
+                Field("certificateId", "证书", "certificate", required: true)
+            ],
+            "mihomo", AnyTlsProtocol.Instance,
+            BackendFeatures.MultiUser | BackendFeatures.ControlPort | BackendFeatures.Certificate | BackendFeatures.Routes |
+            BackendFeatures.Relay,
+            static () => [], MinimumAgentVersion: "0.5.36"),
+        new("mihomo-ss2022", "SS2022 + sing-mux · Mihomo 内核", "Mihomo", "Shadowsocks 2022",
+            "Shadowsocks 2022 加密，客户端用 sing-mux 复用连接；TCP 与 UDP 同端口，无需证书。", "SS", "1.19.34",
+            [
+                .. Listen("8388"),
+                Field("serverKey", "服务端密钥", "password", required: true, secret: true, generate: true),
+                FixedField("cipher", "加密方式", HyPanel.Shared.Networking.Shadowsocks2022.Cipher, "string")
+            ],
+            "mihomo", Shadowsocks2022Protocol.Instance,
+            BackendFeatures.MultiUser | BackendFeatures.ControlPort | BackendFeatures.Routes,
+            static () => new Dictionary<string, string> { ["serverKey"] = SecretGenerator.StandardBase64(16) },
+            MinimumAgentVersion: "0.5.36")
     ];
 
     public static bool TryGet(string? backendType, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out BackendDefinition? definition)
@@ -105,6 +120,21 @@ internal static class BackendDefinitionCatalog
 
     public static Dictionary<string, string> GenerateDefaults(string backendType) =>
         TryGet(backendType, out var definition) ? definition.GenerateDefaults() : [];
+
+    private static BackendFieldDefinition[] RealityFields() =>
+    [
+        .. Listen("443"),
+        Field("realityPrivateKey", "REALITY 私钥", "password", required: true, secret: true, generate: true),
+        Field("realityPublicKey", "REALITY 公钥", "text", required: true, generate: true),
+        Field("shortId", "Short ID", "text", required: true, generate: true),
+        Field("serverName", "服务器名称 / SNI", "text", required: true, generate: true,
+            defaultValue: "www.cloudflare.com"),
+        Field("destination", "伪装目标", "text", required: true, generate: true,
+            defaultValue: "www.cloudflare.com:443"),
+        Field("fingerprint", "浏览器指纹", "select", required: true, defaultValue: "chrome",
+            options: Fingerprints),
+        FixedField("flow", "流控", "xtls-rprx-vision", "string")
+    ];
 
     private static BackendFieldDefinition[] Hysteria2Fields() =>
     [

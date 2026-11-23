@@ -58,4 +58,7 @@ internal sealed class Hysteria2Config : IUpstreamProxyConfig
 
     /// <summary>Optional port-hopping ports redirected to <see cref="ListenPort"/>, e.g. <c>20000-30000</c>.</summary>
     public string? PortHopping { get; init; }
+
+    /// <summary>Direct connections use IPv4 only (the admin turned IPv6 egress off).</summary>
+    public bool? Ipv4Only { get; init; }
 }

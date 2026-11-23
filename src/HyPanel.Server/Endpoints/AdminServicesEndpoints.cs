@@ -79,6 +79,12 @@ internal static class AdminServicesEndpoints
     /// <summary>The first Agent that understands extra lines; older ones reject the unknown field and stop the service.</summary>
     internal const string RoutesMinimumAgentVersion = "0.5.34";
 
+    /// <summary>Older Agents reject the unknown <c>ipv4Only</c> config key, so the service would stop applying.</summary>
+    internal const string Ipv4OnlyMinimumAgentVersion = "0.5.36";
+
+    /// <summary>Older Agents reject a <c>*.</c> ACME domain and the service would stop applying.</summary>
+    internal const string WildcardAcmeMinimumAgentVersion = "0.5.36";
+
     /// <summary>
     /// Refuses a backend or extra lines on a node whose Agent is too old to run them, instead of saving a service the
     /// node would stop.
@@ -86,19 +92,39 @@ internal static class AdminServicesEndpoints
     internal static async Task<string?> AgentSupportError(Guid nodeId, string backendType, string config,
         SqliteServerRepository repository, CancellationToken ct)
     {
-        var (required, feature) = BackendDefinitionCatalog.TryGet(backendType, out var definition)
-                                  && definition.MinimumAgentVersion is { } backendMinimum
-            ? (backendMinimum, definition.DisplayName)
-            : ServiceRoute.Parse(config).Count > 0
-                ? (RoutesMinimumAgentVersion, "多条线路")
-                : (null, null);
-        if (required is null) return null;
+        var needs = new List<(string Version, string Feature)>(3);
+        if (BackendDefinitionCatalog.TryGet(backendType, out var definition) && definition.MinimumAgentVersion is { } backendMinimum)
+            needs.Add((backendMinimum, definition.DisplayName));
+        if (ServiceRoute.Parse(config).Count > 0) needs.Add((RoutesMinimumAgentVersion, "多条线路"));
+        if (WantsIpv4Only(config)) needs.Add((Ipv4OnlyMinimumAgentVersion, "禁用 IPv6 出口"));
+        if (BackendDefinitionCatalog.Has(backendType, BackendFeatures.AcmeCertificate)
+            && AgentSyncEndpoints.TryCertificateId(config, out var certificateId)
+            && await repository.GetCertificateWithKeyAsync(certificateId, ct) is { Kind: "Acme" } certificate
+            && SqliteServerRepository.AcmeDomain(certificate.San)?.StartsWith("*.", StringComparison.Ordinal) == true)
+            needs.Add((WildcardAcmeMinimumAgentVersion, "泛域名自动证书"));
+        if (needs.Count == 0) return null;
         var version = await repository.GetNodeAgentVersionAsync(nodeId, ct);
-        return version is not null && SemanticVersion.TryParse(version, out var current)
-               && SemanticVersion.TryParse(required, out var minimum)
-               && current.CompareTo(minimum) < 0
-            ? $"这个节点的 Agent 是 {version}，需要更新到 {required} 或更新版本才能使用{feature}。"
-            : null;
+        if (version is null || !SemanticVersion.TryParse(version, out var current)) return null;
+        foreach (var (required, feature) in needs)
+        {
+            if (SemanticVersion.TryParse(required, out var minimum) && current.CompareTo(minimum) < 0)
+                return $"这个节点的 Agent 是 {version}，需要更新到 {required} 或更新版本才能使用{feature}。";
+        }
+        return null;
+    }
+
+    private static bool WantsIpv4Only(string config)
+    {
+        try
+        {
+            using var json = JsonDocument.Parse(config);
+            return json.RootElement.ValueKind == JsonValueKind.Object
+                   && json.RootElement.TryGetProperty("ipv4Only", out var value) && value.ValueKind == JsonValueKind.True;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private static IResult InvalidConfig(string message) =>

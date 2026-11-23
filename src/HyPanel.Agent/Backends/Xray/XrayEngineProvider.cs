@@ -19,6 +19,9 @@ internal interface IXrayServiceConfig : IUpstreamProxyConfig
 
     /// <summary>Elements are nullable: the config comes from the Panel as JSON and is validated, not trusted.</summary>
     XrayRouteConfig?[]? Routes { get; }
+
+    /// <summary>Direct exits resolve and dial IPv4 only (the admin turned IPv6 egress off).</summary>
+    bool? Ipv4Only { get; }
 }
 
 /// <summary>One user on one line: the secret they present and the email Xray keys stats and routing on.</summary>
@@ -92,13 +95,14 @@ internal abstract class XrayEngineProvider<TConfig>(TimeProvider timeProvider) :
                     ServiceRoute.UserTag(user.UserId, route.Id)))
                 .Prepend(new XrayClientIdentity(user.UserId, user.Credential, ServiceRoute.UserTag(user.UserId))))
             .ToArray();
-        var outbounds = XrayOutbound.Create(config.ProxyOrNull()).ToList();
+        var ipv4Only = config.Ipv4Only == true;
+        var outbounds = XrayOutbound.Create(config.ProxyOrNull(), ipv4Only).ToList();
         var rules = new List<XrayRoutingRule>();
         foreach (var route in routes)
         {
             var tag = $"route-{route.Id:N}";
             // Before the trailing blackhole, which stays last.
-            outbounds.Insert(outbounds.Count - 1, XrayOutbound.For(route.ProxyOrNull(), tag));
+            outbounds.Insert(outbounds.Count - 1, XrayOutbound.For(route.ProxyOrNull(), tag, ipv4Only));
             if (users.Count > 0)
                 rules.Add(new XrayRoutingRule
                 {

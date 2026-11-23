@@ -103,6 +103,23 @@ public sealed class AdminCertificatesEndpointsTests
             "Acme", Domain: "*.example.com", AcmeEmail: "ops@example.com", AcmeChallenge: "http"), now, out _));
     }
 
+    [TestMethod]
+    public void TryCreate_WildcardAcme_IsAcceptedOnlyWithDnsChallenge()
+    {
+        var now = DateTimeOffset.UtcNow;
+        Assert.IsTrue(AdminCertificatesEndpoints.TryCreate(Guid.NewGuid(), new CertificateUploadRequest("wild", null, null,
+            "Acme", Domain: "*.Speedtest-API.example.com", AcmeEmail: "ops@example.com", AcmeChallenge: "cloudflare",
+            AcmeDnsToken: "cf-token"), now, out var wildcard));
+        Assert.AreEqual("DNS:*.speedtest-api.example.com", wildcard.San);
+        Assert.AreEqual("*.speedtest-api.example.com", HyPanel.Server.Persistence.SqliteServerRepository.AcmeDomain(wildcard.San));
+        Assert.AreEqual("554b.speedtest-api.example.com", HyPanel.Server.Persistence.SqliteServerRepository.ServerNameFor(wildcard.San, "UK"));
+
+        foreach (var domain in new[] { "*.com", "*.*.example.com", "a.*.example.com", "*example.com" })
+            Assert.IsFalse(AdminCertificatesEndpoints.TryCreate(Guid.NewGuid(), new CertificateUploadRequest("bad", null, null,
+                "Acme", Domain: domain, AcmeEmail: "ops@example.com", AcmeChallenge: "cloudflare", AcmeDnsToken: "t"),
+                now, out _), domain);
+    }
+
     internal static (string Certificate, string Key) SelfSigned(string host, DateTimeOffset now, int days = 30)
     {
         using var key = RSA.Create(2048);

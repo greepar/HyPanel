@@ -77,7 +77,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L), (22L, 1L), (23L, 1L), (24L, 1L), (25L, 1L), (26L, 1L), (27L, 1L), (28L, 1L), (29L, 1L), (30L, 1L), (31L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L), (22L, 1L), (23L, 1L), (24L, 1L), (25L, 1L), (26L, 1L), (27L, 1L), (28L, 1L), (29L, 1L), (30L, 1L), (31L, 1L), (32L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -670,6 +670,9 @@ public sealed class SqliteServerRepositoryTests
             CancellationToken.None, [new UsageBatch(Guid.NewGuid(), fixture.Time.GetUtcNow(),
                 [new UserUsageDelta(user.User.Id, service.Id, 60, 60)])]));
 
+        var named = (await fixture.Repository.GetNamedUsageAsync(user.User.Id, CancellationToken.None)).Single();
+        Assert.AreEqual(("reset", 60L, 60L), (named.ServiceName, named.UploadBytes, named.DownloadBytes),
+            "users see their usage by service name, not id");
         await fixture.Repository.SetTrafficResetDayAsync(user.User.Id, 10, CancellationToken.None);
         Assert.AreEqual(10, (await fixture.Repository.GetUserAsync(user.User.Id, CancellationToken.None))!.TrafficResetDay);
         Assert.AreEqual(0, await fixture.Repository.ResetDueTrafficAsync(CancellationToken.None),
@@ -683,8 +686,30 @@ public sealed class SqliteServerRepositoryTests
             "nodes re-sync so credentials over the limit come back");
         Assert.AreEqual(0, await fixture.Repository.ResetDueTrafficAsync(CancellationToken.None), "once per period");
 
+        var previous = (await fixture.Repository.GetPreviousUsageAsync(user.User.Id, CancellationToken.None)).Single();
+        Assert.AreEqual(fixture.Time.GetUtcNow(), previous.EndUtc);
+        var entry = previous.Entries.Single();
+        Assert.AreEqual((service.Id, "reset", 60L, 60L), (entry.ServiceId, entry.ServiceName, entry.UploadBytes, entry.DownloadBytes),
+            "the cleared period is kept per service with its name");
+        var september = fixture.Time.GetUtcNow();
+
         fixture.Time.Advance(TimeSpan.FromDays(30)); // 2026-10-10 01:00
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "2.0", "linux-x64", 1, null, [], [],
+            CancellationToken.None, [new UsageBatch(Guid.NewGuid(), fixture.Time.GetUtcNow(),
+                [new UserUsageDelta(user.User.Id, service.Id, 5, 7)])]));
         Assert.AreEqual(1, await fixture.Repository.ResetDueTrafficAsync(CancellationToken.None));
+        previous = (await fixture.Repository.GetPreviousUsageAsync(user.User.Id, CancellationToken.None)).Single();
+        Assert.AreEqual(september, previous.StartUtc, "the next period starts where the last reset ended it");
+        Assert.AreEqual((5L, 7L), (previous.Entries.Single().UploadBytes, previous.Entries.Single().DownloadBytes),
+            "only the last closed period is kept");
+
+        fixture.Time.Advance(TimeSpan.FromDays(31)); // 2026-11-10: nothing used this time
+        Assert.AreEqual(1, await fixture.Repository.ResetDueTrafficAsync(CancellationToken.None));
+        Assert.AreEqual(0, (await fixture.Repository.GetPreviousUsageAsync(user.User.Id, CancellationToken.None)).Single().Entries.Count,
+            "an unused period is still recorded, as zero");
+
+        Assert.IsTrue(await fixture.Repository.DeleteUserAsync(user.User.Id, CancellationToken.None));
+        Assert.AreEqual(0, (await fixture.Repository.GetPreviousUsageAsync(null, CancellationToken.None)).Count);
     }
 
     [TestMethod]
@@ -961,14 +986,28 @@ public sealed class SqliteServerRepositoryTests
         Assert.AreEqual(expected, AgentSyncEndpoints.IsValidPublicIpv6(value));
 
     [TestMethod]
-    [DataRow("DNS:*.greepar.uk", "uk", "uk.greepar.uk")]
+    [DataRow("DNS:*.greepar.uk", "jp-nb", "6a702d6e62.greepar.uk")]
+    [DataRow("DNS:*.greepar.uk", "uk", "756b.greepar.uk")]
     [DataRow("DNS:*.greepar.uk, DNS:greepar.uk", "uk", "greepar.uk")]
-    [DataRow("DNS:*.example.com", "伦敦 Edge#1", "edge-1.example.com")]
-    [DataRow("DNS:*.example.com", "节点", "hy2.example.com")]
+    [DataRow("DNS:*.example.com", "节点", "e88a82e782b9.example.com")]
+    [DataRow("DNS:*.example.com", "abcdefghijklmnopqrstuvwxyz0123456789",
+        "6162636465666768696a6b6c6d6e6f707172737475767778797a3031323334.example.com")]
     [DataRow("DNS:hy.example.com", "uk", "hy.example.com")]
     [DataRow("", "uk", null)]
     public void ServerNameFor_WildcardCertificateGetsConcreteNodeName(string san, string node, string? expected) =>
         Assert.AreEqual(expected, SqliteServerRepository.ServerNameFor(san, node));
+
+    [TestMethod]
+    public void ServerNameFor_UnnamedNodeGetsARandomLabelThatIsStablePerService()
+    {
+        var service = Guid.NewGuid();
+        var first = SqliteServerRepository.ServerNameFor("DNS:*.example.com", "  ", service)!;
+        StringAssert.Matches(first, new System.Text.RegularExpressions.Regex("^[0-9a-f]{10}\\.example\\.com$"));
+        Assert.AreEqual(first, SqliteServerRepository.ServerNameFor("DNS:*.example.com", "", service));
+        Assert.AreNotEqual(first, SqliteServerRepository.ServerNameFor("DNS:*.example.com", "", Guid.NewGuid()));
+        Assert.AreNotEqual(SqliteServerRepository.ServerNameFor("DNS:*.example.com", ""),
+            SqliteServerRepository.ServerNameFor("DNS:*.example.com", ""));
+    }
 
     [TestMethod]
     [DataRow("DNS:hy.example.com, DNS:www.example.com", "hy.example.com")]

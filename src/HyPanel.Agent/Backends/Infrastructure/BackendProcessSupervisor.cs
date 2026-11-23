@@ -139,6 +139,11 @@ public sealed class BackendProcessSupervisor(ILogger<BackendProcessSupervisor> l
         return await StartAsync(serviceId, spec, cancellationToken);
     }
 
+    /// <summary>Process ids of every backend this Agent is running.</summary>
+    public IReadOnlySet<int> RunningProcessIds() =>
+        processes.Values.Select(item => item.Process).Where(process => process is { HasExited: false })
+            .Select(process => process!.Id).ToHashSet();
+
     public BackendProcessStatus GetStatus(Guid serviceId)
     {
         if (!processes.TryGetValue(serviceId, out var managed))
