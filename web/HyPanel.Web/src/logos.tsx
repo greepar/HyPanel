@@ -1,5 +1,7 @@
-// Project marks, drawn from each project's own media kit so they follow the theme through currentColor.
+// Protocol marks, drawn so they follow the theme through currentColor.
 // Hysteria: apernet/hysteria media-kit "symbol 1". Xray: XTLS/Xray-docs-next public/logo.
+// Shadowsocks: the paper plane of shadowsocks-android (core/res/drawable/ic_service_active).
+// AnyTLS has no logo of its own; ours is a padlock (TLS) holding uneven bars (its padding).
 
 function HysteriaLogo() {
   return (
@@ -28,8 +30,38 @@ function XrayLogo() {
   );
 }
 
+function ShadowsocksLogo() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="currentColor" d="M21.25 2.28 17.55 18.55 9.26 15.89 16.58 7.16 6.83 15.37 0 12.8 21.25 2.28ZM9.45 17.56l2.64.85L9.46 22l-.01-4.44Z" />
+    </svg>
+  );
+}
+
+function AnyTlsLogo() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M8 11V7.5a4 4 0 0 1 8 0V11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+      <rect x="4" y="10.5" width="16" height="11.5" rx="2.6" fill="currentColor" />
+      <g stroke="var(--surface-3)" stroke-width="1.7" stroke-linecap="round">
+        <path d="M7.5 14h9" />
+        <path d="M7.5 16.5h5" />
+        <path d="M7.5 19h7" />
+      </g>
+    </svg>
+  );
+}
+
+const logos: Record<string, () => preact.JSX.Element> = {
+  HY2: HysteriaLogo,
+  XR: XrayLogo,
+  SS: ShadowsocksLogo,
+  AT: AnyTlsLogo,
+};
+
 /** The protocol's mark (by the server's badge), falling back to the badge text for a backend without one. */
 export function BackendMark({ badge }: { badge: string }) {
-  const logo = badge === "HY2" ? <HysteriaLogo /> : badge === "XR" ? <XrayLogo /> : null;
+  const Logo = logos[badge];
+  const logo = Logo ? <Logo /> : null;
   return <span className={logo ? "backend-mark has-logo" : "backend-mark"}>{logo ?? badge}</span>;
 }
