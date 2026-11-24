@@ -40,11 +40,8 @@ internal sealed class XrayHysteria2Provider(TimeProvider timeProvider, BackendIn
         ServiceDesiredState desiredState)
     {
         var tls = desiredState.TlsCertificate!;
-        // Xray resolves relative certificate paths against its own binary's directory, so they are made absolute.
-        var tlsDirectory = Path.Combine(instanceStore.GetInstanceDirectory(desiredState.ServiceId), "tls", tls.Fingerprint);
-        var (certificateFile, keyFile) = tls.Kind == TlsCertificateKinds.Path
-            ? (tls.CertificatePath!, tls.PrivateKeyPath!)
-            : (Path.Combine(tlsDirectory, "cert.pem"), Path.Combine(tlsDirectory, "key.pem"));
+        // Absolute paths: Xray resolves relative ones against its own binary's directory.
+        var (certificateFile, keyFile) = instanceStore.CertificateFiles(tls);
         var users = new JsonArray();
         foreach (var client in clients)
             users.Add((JsonNode)new JsonObject

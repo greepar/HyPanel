@@ -104,42 +104,54 @@ public sealed class ReconciliationInfrastructureTests
     }
 
     [TestMethod]
-    public async Task BackendInstanceStore_TlsAsset_WritesProtectedFilesAndRedactsMetadata()
+    public async Task BackendInstanceStore_TlsAsset_IsSharedProtectedAndPrunedWhenUnused()
     {
         var store = new BackendInstanceStore(new AgentEnrollmentOptions(null, null, dataDirectory));
         var fingerprint = new string('a', 64);
-        var desired = Service("tls", "tcp") with
+        var asset = new TlsCertificateAsset(Guid.NewGuid(), fingerprint,
+            "-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----\n",
+            "-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----\n");
+        var first = Service("tls", "tcp") with { TlsCertificate = asset };
+        var second = Service("tls-2", "tcp") with { TlsCertificate = asset };
+        var config = new RenderedBackendConfig("config.json", "{}"u8.ToArray(),
+            Convert.ToHexString(SHA256.HashData("{}"u8)).ToLowerInvariant());
+        foreach (var service in new[] { first, second })
         {
-            TlsCertificate = new TlsCertificateAsset(Guid.NewGuid(), fingerprint,
-                "-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----\n",
-                "-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----\n")
-        };
+            await store.EnsureTlsAssetAsync(service, CancellationToken.None);
+            await store.SaveConfigAsync(service, config, CancellationToken.None);
+        }
 
-        await store.EnsureTlsAssetAsync(desired, CancellationToken.None);
-        await store.SaveConfigAsync(desired, new RenderedBackendConfig("config.json", "{}"u8.ToArray(),
-            Convert.ToHexString(SHA256.HashData("{}"u8)).ToLowerInvariant()), CancellationToken.None);
-
-        var tls = Path.Combine(store.GetInstanceDirectory(desired.ServiceId), "tls", fingerprint);
-        Assert.AreEqual("-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----\n",
-            await File.ReadAllTextAsync(Path.Combine(tls, "cert.pem")));
-        Assert.AreEqual("-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----\n",
-            await File.ReadAllTextAsync(Path.Combine(tls, "key.pem")));
-        var metadata = await File.ReadAllTextAsync(Path.Combine(store.GetInstanceDirectory(desired.ServiceId),
-            "desired.json"));
+        var (certificate, key) = store.CertificateFiles(asset);
+        Assert.AreEqual(Path.Combine(dataDirectory, "certificates", fingerprint, "cert.pem"), certificate,
+            "one copy for every service using the certificate");
+        Assert.AreEqual(asset.CertificatePem, await File.ReadAllTextAsync(certificate));
+        Assert.AreEqual(asset.PrivateKeyPem, await File.ReadAllTextAsync(key));
+        var metadata = await File.ReadAllTextAsync(Path.Combine(store.GetInstanceDirectory(first.ServiceId), "desired.json"));
         Assert.IsFalse(metadata.Contains("PRIVATE KEY", StringComparison.Ordinal));
         Assert.IsFalse(metadata.Contains("CERTIFICATE", StringComparison.Ordinal));
-        var stale = Path.Combine(store.GetInstanceDirectory(desired.ServiceId), "tls", new string('b', 64));
-        Directory.CreateDirectory(stale);
-        await store.PruneTlsAssetsAsync(desired.ServiceId, CancellationToken.None);
-        Assert.IsFalse(Directory.Exists(stale));
-        Assert.IsTrue(Directory.Exists(tls));
         if (!OperatingSystem.IsWindows())
         {
             Assert.AreEqual(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead |
-                            UnixFileMode.OtherRead, File.GetUnixFileMode(Path.Combine(tls, "cert.pem")));
-            Assert.AreEqual(UnixFileMode.UserRead | UnixFileMode.UserWrite,
-                File.GetUnixFileMode(Path.Combine(tls, "key.pem")));
+                            UnixFileMode.OtherRead, File.GetUnixFileMode(certificate));
+            Assert.AreEqual(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(key));
         }
+
+        // An unused certificate and the per-service folder of older Agents go; the shared one stays while used.
+        var stale = Path.Combine(dataDirectory, "certificates", new string('b', 64));
+        Directory.CreateDirectory(stale);
+        var legacy = Path.Combine(store.GetInstanceDirectory(first.ServiceId), "tls", fingerprint);
+        Directory.CreateDirectory(legacy);
+        await store.PruneCertificatesAsync(CancellationToken.None);
+        Assert.IsFalse(Directory.Exists(stale));
+        Assert.IsFalse(Directory.Exists(Path.GetDirectoryName(legacy)));
+        Assert.IsTrue(File.Exists(certificate));
+
+        store.Delete(first.ServiceId);
+        await store.PruneCertificatesAsync(CancellationToken.None);
+        Assert.IsTrue(File.Exists(certificate), "the second service still uses it");
+        store.Delete(second.ServiceId);
+        await store.PruneCertificatesAsync(CancellationToken.None);
+        Assert.IsFalse(File.Exists(certificate));
     }
 
     [TestMethod]

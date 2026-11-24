@@ -21,7 +21,7 @@ public sealed class XrayHysteria2ProviderTests
         Guid.NewGuid(), "hy2", "xray-hysteria2", "26.3.27", true, 1,
         $$"""{"listenHost":"0.0.0.0","listenPort":8443,"certificateId":"{{Guid.NewGuid()}}","authPassword":"shared-password","masqueradeUrl":"https://www.bing.com/","upMbps":100,"downMbps":1000{{extra}}}""",
         [new BackendUser(UserId, Credential)], 20000,
-        tls ?? new TlsCertificateAsset(Guid.NewGuid(), "fp", "cert", "key"));
+        tls ?? new TlsCertificateAsset(Guid.NewGuid(), "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "cert", "key"));
 
     private async Task<JsonElement> RenderAsync(ServiceDesiredState desired)
     {

@@ -22,20 +22,19 @@ internal sealed class MihomoAnyTlsProvider(HttpClient? httpClient, TimeProvider 
         desiredState.TlsCertificate is { Kind: TlsCertificateKinds.Upload or TlsCertificateKinds.Path } tls &&
         tls.CertificateId == config.CertificateId;
 
-    /// <summary>A certificate kept on the node outside the instance directory (Path kind) must be readable.</summary>
-    protected override IEnumerable<string> SafePaths(ServiceDesiredState desiredState) =>
-        desiredState.TlsCertificate is { Kind: TlsCertificateKinds.Path } tls
-            ? [Path.GetDirectoryName(tls.CertificatePath!)!, Path.GetDirectoryName(tls.PrivateKeyPath!)!]
-            : [];
+    /// <summary>The certificate lives outside the instance directory (shared copy, or the admin's own files).</summary>
+    protected override IEnumerable<string> SafePaths(ServiceDesiredState desiredState)
+    {
+        if (desiredState.TlsCertificate is not { } tls) return [];
+        var (certificate, key) = instanceStore.CertificateFiles(tls);
+        return [Path.GetDirectoryName(certificate)!, Path.GetDirectoryName(key)!];
+    }
 
     protected override JsonObject BuildListener(MihomoAnyTlsConfig config, IReadOnlyList<MihomoIdentity> identities,
         ServiceDesiredState desiredState)
     {
         var tls = desiredState.TlsCertificate!;
-        var directory = Path.Combine(instanceStore.GetInstanceDirectory(desiredState.ServiceId), "tls", tls.Fingerprint);
-        var (certificate, key) = tls.Kind == TlsCertificateKinds.Path
-            ? (tls.CertificatePath!, tls.PrivateKeyPath!)
-            : (Path.Combine(directory, "cert.pem"), Path.Combine(directory, "key.pem"));
+        var (certificate, key) = instanceStore.CertificateFiles(tls);
         var map = new JsonObject();
         foreach (var identity in identities) map[identity.Name] = identity.Credential;
         return new JsonObject

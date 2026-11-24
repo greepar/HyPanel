@@ -78,26 +78,40 @@ public sealed class BackendInstanceStore(AgentEnrollmentOptions options)
         return configPath;
     }
 
+    /// <summary>
+    /// Where a certificate's files are: uploaded (and Panel-issued) ones in one shared folder per certificate, so
+    /// services using the same certificate share a copy; path certificates where the admin keeps them.
+    /// </summary>
+    public (string Certificate, string Key) CertificateFiles(TlsCertificateAsset tls)
+    {
+        if (tls.Kind == TlsCertificateKinds.Path) return (tls.CertificatePath!, tls.PrivateKeyPath!);
+        if (!IsSha256(tls.Fingerprint)) throw new InvalidDataException("TLS certificate fingerprint is invalid.");
+        var directory = Path.Combine(CertificatesRoot, tls.Fingerprint);
+        return (Path.Combine(directory, "cert.pem"), Path.Combine(directory, "key.pem"));
+    }
+
     public async Task EnsureTlsAssetAsync(ServiceDesiredState desiredState, CancellationToken cancellationToken)
     {
         if (desiredState.TlsCertificate is not { } tls) return;
-        // Path and ACME certificates are read or issued by the backend itself; nothing to materialise.
+        // Path certificates are read where the admin keeps them; nothing to materialise.
         if (tls.Kind != TlsCertificateKinds.Upload) return;
-        if (!IsSha256(tls.Fingerprint)) throw new InvalidDataException("TLS certificate fingerprint is invalid.");
-        var directory = Path.Combine(GetInstanceDirectory(desiredState.ServiceId), "tls", tls.Fingerprint);
-        var certPath = Path.Combine(directory, "cert.pem");
-        var keyPath = Path.Combine(directory, "key.pem");
+        var (certPath, keyPath) = CertificateFiles(tls);
+        var directory = Path.GetDirectoryName(certPath)!;
         if (tls.CertificatePem is null || tls.PrivateKeyPem is null)
         {
             if (!File.Exists(certPath) || !File.Exists(keyPath))
                 throw new InvalidDataException("TLS certificate material is unavailable.");
             return;
         }
+        // The folder is named after the certificate's fingerprint, so existing files already hold this certificate.
+        if (File.Exists(certPath) && File.Exists(keyPath)) return;
+        Directory.CreateDirectory(CertificatesRoot);
+        RestrictDirectory(CertificatesRoot);
         Directory.CreateDirectory(directory);
         RestrictDirectory(directory);
-        await WriteAtomicAsync(directory, "cert.pem", System.Text.Encoding.UTF8.GetBytes(tls.CertificatePem),
-            cancellationToken);
         await WriteAtomicAsync(directory, "key.pem", System.Text.Encoding.UTF8.GetBytes(tls.PrivateKeyPem),
+            cancellationToken);
+        await WriteAtomicAsync(directory, "cert.pem", System.Text.Encoding.UTF8.GetBytes(tls.CertificatePem),
             cancellationToken);
         if (!OperatingSystem.IsWindows())
             File.SetUnixFileMode(certPath, UnixFileMode.UserRead | UnixFileMode.UserWrite |
@@ -108,21 +122,31 @@ public sealed class BackendInstanceStore(AgentEnrollmentOptions options)
         ? state
         : state with { TlsCertificate = state.TlsCertificate with { CertificatePem = null, PrivateKeyPem = null } };
 
-    public async Task PruneTlsAssetsAsync(Guid serviceId, CancellationToken cancellationToken)
+    /// <summary>
+    /// Deletes certificate folders no service uses any more, counting each service's running config and its rollback
+    /// copy. Also removes the per-service certificate folders of Agents before 0.5.38 once no rollback copy needs them.
+    /// </summary>
+    public async Task PruneCertificatesAsync(CancellationToken cancellationToken)
     {
         var keep = new HashSet<string>(StringComparer.Ordinal);
-        var current = await TryLoadAsync(serviceId, cancellationToken);
-        if (current?.DesiredState.TlsCertificate is { } tls) keep.Add(tls.Fingerprint);
-        var snapshot = Path.Combine(GetInstanceDirectory(serviceId), LastKnownGoodDirectory, MetadataFileName);
-        if (File.Exists(snapshot))
-        {
-            var value = JsonSerializer.Deserialize(await File.ReadAllBytesAsync(snapshot, cancellationToken),
-                BackendInfrastructureJsonSerializerContext.Default.BackendInstanceMetadata);
-            if (value?.DesiredState.TlsCertificate is { } previous) keep.Add(previous.Fingerprint);
-        }
-        var root = Path.Combine(GetInstanceDirectory(serviceId), "tls");
-        if (!Directory.Exists(root)) return;
-        foreach (var directory in Directory.EnumerateDirectories(root))
+        if (Directory.Exists(ServicesRoot))
+            foreach (var serviceDirectory in Directory.EnumerateDirectories(ServicesRoot))
+            {
+                if (!Guid.TryParse(Path.GetFileName(serviceDirectory), out var serviceId)) continue;
+                if ((await TryLoadAsync(serviceId, cancellationToken))?.DesiredState.TlsCertificate is { } current)
+                    keep.Add(current.Fingerprint);
+                var snapshot = Path.Combine(serviceDirectory, LastKnownGoodDirectory, MetadataFileName);
+                if (File.Exists(snapshot))
+                {
+                    var value = JsonSerializer.Deserialize(await File.ReadAllBytesAsync(snapshot, cancellationToken),
+                        BackendInfrastructureJsonSerializerContext.Default.BackendInstanceMetadata);
+                    if (value?.DesiredState.TlsCertificate is { } previous) keep.Add(previous.Fingerprint);
+                }
+                else if (Directory.Exists(Path.Combine(serviceDirectory, "tls")))
+                    Directory.Delete(Path.Combine(serviceDirectory, "tls"), recursive: true);
+            }
+        if (!Directory.Exists(CertificatesRoot)) return;
+        foreach (var directory in Directory.EnumerateDirectories(CertificatesRoot))
             if (!keep.Contains(Path.GetFileName(directory))) Directory.Delete(directory, recursive: true);
     }
 
@@ -133,7 +157,7 @@ public sealed class BackendInstanceStore(AgentEnrollmentOptions options)
     {
         var snapshot = Path.Combine(GetInstanceDirectory(serviceId), LastKnownGoodDirectory);
         if (Directory.Exists(snapshot)) Directory.Delete(snapshot, recursive: true);
-        await PruneTlsAssetsAsync(serviceId, cancellationToken);
+        await PruneCertificatesAsync(cancellationToken);
     }
 
     public async Task SaveLastKnownGoodAsync(Guid serviceId, CancellationToken cancellationToken)
@@ -176,6 +200,8 @@ public sealed class BackendInstanceStore(AgentEnrollmentOptions options)
     }
 
     private string ServicesRoot => Path.Combine(options.DataDirectory, "services");
+
+    private string CertificatesRoot => Path.Combine(options.DataDirectory, "certificates");
 
     private static void ValidateConfig(ServiceDesiredState desiredState, RenderedBackendConfig config)
     {

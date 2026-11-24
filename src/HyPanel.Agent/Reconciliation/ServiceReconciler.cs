@@ -382,7 +382,7 @@ public sealed class ServiceReconciler(
 
         runtimeStates[plan.Desired.ServiceId] = State(plan.Desired.ServiceId, ServiceRuntimeStatus.Running,
             plan.Desired.BackendVersion, plan.Config.Sha256, null, null);
-        await instanceStore.PruneTlsAssetsAsync(plan.Desired.ServiceId, cancellationToken);
+        await instanceStore.PruneCertificatesAsync(cancellationToken);
         recoveryStates.TryRemove(plan.Desired.ServiceId, out _);
         reportedFailures.TryRemove(plan.Desired.ServiceId, out _);
     }
@@ -500,7 +500,7 @@ public sealed class ServiceReconciler(
                 var spec = await provider.CreateProcessSpecAsync(
                     CreateContext(metadata.DesiredState, metadata.ConfigFileName, binaryPath), cancellationToken);
                 await processSupervisor.StartAsync(serviceId, spec, cancellationToken);
-                await instanceStore.PruneTlsAssetsAsync(serviceId, cancellationToken);
+                await instanceStore.PruneCertificatesAsync(cancellationToken);
             }
             catch (Exception)
             {

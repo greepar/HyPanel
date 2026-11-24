@@ -1,3 +1,4 @@
+using HyPanel.Agent.Backends.Infrastructure;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -13,7 +14,8 @@ namespace HyPanel.Agent.Backends.Hysteria2;
 /// (<c>hypanel-&lt;userId:N&gt;</c> / per-binding credential) and their cumulative traffic is read from the
 /// loopback-only trafficStats API on the Panel-assigned control port.
 /// </summary>
-public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvider? timeProvider = null)
+public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvider? timeProvider = null,
+    BackendInstanceStore? instanceStore = null)
     : IBackendProvider, IPortHoppingBackend
 {
     private const int MinimumSecretLength = 8;
@@ -96,7 +98,7 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
             throw new InvalidOperationException("Hysteria2 user list is invalid.");
         }
 
-        var yaml = RenderYaml(config, desiredState.TlsCertificate, users, desiredState.ControlPort,
+        var yaml = RenderYaml(instanceStore, config, desiredState.TlsCertificate, users, desiredState.ControlPort,
             StatsSecret(desiredState));
         var content = Encoding.UTF8.GetBytes(yaml);
         var sha256 = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
@@ -333,7 +335,7 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
         uri.Scheme == Uri.UriSchemeHttps &&
         !string.IsNullOrEmpty(uri.Host);
 
-    private static string RenderYaml(Hysteria2Config config, TlsCertificateAsset? tls,
+    private static string RenderYaml(BackendInstanceStore? store, Hysteria2Config config, TlsCertificateAsset? tls,
         IReadOnlyList<BackendUser> users, int? controlPort, string statsSecret)
     {
         // Hysteria binds 0.0.0.0 to IPv4 only; an empty host listens on both families, as Xray does for 0.0.0.0.
@@ -374,7 +376,9 @@ public sealed class Hysteria2Provider(HttpClient? httpClient = null, TimeProvide
             var (certificatePath, privateKeyPath) = tls?.Kind switch
             {
                 TlsCertificateKinds.Path => (tls.CertificatePath!, tls.PrivateKeyPath!),
-                TlsCertificateKinds.Upload => ($"tls/{tls.Fingerprint}/cert.pem", $"tls/{tls.Fingerprint}/key.pem"),
+                // The shared copy of the certificate; without a store (tests) the path is relative to the instance.
+                TlsCertificateKinds.Upload => store?.CertificateFiles(tls)
+                                              ?? ($"tls/{tls.Fingerprint}/cert.pem", $"tls/{tls.Fingerprint}/key.pem"),
                 _ => (config.CertificatePath!, config.PrivateKeyPath!)
             };
             yaml.Append("  cert: ").Append(QuoteYaml(certificatePath)).AppendLine();

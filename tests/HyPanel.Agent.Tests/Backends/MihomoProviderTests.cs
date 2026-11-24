@@ -32,7 +32,7 @@ public sealed class MihomoProviderTests
         return new ServiceDesiredState(Guid.NewGuid(), "anytls", "mihomo-anytls", "1.19.34", true, 1,
             $$"""{"listenHost":"0.0.0.0","listenPort":8443,"certificateId":"{{certificateId}}"}""",
             [new BackendUser(UserId, Credential)], 20001,
-            tls ?? new TlsCertificateAsset(certificateId, "fp", "cert", "key"));
+            tls ?? new TlsCertificateAsset(certificateId, "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "cert", "key"));
     }
 
     private static async Task<JsonElement> RenderAsync(HyPanel.Agent.Backends.IBackendProvider provider, ServiceDesiredState desired)
@@ -110,8 +110,8 @@ public sealed class MihomoProviderTests
 
         Assert.AreEqual("anytls", listener.GetProperty("type").GetString());
         Assert.AreEqual(Credential, listener.GetProperty("users").GetProperty($"hypanel-{UserId:N}").GetString());
-        StringAssert.EndsWith(listener.GetProperty("certificate").GetString(), Path.Combine("tls", "fp", "cert.pem"));
-        StringAssert.EndsWith(listener.GetProperty("private-key").GetString(), Path.Combine("tls", "fp", "key.pem"));
+        StringAssert.EndsWith(listener.GetProperty("certificate").GetString(), Path.Combine("certificates", new string('f', 64), "cert.pem"));
+        StringAssert.EndsWith(listener.GetProperty("private-key").GetString(), Path.Combine("certificates", new string('f', 64), "key.pem"));
     }
 
     [TestMethod]
