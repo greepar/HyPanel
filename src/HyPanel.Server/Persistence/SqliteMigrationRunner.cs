@@ -4,7 +4,7 @@ namespace HyPanel.Server.Persistence;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 32;
+    public const long CurrentSchemaVersion = 33;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -715,6 +715,22 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
                     PRIMARY KEY (user_id, service_id)
                 );
                 INSERT INTO schema_migrations (version, applied_at_utc) VALUES (32, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                """, cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, 33, cancellationToken))
+        {
+            // ACME certificates are obtained by the Panel itself: where an issuance stands, why the last one failed,
+            // and the ACME account (key encrypted like other secrets) each certificate renews under.
+            await ExecuteAsync(connection, transaction, """
+                ALTER TABLE certificates ADD COLUMN acme_status TEXT NULL;
+                ALTER TABLE certificates ADD COLUMN acme_error TEXT NULL;
+                ALTER TABLE certificates ADD COLUMN acme_attempted_at_utc TEXT NULL;
+                ALTER TABLE certificates ADD COLUMN acme_account_url TEXT NULL;
+                ALTER TABLE certificates ADD COLUMN acme_account_nonce BLOB NULL;
+                ALTER TABLE certificates ADD COLUMN acme_account_ciphertext BLOB NULL;
+                ALTER TABLE certificates ADD COLUMN acme_account_tag BLOB NULL;
+                INSERT INTO schema_migrations (version, applied_at_utc) VALUES (33, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
                 """, cancellationToken);
         }
 

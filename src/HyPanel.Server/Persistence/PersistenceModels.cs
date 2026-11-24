@@ -102,7 +102,7 @@ internal sealed record CertificateRecord(Guid Id, string Name, string Kind, stri
     string? Subject, string San, int UsedBy, string? PrivateKeyPem = null, string? CertificatePath = null,
     string? PrivateKeyPath = null, string? AcmeEmail = null, string? AcmeChallenge = null,
     string? AcmeDnsToken = null, bool HasAcmeDnsToken = false, DateTimeOffset? SourceCheckedAtUtc = null,
-    string? SourceError = null);
+    string? SourceError = null, string? AcmeStatus = null, string? AcmeError = null, DateTimeOffset? AcmeAttemptedAtUtc = null);
 
 internal sealed record ServiceRuntimeStateRecord(
     Guid ServiceId,

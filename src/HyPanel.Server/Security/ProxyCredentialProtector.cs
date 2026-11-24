@@ -91,6 +91,12 @@ internal sealed class ProxyCredentialProtector
     public string UnprotectAcmeDnsToken(Guid certificateId, ProtectedCredential value) =>
         UnprotectCore(value, Encoding.UTF8.GetBytes($"hypanel:acme-dns-token:v1:{certificateId:D}"));
 
+    public ProtectedCredential ProtectAcmeAccountKey(Guid certificateId, string privateKeyPem) =>
+        ProtectCore(privateKeyPem, Encoding.UTF8.GetBytes($"hypanel:acme-account-key:v1:{certificateId:D}"));
+
+    public string UnprotectAcmeAccountKey(Guid certificateId, ProtectedCredential value) =>
+        UnprotectCore(value, Encoding.UTF8.GetBytes($"hypanel:acme-account-key:v1:{certificateId:D}"));
+
     public ProtectedCredential ProtectCertificateKey(Guid certificateId, string privateKeyPem) =>
         ProtectCore(privateKeyPem, Encoding.UTF8.GetBytes($"hypanel:certificate-key:v1:{certificateId:D}"));
 

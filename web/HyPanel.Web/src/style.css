@@ -782,3 +782,14 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 .usage-bar { height: 4px; overflow: hidden; border-radius: 999px; background: var(--surface-3) }
 .usage-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--text) }
 @media (max-width: 760px) { .usage-service small { display: none } .usage-service { grid-template-columns: minmax(0, 1fr) auto } .user-facts .usage-fact + span { border-top: 1px solid var(--border); border-left: 0 } }
+
+/* ---------- ACME status ---------- */
+.certificate-row .acme-state { display: flex; align-items: baseline; gap: 6px; font-size: 12px; white-space: normal; overflow-wrap: anywhere }
+.certificate-row .acme-state .pending-dot { flex: none; transform: translateY(-1px) }
+.certificate-row > div:first-child { flex: 1 }
+.certificate-row > .row-actions { flex: none }
+.certificate-row .acme-ok { color: var(--success, #15803d) }
+.certificate-row .acme-busy { color: var(--info) }
+.certificate-row .acme-error { color: var(--danger) }
+.certificate-row .acme-muted { color: var(--muted) }
+.certificate-row .acme-busy .pending-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: breathe 1.4s ease-in-out infinite }

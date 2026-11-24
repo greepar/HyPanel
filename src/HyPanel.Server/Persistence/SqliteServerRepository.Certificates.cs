@@ -1,3 +1,4 @@
+using HyPanel.Server.Backends;
 using HyPanel.Server.Security;
 using Microsoft.Data.Sqlite;
 
@@ -5,11 +6,14 @@ namespace HyPanel.Server.Persistence;
 
 internal sealed partial class SqliteServerRepository
 {
-    private const string CertificateColumns = """
+    /// <summary>Backends that take a certificate from the Panel (Hysteria 2 on either engine, AnyTLS, ...).</summary>
+    private static readonly string CertificateBackends = BackendDefinitionCatalog.SqlList(BackendFeatures.Certificate);
+
+    private static readonly string CertificateColumns = $"""
         c.id,c.name,c.kind,c.certificate_pem,c.created_at_utc,c.not_before_utc,c.expires_at_utc,c.fingerprint,c.subject,c.san,
-          (SELECT COUNT(*) FROM service_instances s WHERE s.backend_type='hysteria2' AND json_extract(s.config_json,'$.certificateId')=c.id),
+          (SELECT COUNT(*) FROM service_instances s WHERE s.backend_type IN {CertificateBackends} AND json_extract(s.config_json,'$.certificateId')=c.id),
           c.certificate_path,c.private_key_path,c.acme_email,c.acme_challenge,c.acme_token_nonce IS NOT NULL,
-          c.source_checked_at_utc,c.source_error
+          c.source_checked_at_utc,c.source_error,c.acme_status,c.acme_error,c.acme_attempted_at_utc
         """;
 
     public async Task<IReadOnlyList<CertificateRecord>> GetCertificatesAsync(CancellationToken ct)
@@ -37,17 +41,19 @@ internal sealed partial class SqliteServerRepository
         await using var r = await cmd.ExecuteReaderAsync(ct);
         if (!await r.ReadAsync(ct)) return null;
         var value = ReadCertificate(r);
-        if (!r.IsDBNull(18))
+        // The key columns follow the shared ones.
+        var keyAt = CertificateColumnCount;
+        if (!r.IsDBNull(keyAt))
             value = value with
             {
                 PrivateKeyPem = credentialProtector.UnprotectCertificateKey(id,
-                    new ProtectedCredential((byte[])r[18], (byte[])r[19], (byte[])r[20]))
+                    new ProtectedCredential((byte[])r[keyAt], (byte[])r[keyAt + 1], (byte[])r[keyAt + 2]))
             };
-        if (!r.IsDBNull(21))
+        if (!r.IsDBNull(keyAt + 3))
             value = value with
             {
                 AcmeDnsToken = credentialProtector.UnprotectAcmeDnsToken(id,
-                    new ProtectedCredential((byte[])r[21], (byte[])r[22], (byte[])r[23]))
+                    new ProtectedCredential((byte[])r[keyAt + 3], (byte[])r[keyAt + 4], (byte[])r[keyAt + 5]))
             };
         return value;
     }
@@ -63,8 +69,8 @@ internal sealed partial class SqliteServerRepository
     {
         await using var c = await connectionFactory.OpenAsync(ct);
         await using var cmd = c.CreateCommand();
-        cmd.CommandText = """
-            SELECT EXISTS(SELECT 1 FROM service_instances WHERE backend_type='hysteria2'
+        cmd.CommandText = $"""
+            SELECT EXISTS(SELECT 1 FROM service_instances WHERE backend_type IN {CertificateBackends}
               AND json_extract(config_json,'$.certificateId')=@id);
             """;
         cmd.Parameters.AddWithValue("@id", id.ToString("D"));
@@ -130,9 +136,9 @@ internal sealed partial class SqliteServerRepository
             {
                 await using var revisions = c.CreateCommand();
                 revisions.Transaction = tx;
-                revisions.CommandText = """
+                revisions.CommandText = $"""
                     UPDATE nodes SET desired_revision=desired_revision+1 WHERE id IN
-                      (SELECT DISTINCT node_id FROM service_instances WHERE backend_type='hysteria2'
+                      (SELECT DISTINCT node_id FROM service_instances WHERE backend_type IN {CertificateBackends}
                        AND json_extract(config_json,'$.certificateId')=@id);
                     """;
                 revisions.Parameters.AddWithValue("@id", value.Id.ToString("D"));
@@ -153,7 +159,12 @@ internal sealed partial class SqliteServerRepository
         AcmeEmail: r.IsDBNull(13) ? null : r.GetString(13), AcmeChallenge: r.IsDBNull(14) ? null : r.GetString(14),
         HasAcmeDnsToken: r.GetInt64(15) != 0,
         SourceCheckedAtUtc: r.IsDBNull(16) ? null : SqliteValue.ToDateTimeOffset(r.GetString(16)),
-        SourceError: r.IsDBNull(17) ? null : r.GetString(17));
+        SourceError: r.IsDBNull(17) ? null : r.GetString(17),
+        AcmeStatus: r.IsDBNull(18) ? null : r.GetString(18), AcmeError: r.IsDBNull(19) ? null : r.GetString(19),
+        AcmeAttemptedAtUtc: r.IsDBNull(20) ? null : SqliteValue.ToDateTimeOffset(r.GetString(20)));
+
+    /// <summary>How many columns <see cref="CertificateColumns"/> selects.</summary>
+    private const int CertificateColumnCount = 21;
 
     private static void AddCertificateParameters(SqliteCommand cmd, CertificateRecord value, ProtectedCredential? key,
         ProtectedCredential? token)

@@ -104,6 +104,7 @@ export class ApiClient {
   certificates = () => this.request<Certificate[]>('/api/admin/v1/certificates')
   createCertificate = (value: CertificateRequest) => this.request<Certificate>('/api/admin/v1/certificates', { method: 'POST', body: JSON.stringify(value) })
   replaceCertificate = (id: string, value: CertificateRequest) => this.request<Certificate>(`/api/admin/v1/certificates/${id}`, { method: 'PUT', body: JSON.stringify(value) })
+  issueCertificate = (id: string) => this.request<void>(`/api/admin/v1/certificates/${id}/issue`, { method: 'POST' })
   deleteCertificate = (id: string) => this.request<void>(`/api/admin/v1/certificates/${id}`, { method: 'DELETE' })
   backups = () => this.request<Backup[]>('/api/admin/v1/backups')
   createBackup = () => this.request<Backup>('/api/admin/v1/backups', { method: 'POST' })

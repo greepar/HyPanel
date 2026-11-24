@@ -16,6 +16,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/HyPanel.Server/HyPanel.Server.csproj" />
+    <!-- Aliased: the ACME end-to-end test drives the Agent's challenge responder next to the Panel's issuer. -->
+    <ProjectReference Include="../../src/HyPanel.Agent/HyPanel.Agent.csproj" Aliases="agent" />
   </ItemGroup>
 
 </Project>

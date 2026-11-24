@@ -82,8 +82,6 @@ internal static class AdminServicesEndpoints
     /// <summary>Older Agents reject the unknown <c>ipv4Only</c> config key, so the service would stop applying.</summary>
     internal const string Ipv4OnlyMinimumAgentVersion = "0.5.36";
 
-    /// <summary>Older Agents reject a <c>*.</c> ACME domain and the service would stop applying.</summary>
-    internal const string WildcardAcmeMinimumAgentVersion = "0.5.36";
 
     /// <summary>
     /// Refuses a backend or extra lines on a node whose Agent is too old to run them, instead of saving a service the
@@ -97,11 +95,6 @@ internal static class AdminServicesEndpoints
             needs.Add((backendMinimum, definition.DisplayName));
         if (ServiceRoute.Parse(config).Count > 0) needs.Add((RoutesMinimumAgentVersion, "多条线路"));
         if (WantsIpv4Only(config)) needs.Add((Ipv4OnlyMinimumAgentVersion, "禁用 IPv6 出口"));
-        if (BackendDefinitionCatalog.Has(backendType, BackendFeatures.AcmeCertificate)
-            && AgentSyncEndpoints.TryCertificateId(config, out var certificateId)
-            && await repository.GetCertificateWithKeyAsync(certificateId, ct) is { Kind: "Acme" } certificate
-            && SqliteServerRepository.AcmeDomain(certificate.San)?.StartsWith("*.", StringComparison.Ordinal) == true)
-            needs.Add((WildcardAcmeMinimumAgentVersion, "泛域名自动证书"));
         if (needs.Count == 0) return null;
         var version = await repository.GetNodeAgentVersionAsync(nodeId, ct);
         if (version is null || !SemanticVersion.TryParse(version, out var current)) return null;
@@ -198,8 +191,8 @@ internal static class AdminServicesEndpoints
     }
 
     private static async Task<IResult> CreateAsync(Guid nodeId, CreateServiceRequest request, HttpRequest httpRequest,
-        AdminAuthorization authorization, SqliteServerRepository repository, TimeProvider timeProvider,
-        CancellationToken cancellationToken)
+        AdminAuthorization authorization, SqliteServerRepository repository, HyPanel.Server.Acme.AcmeWorker acme,
+        TimeProvider timeProvider, CancellationToken cancellationToken)
     {
         var access = await authorization.AuthorizeAsync(httpRequest, cancellationToken);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
@@ -225,13 +218,15 @@ internal static class AdminServicesEndpoints
         if (BackendCapabilities.IsMultiUser(backendType))
             await repository.AddServiceToAutoGroupsAsync(result.Service.Id, cancellationToken);
         var revision = (await repository.GetNodeAsync(nodeId, cancellationToken))?.DesiredRevision ?? result.Revision;
+        // An ACME certificate validated over HTTP or TLS waits for a node to answer; this one may be it.
+        acme.Request();
         return Results.Json(new ServiceMutationResponse(result.Service.Id, revision),
             ServerJsonSerializerContext.Default.ServiceMutationResponse, statusCode: StatusCodes.Status201Created);
     }
 
     private static async Task<IResult> UpdateAsync(Guid nodeId, Guid serviceId, UpdateServiceRequest request,
         HttpRequest httpRequest, AdminAuthorization authorization, SqliteServerRepository repository,
-        TimeProvider timeProvider, CancellationToken cancellationToken)
+        HyPanel.Server.Acme.AcmeWorker acme, TimeProvider timeProvider, CancellationToken cancellationToken)
     {
         var access = await authorization.AuthorizeAsync(httpRequest, cancellationToken);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
@@ -263,6 +258,7 @@ internal static class AdminServicesEndpoints
         var result = await repository.UpdateServiceAsync(
             new ServiceInstanceRecord(serviceId, nodeId, name, backendType, version, request.Enabled,
                 request.ConfigSchemaVersion, configJson, existing.CreatedAtUtc, now), cancellationToken);
+        if (result.Service is not null) acme.Request();
         return result.Service is null
             ? Results.NotFound()
             : Results.Json(new ServiceMutationResponse(serviceId, result.Revision),
@@ -449,10 +445,9 @@ internal static class AdminServicesEndpoints
             using var document = JsonDocument.Parse(configJson);
             if (!document.RootElement.TryGetProperty("certificateId", out var property) ||
                 !Guid.TryParse(property.GetString(), out var id) ||
-                await repository.GetCertificateWithKeyAsync(id, ct) is not { } certificate) return false;
-            // ACME certificates are issued by the engine itself; engines that cannot do that need a stored one.
-            return certificate.Kind != TlsCertificateKinds.Acme
-                   || definition.Has(BackendFeatures.AcmeCertificate);
+                await repository.GetCertificateWithKeyAsync(id, ct) is null) return false;
+            // ACME certificates are obtained by the Panel and delivered like uploaded ones, so every engine takes them.
+            return true;
         }
         catch (JsonException) { return false; }
     }

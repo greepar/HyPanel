@@ -58,6 +58,15 @@ public static class Program
         builder.Services.AddSingleton<ReleaseSyncWorker>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<ReleaseSyncWorker>());
         builder.Services.AddHostedService<CertificateSourceWatcher>();
+        builder.Services.AddHttpClient("acme", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(30);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("HyPanel-ACME/1.0");
+        });
+        builder.Services.AddSingleton<HyPanel.Server.Acme.AcmeChallengeBoard>();
+        builder.Services.AddSingleton<HyPanel.Server.Acme.AcmeIssuer>();
+        builder.Services.AddSingleton<HyPanel.Server.Acme.AcmeWorker>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<HyPanel.Server.Acme.AcmeWorker>());
         builder.Services.AddSingleton<BackendArtifactCatalog>();
         builder.Services.AddHttpClient("backend-release-sync", client => client.Timeout = TimeSpan.FromMinutes(10));
         builder.Services.AddSingleton<BackendReleaseSyncWorker>();

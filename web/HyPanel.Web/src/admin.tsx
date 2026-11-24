@@ -130,6 +130,8 @@ export function AdminApp({
     <NodesPage api={api} setError={setError} />
   ) : route === "users" ? (
     <UsersPage api={api} setError={setError} />
+  ) : route === "certificates" ? (
+    <CertificatesPage api={api} setError={setError} />
   ) : route === "settings" ? (
     <SettingsPage api={api} setError={setError} account={account} />
   ) : (
@@ -138,13 +140,33 @@ export function AdminApp({
   return <div key={section} className="route-view">{page}</div>;
 }
 
+/** TLS certificates on a page of their own: they are shared by services on every node. */
+function CertificatesPage({ api, setError }: PageProps) {
+  const [certificates, setCertificates] = useState<Certificate[]>(() => readCache<Certificate[]>("certificates:list") ?? []);
+  const [loading, setLoading] = useState(() => !readCache("certificates:list"));
+  const load = async () => {
+    try {
+      const next = await api.certificates();
+      setCertificates(next);
+      writeCache("certificates:list", next);
+    } catch (reason) { setError(messageFor(reason, "无法加载证书")); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { void load(); }, []);
+  useAutoRefresh(() => load());
+  return (
+    <Page title="证书">
+      {loading ? <Loading /> : <CertificatePanel api={api} certificates={certificates} setCertificates={setCertificates} setError={setError} />}
+    </Page>
+  );
+}
+
 function SettingsPage({ api, setError, account }: PageProps & { account: boolean }) {
   const [settings, setSettings] = useState<GlobalSettings | null>(null);
-  const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [loading, setLoading] = useState(true);
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
-    try { const [nextSettings, nextCertificates] = await Promise.all([api.settings(), api.certificates()]); setSettings(nextSettings); setCertificates(nextCertificates); }
+    try { setSettings(await api.settings()); }
     catch (reason) { setError(messageFor(reason, "无法加载设置")); }
     finally { if (!silent) setLoading(false); }
   };
@@ -196,7 +218,6 @@ function SettingsPage({ api, setError, account }: PageProps & { account: boolean
          <section className="card panel"><SectionTitle title="Release 与数据" description="受控的官方发布来源" /><dl className="facts-list"><div><dt>Agent Release</dt><dd>{settings.agentReleaseVersion ?? "Unavailable"}</dd></div>{Object.entries(settings.backendReleases).map(([name, version]) => <div key={name}><dt>{name}</dt><dd>{version}</dd></div>)}<div><dt>数据目录</dt><dd>{settings.dataDirectory}</dd></div><div><dt>数据库</dt><dd>{formatBytes(settings.databaseSizeBytes)}</dd></div></dl></section>
           {account && <PasskeyPanel api={api} setError={setError} />}
           <SubscriptionTemplatePanel api={api} setError={setError} />
-          <CertificatePanel api={api} certificates={certificates} setCertificates={setCertificates} setError={setError} />
           <BackupPanel api={api} setError={setError} />
        </div>
     </Page>
@@ -345,7 +366,27 @@ const certificateSummary = (certificate: Certificate) =>
     ? `到期 ${certificate.expiresAtUtc ? formatDate(certificate.expiresAtUtc) : "未知"}`
     : certificate.kind === "Path"
       ? `自动同步 · 到期 ${certificate.expiresAtUtc ? formatDate(certificate.expiresAtUtc) : "未知"}`
-      : "ACME 自动续签";
+      : certificate.acmeStatus === "Issued" && certificate.expiresAtUtc
+        ? `ACME · 到期 ${formatDate(certificate.expiresAtUtc)}`
+        : "ACME · 尚未签发";
+
+/** The line under an ACME certificate: issued and when it renews, still in progress, or why it failed. */
+function acmeState(certificate: Certificate): { text: string; tone: "ok" | "busy" | "error" | "muted" } {
+  const renews = (expires: string) => {
+    const at = new Date(new Date(expires).getTime() - 30 * 86_400_000);
+    return at.getTime() <= Date.now() ? "即将续签" : `${formatDate(at.toISOString())} 起自动续签`;
+  };
+  switch (certificate.acmeStatus) {
+    case "Issuing": return { text: "正在向 Let's Encrypt 申请…", tone: "busy" };
+    case "Failed": return { text: `申请失败：${certificate.acmeError ?? "未知原因"}${certificate.acmeAttemptedAtUtc ? `（${formatRelative(certificate.acmeAttemptedAtUtc)}，1 小时后重试）` : ""}`, tone: "error" };
+    case "WaitingForService": return { text: "HTTP / TLS 验证需要节点配合：还没有启用的服务使用这张证书。", tone: "muted" };
+    case "Issued":
+      return certificate.expiresAtUtc
+        ? { text: `已签发 · 有效期至 ${formatDate(certificate.expiresAtUtc)} · ${renews(certificate.expiresAtUtc)}`, tone: "ok" }
+        : { text: "已签发", tone: "ok" };
+    default: return { text: "等待申请", tone: "busy" };
+  }
+}
 
 function CertificatePanel({ api, certificates, setCertificates, setError }: { api: ApiClient; certificates: Certificate[]; setCertificates: (value: Certificate[]) => void; setError: (value: string) => void }) {
   const empty: CertificateDraft = { name: "", kind: "Upload", certificatePath: "", privateKeyPath: "", domain: "", acmeEmail: "", acmeChallenge: "http", acmeDnsToken: "" };
@@ -401,8 +442,15 @@ function CertificatePanel({ api, certificates, setCertificates, setError }: { ap
     : certificate.kind === "Path"
       ? `${certificate.san.join(", ") || certificate.subject || "无 SAN"} · 有效期至 ${certificate.expiresAtUtc ? formatDate(certificate.expiresAtUtc) : "未知"} · ${certificate.certificatePath}`
       : `${certificate.san.join(", ")} · ${certificate.acmeChallenge ? acmeChallengeLabels[certificate.acmeChallenge] : ""}`;
+  const issue = async (certificate: Certificate) => {
+    try {
+      await api.issueCertificate(certificate.id);
+      setCertificates(certificates.map(item => item.id === certificate.id ? { ...item, acmeStatus: "Issuing", acmeError: null } : item));
+      setError(`已开始申请“${certificate.name}”，通常需要一分钟左右。`);
+    } catch (reason) { setError(messageFor(reason, "无法开始申请")); }
+  };
   return <section className="card panel certificate-panel">
-    <SectionTitle title="TLS 证书" description="Hysteria 2 服务使用的证书。支持手动上传、节点本地文件路径，或由节点自动申请并续签。" />
+    <SectionTitle title="TLS 证书" description="需要证书的服务（Hysteria 2、AnyTLS）使用。可以手动上传、同步面板服务器上的证书文件，或由面板自动向 Let's Encrypt 申请并续签。" />
     {certificates.length ? <div className="certificate-list">{certificates.map(certificate => <article className="certificate-row" key={certificate.id}>
       <div>
         <strong>{certificate.name} <span className="badge">{certificateKindLabels[certificate.kind]}</span></strong>
@@ -412,8 +460,11 @@ function CertificatePanel({ api, certificates, setCertificates, setError }: { ap
           {certificate.kind === "Path" && certificate.sourceCheckedAtUtc && ` · 上次检测 ${formatRelative(certificate.sourceCheckedAtUtc)}`}
         </small>
         {certificate.kind === "Path" && certificate.sourceError && <small className="certificate-error">{certificate.sourceError}</small>}
+        {certificate.kind === "Acme" && (() => { const state = acmeState(certificate); return <small className={`acme-state acme-${state.tone}`}>{state.tone === "busy" && <i className="pending-dot" />}{state.text}</small>; })()}
       </div>
       <div className="row-actions">
+        {certificate.kind === "Acme" && <button className="button button-secondary button-small" type="button" disabled={certificate.acmeStatus === "Issuing"}
+          onClick={() => void issue(certificate)}>{certificate.acmeStatus === "Issued" ? "立即续签" : "立即申请"}</button>}
         <button className="button button-secondary button-small" type="button" onClick={() => edit(certificate)}>编辑</button>
         <button className="link-button" type="button" disabled={certificate.usedBy > 0} title={certificate.usedBy > 0 ? "仍被服务使用" : undefined} onClick={() => void remove(certificate)}>删除</button>
       </div>
@@ -441,7 +492,7 @@ function CertificatePanel({ api, certificates, setCertificates, setError }: { ap
         </div>
       </>}
       {draft.kind === "Acme" && <>
-        <p className="field-help">由节点上的 Hysteria 自动向 Let's Encrypt 申请并在到期前自动续签，无需任何维护。域名需解析到使用该证书的节点。泛域名（如 <code>*.example.com</code>）需要用 Cloudflare DNS 验证。</p>
+        <p className="field-help">由面板向 Let's Encrypt 申请，到期前 30 天自动续签，签发后下发给使用它的所有服务。Cloudflare DNS 验证由面板直接完成；HTTP / TLS 验证由使用这张证书的节点配合，域名需解析到其中一台节点。泛域名（如 <code>*.example.com</code>）需要用 Cloudflare DNS 验证。</p>
         <div className="form-grid">
           <label>域名<input required placeholder="hy.example.com 或 *.example.com" value={draft.domain} onInput={event => {
             const domain = event.currentTarget.value;
@@ -454,7 +505,7 @@ function CertificatePanel({ api, certificates, setCertificates, setError }: { ap
             options={(Object.keys(acmeChallengeLabels) as AcmeChallenge[]).map(value => ({ value, label: acmeChallengeLabels[value] }))} /></label>
           {draft.acmeChallenge === "cloudflare" && <label>Cloudflare API Token<PasswordInput required={!editing?.hasAcmeDnsToken} placeholder={editing?.hasAcmeDnsToken ? "已保存，留空则保持不变" : "需要 Zone.DNS 编辑权限"} value={draft.acmeDnsToken} onValue={value => change("acmeDnsToken", value)} /></label>}
         </div>
-        {draft.acmeChallenge !== "cloudflare" && <p className="field-help">HTTP / TLS 验证要求节点的 TCP {draft.acmeChallenge === "http" ? "80" : "443"} 端口可从公网访问且未被占用；较早安装的节点需重新运行一次安装命令，以授予 Agent 绑定低端口的权限。</p>}
+        {draft.acmeChallenge !== "cloudflare" && <p className="field-help">验证时节点的 Agent 临时监听 TCP {draft.acmeChallenge === "http" ? "80" : "443"}，需要能从公网访问且没有被其他程序占用（被占用时会显示是哪个程序）。需要 Agent 0.5.37 或更新版本。</p>}
       </>}
       <div className="row-actions">
         <button className="button button-primary" type="submit" disabled={busy}>{busy ? "提交中…" : editing ? "保存修改" : "添加证书"}</button>
@@ -2461,12 +2512,10 @@ function ServiceEditor({
           <Select
             ariaLabel="证书"
             required={field.required}
-            placeholder={certificates.length ? "选择证书" : "请先在“设置”中添加证书"}
+            placeholder={certificates.length ? "选择证书" : "请先在“证书”页添加证书"}
             value={form.values[field.key] ?? ""}
             onChange={(value) => change(field.key, value)}
-            // ACME certificates are issued by the engine itself; engines that cannot do that only get stored ones.
-            options={certificates.filter((certificate) => certificate.kind !== "Acme"
-              || supports(form.backendType, "acmeCertificate")).map((certificate) => ({
+            options={certificates.map((certificate) => ({
               value: certificate.id,
               label: certificate.name,
               hint: certificateSummary(certificate),

@@ -15,7 +15,8 @@ public sealed record AgentSyncRequest(
     IReadOnlyList<BackendArtifact>? AppliedBackendArtifacts = null,
     string? PublicIpv6 = null,
     Guid? LogStreamId = null,
-    IReadOnlyList<ServiceLogChunk>? ServiceLogs = null);
+    IReadOnlyList<ServiceLogChunk>? ServiceLogs = null,
+    IReadOnlyList<AcmeChallengeReport>? AcmeChallenges = null);
 
 public sealed record AgentSyncResponse(
     long DesiredRevision,
@@ -26,7 +27,19 @@ public sealed record AgentSyncResponse(
     AgentUpdateDescriptor? AgentUpdate = null,
     string? PanelUrl = null,
     IReadOnlyList<PortRelayRule>? Relays = null,
-    IReadOnlyList<ServiceLogCursor>? LogCursors = null);
+    IReadOnlyList<ServiceLogCursor>? LogCursors = null,
+    IReadOnlyList<AcmeChallengeAssignment>? AcmeChallenges = null);
+
+/// <summary>
+/// An ACME challenge the Panel is answering for a certificate it obtains, which the Agent proves on the Panel's behalf:
+/// <c>http-01</c> serves <see cref="KeyAuthorization"/> at <c>http://Domain/.well-known/acme-challenge/Token</c> on
+/// port 80; <c>tls-alpn-01</c> presents the challenge certificate to <c>acme-tls/1</c> clients on TCP 443. The list is
+/// the full set: a challenge no longer listed is withdrawn.
+/// </summary>
+public sealed record AcmeChallengeAssignment(string Type, string Domain, string Token, string KeyAuthorization);
+
+/// <summary>Whether the Agent answers a challenge it was assigned; <see cref="Error"/> says why not.</summary>
+public sealed record AcmeChallengeReport(string Token, bool Ready, string? Error);
 
 /// <summary>
 /// New output lines of one service, numbered by the Agent. <see cref="FirstSequence"/> is the number of the first

@@ -15,7 +15,8 @@ internal sealed record CertificateUploadRequest(string Name, string? Certificate
 internal sealed record CertificateResponse(Guid Id, string Name, string Kind, DateTimeOffset CreatedAtUtc,
     DateTimeOffset? NotBeforeUtc, DateTimeOffset? ExpiresAtUtc, string? Fingerprint, string? Subject, string[] San,
     int UsedBy, string? CertificatePath, string? PrivateKeyPath, string? AcmeEmail, string? AcmeChallenge,
-    bool HasAcmeDnsToken, DateTimeOffset? SourceCheckedAtUtc, string? SourceError);
+    bool HasAcmeDnsToken, DateTimeOffset? SourceCheckedAtUtc, string? SourceError,
+    string? AcmeStatus = null, string? AcmeError = null, DateTimeOffset? AcmeAttemptedAtUtc = null);
 internal sealed record CertificateErrorResponse(string Error);
 
 internal static class AdminCertificatesEndpoints
@@ -25,6 +26,7 @@ internal static class AdminCertificatesEndpoints
     public static void Map(IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/api/admin/v1/certificates", ListAsync);
+        endpoints.MapPost("/api/admin/v1/certificates/{id:guid}/issue", IssueAsync);
         endpoints.MapPost("/api/admin/v1/certificates", CreateAsync);
         endpoints.MapPut("/api/admin/v1/certificates/{id:guid}", ReplaceAsync);
         endpoints.MapDelete("/api/admin/v1/certificates/{id:guid}", DeleteAsync);
@@ -39,8 +41,22 @@ internal static class AdminCertificatesEndpoints
         return Results.Json(values, ServerJsonSerializerContext.Default.CertificateResponseArray);
     }
 
+    /// <summary>Asks for an ACME certificate to be obtained (or renewed) now instead of on the next pass.</summary>
+    private static async Task<IResult> IssueAsync(Guid id, HttpRequest request, AdminAuthorization auth,
+        SqliteServerRepository repository, HyPanel.Server.Acme.AcmeWorker worker, CancellationToken ct)
+    {
+        var access = await auth.AuthorizeAsync(request, ct);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        var existing = (await repository.GetCertificatesAsync(ct)).SingleOrDefault(item => item.Id == id);
+        if (existing is null) return Results.NotFound();
+        if (existing.Kind != "Acme") return Error("只有 ACME 证书可以申请。");
+        worker.Request(id);
+        return Results.Accepted();
+    }
+
     private static async Task<IResult> CreateAsync(CertificateUploadRequest body, HttpRequest request,
-        AdminAuthorization auth, SqliteServerRepository repository, TimeProvider time, CancellationToken ct)
+        AdminAuthorization auth, SqliteServerRepository repository, HyPanel.Server.Acme.AcmeWorker worker,
+        TimeProvider time, CancellationToken ct)
     {
         var access = await auth.AuthorizeAsync(request, ct);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
@@ -49,13 +65,20 @@ internal static class AdminCertificatesEndpoints
         if (!TryCreate(Guid.NewGuid(), body, time.GetUtcNow(), requireToken: true, out var value))
             return Error(body.Kind == "Path" ? "文件中的证书无效、已过期或与私钥不匹配。" : "提交内容无效，请检查表单。");
         if (value.Kind == "Path") value = value with { SourceCheckedAtUtc = time.GetUtcNow() };
-        return await repository.CreateCertificateAsync(value, ct)
-            ? Results.Json(Map(value), ServerJsonSerializerContext.Default.CertificateResponse,
-                statusCode: StatusCodes.Status201Created) : Results.Conflict();
+        if (value.Kind == "Acme") value = value with { AcmeStatus = HyPanel.Server.Acme.AcmeStatus.Pending };
+        if (!await repository.CreateCertificateAsync(value, ct)) return Results.Conflict();
+        if (value.Kind == "Acme")
+        {
+            await repository.SetAcmeStateAsync(value.Id, HyPanel.Server.Acme.AcmeStatus.Pending, null, null, ct);
+            worker.Request(value.Id);
+        }
+        return Results.Json(Map(value), ServerJsonSerializerContext.Default.CertificateResponse,
+            statusCode: StatusCodes.Status201Created);
     }
 
     private static async Task<IResult> ReplaceAsync(Guid id, CertificateUploadRequest body, HttpRequest request,
-        AdminAuthorization auth, SqliteServerRepository repository, TimeProvider time, CancellationToken ct)
+        AdminAuthorization auth, SqliteServerRepository repository, HyPanel.Server.Acme.AcmeWorker worker,
+        TimeProvider time, CancellationToken ct)
     {
         var access = await auth.AuthorizeAsync(request, ct);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
@@ -71,8 +94,24 @@ internal static class AdminCertificatesEndpoints
             CreatedAtUtc = existing.CreatedAtUtc, UsedBy = existing.UsedBy,
             HasAcmeDnsToken = value.HasAcmeDnsToken || keepsToken && value.AcmeChallenge == "cloudflare"
         };
-        return await repository.ReplaceCertificateAsync(value, ct)
-            ? Results.Json(Map(value), ServerJsonSerializerContext.Default.CertificateResponse) : Results.Conflict();
+        // Renaming an ACME certificate, or changing its e-mail or validation, keeps what was issued for its domain.
+        var sameDomain = existing.Kind == "Acme" && value.Kind == "Acme" && existing.San == value.San;
+        if (sameDomain && await repository.GetCertificateWithKeyAsync(id, ct) is { CertificatePem: not null } issued)
+            value = value with
+            {
+                CertificatePem = issued.CertificatePem, PrivateKeyPem = issued.PrivateKeyPem,
+                NotBeforeUtc = issued.NotBeforeUtc, ExpiresAtUtc = issued.ExpiresAtUtc,
+                Fingerprint = issued.Fingerprint, Subject = issued.Subject,
+                AcmeStatus = existing.AcmeStatus, AcmeError = existing.AcmeError, AcmeAttemptedAtUtc = existing.AcmeAttemptedAtUtc
+            };
+        if (!await repository.ReplaceCertificateAsync(value, ct)) return Results.Conflict();
+        if (value.Kind == "Acme" && value.CertificatePem is null)
+        {
+            await repository.SetAcmeStateAsync(id, HyPanel.Server.Acme.AcmeStatus.Pending, null, null, ct);
+            value = value with { AcmeStatus = HyPanel.Server.Acme.AcmeStatus.Pending, AcmeError = null };
+            worker.Request(id);
+        }
+        return Results.Json(Map(value), ServerJsonSerializerContext.Default.CertificateResponse);
     }
 
     private static async Task<IResult> DeleteAsync(Guid id, HttpRequest request, AdminAuthorization auth,
@@ -198,5 +237,5 @@ internal static class AdminCertificatesEndpoints
         value.CreatedAtUtc, value.NotBeforeUtc, value.ExpiresAtUtc, value.Fingerprint, value.Subject,
         string.IsNullOrEmpty(value.San) ? [] : value.San.Split(", ", StringSplitOptions.RemoveEmptyEntries), value.UsedBy,
         value.CertificatePath, value.PrivateKeyPath, value.AcmeEmail, value.AcmeChallenge, value.HasAcmeDnsToken,
-        value.SourceCheckedAtUtc, value.SourceError);
+        value.SourceCheckedAtUtc, value.SourceError, value.AcmeStatus, value.AcmeError, value.AcmeAttemptedAtUtc);
 }

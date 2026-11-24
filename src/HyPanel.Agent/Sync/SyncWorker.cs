@@ -29,6 +29,7 @@ public sealed class SyncWorker(
     PortHoppingManager portHopping,
     TcpPortRelay tcpRelay,
     FirewallManager firewall,
+    AcmeChallengeResponder acmeChallenges,
     AgentEnrollmentOptions enrollmentOptions,
     HttpClient httpClient,
     TimeProvider timeProvider,
@@ -132,6 +133,16 @@ public sealed class SyncWorker(
                         await portHopping.ApplyAsync(state.DesiredState, stoppingToken);
                     }
                     reportSoon = true;
+                }
+
+                // Challenges the Panel needs proved for a certificate it is obtaining (null from an older Panel).
+                if (response.AcmeChallenges is not null)
+                {
+                    var before = acmeChallenges.Reports().Count;
+                    acmeChallenges.Apply(response.AcmeChallenges);
+                    await firewall.ApplyAsync("acme", acmeChallenges.Openings, stoppingToken);
+                    // Report readiness at once: the Panel waits for it before asking the CA to validate.
+                    if (response.AcmeChallenges.Count != before) reportSoon = true;
                 }
 
                 if (response.Relays is not null)
@@ -451,7 +462,7 @@ public sealed class SyncWorker(
         var request = new AgentSyncRequest(BuildInfo.Version, BuildInfo.RuntimeIdentifier, appliedRevision,
             metricsCollector.Collect(), services, usageBatches, results, updateReport, publicIpv4,
             publicIpv4Resolver.CountryCode, CpuFeatures.SupportsX64V3, desired?.BackendArtifacts ?? [], publicIpv6,
-            logs is null ? null : logStreamId, logs);
+            logs is null ? null : logStreamId, logs, acmeChallenges.Reports());
         using var message =
             new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(credentials.PanelBaseUrl), SyncPath));
         message.Headers.Add("X-HyPanel-Agent-Id", credentials.AgentId.ToString("D"));

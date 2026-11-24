@@ -38,6 +38,7 @@ internal static class AgentSyncEndpoints
         ReleaseCatalog releaseCatalog,
         ServiceLogStore logStore,
         ChangeFeed changeFeed,
+        HyPanel.Server.Acme.AcmeChallengeBoard acmeChallenges,
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
@@ -56,6 +57,7 @@ internal static class AgentSyncEndpoints
             return Results.BadRequest();
         }
 
+        acmeChallenges.Record(agent.NodeId, request.AcmeChallenges);
         var metricSnapshotJson = JsonSerializer.Serialize(request.Metrics, HyPanelJsonSerializerContext.Default.NodeMetrics);
         var publicIpv4 = request.PublicIpv4 ?? PublicIpv4From(httpRequest.HttpContext.Connection.RemoteIpAddress);
         if (!await repository.TryUpdateAgentSyncAsync(
@@ -138,16 +140,11 @@ internal static class AgentSyncEndpoints
                     && TryCertificateId(service.ConfigJson, out var certificateId))
                 {
                     var certificate = await repository.GetCertificateWithKeyAsync(certificateId, cancellationToken);
-                    if (certificate is not null)
-                        tls = certificate.Kind switch
-                        {
-                            TlsCertificateKinds.Acme => new TlsCertificateAsset(certificate.Id, string.Empty, null, null,
-                                TlsCertificateKinds.Acme, AcmeDomains: [SqliteServerRepository.AcmeDomain(certificate.San)!],
-                                AcmeEmail: certificate.AcmeEmail, AcmeChallenge: certificate.AcmeChallenge,
-                                AcmeDnsToken: certificate.AcmeDnsToken),
-                            _ => new TlsCertificateAsset(certificate.Id, certificate.Fingerprint!,
-                                certificate.CertificatePem, certificate.PrivateKeyPem)
-                        };
+                    // An ACME certificate the Panel has not issued yet is left out: nothing to deliver until it is.
+                    if (certificate is not null && (certificate.Kind != TlsCertificateKinds.Acme
+                                                    || certificate.CertificatePem is not null && certificate.PrivateKeyPem is not null))
+                        tls = new TlsCertificateAsset(certificate.Id, certificate.Fingerprint!,
+                            certificate.CertificatePem, certificate.PrivateKeyPem);
                 }
                 desiredServices.Add(new ServiceDesiredState(service.Id, service.Name, service.BackendType,
                     service.BackendVersion, service.Enabled, service.ConfigSchemaVersion, service.ConfigJson, users,
@@ -165,7 +162,8 @@ internal static class AgentSyncEndpoints
             // Agents move to the configured panel address once an authenticated sync there succeeds.
             (await repository.GetGlobalSettingsAsync(cancellationToken)).PanelUrl,
             await repository.GetPortRelaysAsync(agent.NodeId, cancellationToken),
-            logCursors);
+            logCursors,
+            acmeChallenges.For(agent.NodeId));
         return Results.Json(response, HyPanelJsonSerializerContext.Default.AgentSyncResponse);
     }
 

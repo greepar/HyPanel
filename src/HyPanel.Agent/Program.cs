@@ -59,6 +59,7 @@ public static class Program
         builder.Services.AddSingleton<TcpPortRelay>();
         builder.Services.AddSingleton<PortHoppingManager>();
         builder.Services.AddSingleton<FirewallManager>();
+        builder.Services.AddSingleton(_ => new AcmeChallengeResponder());
         builder.Services.AddSingleton<ServiceLogCollector>();
         builder.Services.AddSingleton<ServiceReconciler>();
         builder.Services.AddHostedService<SyncWorker>();
