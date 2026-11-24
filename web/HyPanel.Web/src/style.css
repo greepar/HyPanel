@@ -141,7 +141,23 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield }
 .subscription-link small { font-size: 12px }
 
 /* Subscription template editor */
-.template-panel { grid-column: 1 / -1 }
+.template-panel { display: grid; gap: 10px; margin-top: 14px }
+.rules-layout { display: grid; gap: 16px }
+.rules-layout > * { min-width: 0 }
+.rule-categories { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px 16px }
+.rule-category { align-items: flex-start; padding: 8px 0 }
+.rule-category > span { margin-top: 2px }
+.rule-category > div { display: grid; gap: 2px; min-width: 0 }
+.rule-category small { color: var(--muted); font-size: 12px; font-weight: 400 }
+.rule-category input:disabled + span { opacity: .6 }
+.rule-category:has(input:disabled) { cursor: default }
+.template-editor.rules-editor { min-height: 180px; height: 220px }
+.switch input:disabled + span { cursor: default }
+.advanced-template > summary { cursor: pointer; list-style: none }
+.advanced-template > summary::-webkit-details-marker { display: none }
+.advanced-template > summary::before { content: "▸ "; color: var(--muted) }
+.advanced-template[open] > summary::before { content: "▾ " }
+.advanced-template > summary span { display: block; margin-top: 2px; color: var(--muted); font-size: 12px }
 .template-editor { min-height: 420px; font: 12px/1.6 var(--mono); tab-size: 2; white-space: pre }
 
 /* User groups */

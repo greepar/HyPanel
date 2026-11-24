@@ -81,7 +81,8 @@
   </Target>
 
   <ItemGroup>
-    <EmbeddedResource Include="Endpoints/DefaultMihomoTemplate.yaml" LogicalName="HyPanel.Server.DefaultMihomoTemplate.yaml" />
+    <EmbeddedResource Include="Subscriptions/BuiltinProfileBase.yaml" LogicalName="HyPanel.Server.BuiltinProfileBase.yaml" />
+    <EmbeddedResource Include="Subscriptions/BuiltinRuleProviders.yaml" LogicalName="HyPanel.Server.BuiltinRuleProviders.yaml" />
   </ItemGroup>
 
   <Target Name="BuildAndEmbedWebAssets" BeforeTargets="BeforeBuild">

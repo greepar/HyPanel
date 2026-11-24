@@ -18,7 +18,8 @@ public sealed record AgentSyncRequest(
     IReadOnlyList<ServiceLogChunk>? ServiceLogs = null,
     IReadOnlyList<AcmeChallengeReport>? AcmeChallenges = null,
     string? City = null,
-    IReadOnlyList<ProxyTestReport>? ProxyTests = null);
+    IReadOnlyList<ProxyTestReport>? ProxyTests = null,
+    string? Region = null);
 
 public sealed record AgentSyncResponse(
     long DesiredRevision,

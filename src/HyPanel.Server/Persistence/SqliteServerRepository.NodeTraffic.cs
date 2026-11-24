@@ -16,6 +16,16 @@ internal sealed partial class SqliteServerRepository
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
+    public async Task<bool> SetNodeCityAsync(Guid nodeId, string? city, CancellationToken ct)
+    {
+        await using var c = await connectionFactory.OpenAsync(ct);
+        await using var cmd = c.CreateCommand();
+        cmd.CommandText = "UPDATE nodes SET city_override=@city WHERE id=@id;";
+        cmd.Parameters.AddWithValue("@id", nodeId.ToString("D"));
+        cmd.Parameters.AddWithValue("@city", city is null ? DBNull.Value : city);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
     public async Task<bool> SetNodeTrafficResetDayAsync(Guid nodeId, int? day, CancellationToken ct)
     {
         await using var c = await connectionFactory.OpenAsync(ct);

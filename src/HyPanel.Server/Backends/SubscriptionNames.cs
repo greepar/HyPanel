@@ -45,15 +45,24 @@ internal static class SubscriptionNames
     private static string Place(string? countryCode, string? city)
     {
         var flag = countryCode is null ? string.Empty : SqliteServerRepository.CountryFlag(countryCode);
-        var name = city is null ? string.Empty : ChineseCity(city);
-        return $"{flag} {name}".Trim();
+        return $"{flag} {city}".Trim();
+    }
+
+    /// <summary>
+    /// The city to show for a node: the admin's own, else the looked-up city when its Chinese name is known, else the
+    /// region's (the lookup sometimes names a district, e.g. "Asagaya-minami" in Tokyo), else whatever was found.
+    /// </summary>
+    public static string? DisplayCity(string? custom, string? city, string? region)
+    {
+        if (!string.IsNullOrWhiteSpace(custom)) return custom.Trim();
+        if (city is not null && Cities.TryGetValue(city.Trim(), out var known)) return known;
+        if (region is not null && Cities.TryGetValue(region.Trim(), out var regional)) return regional;
+        return string.IsNullOrWhiteSpace(city) ? string.IsNullOrWhiteSpace(region) ? null : region.Trim() : city.Trim();
     }
 
     private static string Join(string place, string rest, string separator = " · ") =>
         place.Length == 0 ? rest : place + separator + rest;
 
-    /// <summary>The Chinese name of a city the IP lookup names in English; unknown cities stay in English.</summary>
-    internal static string ChineseCity(string city) => Cities.GetValueOrDefault(city.Trim(), city.Trim());
 
     private static readonly Dictionary<string, string> Cities = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -63,10 +72,13 @@ internal static class SubscriptionNames
         ["Taipei"] = "台北", ["New Taipei"] = "新北", ["Taichung"] = "台中", ["Kaohsiung"] = "高雄", ["Changhua"] = "彰化",
         ["Tokyo"] = "东京", ["Osaka"] = "大阪", ["Kawasaki"] = "川崎", ["Yokohama"] = "横滨", ["Saitama"] = "埼玉",
         ["Chiba"] = "千叶", ["Nagoya"] = "名古屋", ["Fukuoka"] = "福冈", ["Sapporo"] = "札幌", ["Kyoto"] = "京都",
+        ["Osaka Prefecture"] = "大阪", ["Kanagawa"] = "神奈川", ["Aichi"] = "名古屋", ["Hokkaido"] = "北海道",
         ["Seoul"] = "首尔", ["Chuncheon"] = "春川", ["Busan"] = "釜山", ["Incheon"] = "仁川",
         ["Beijing"] = "北京", ["Shanghai"] = "上海", ["Guangzhou"] = "广州", ["Shenzhen"] = "深圳",
         ["Hangzhou"] = "杭州", ["Chengdu"] = "成都", ["Qingdao"] = "青岛", ["Zhangjiakou"] = "张家口",
-        ["Hohhot"] = "呼和浩特", ["Ningbo"] = "宁波", ["Nanjing"] = "南京", ["Wuhan"] = "武汉", ["Chongqing"] = "重庆",
+        ["Hohhot"] = "呼和浩特", ["Guangdong"] = "广东", ["Zhejiang"] = "浙江", ["Jiangsu"] = "江苏",
+        ["Inner Mongolia"] = "内蒙古", ["Sichuan"] = "四川", ["Hebei"] = "河北", ["Shandong"] = "山东",
+        ["Fujian"] = "福建", ["Hubei"] = "湖北", ["Taiwan"] = "台湾", ["Ningbo"] = "宁波", ["Nanjing"] = "南京", ["Wuhan"] = "武汉", ["Chongqing"] = "重庆",
         // Southeast and South Asia
         ["Singapore"] = "新加坡", ["Kuala Lumpur"] = "吉隆坡", ["Bangkok"] = "曼谷", ["Jakarta"] = "雅加达",
         ["Manila"] = "马尼拉", ["Ho Chi Minh City"] = "胡志明市", ["Hanoi"] = "河内", ["Mumbai"] = "孟买",
@@ -79,9 +91,11 @@ internal static class SubscriptionNames
         ["Atlanta"] = "亚特兰大", ["Miami"] = "迈阿密", ["Ashburn"] = "阿什本", ["New York"] = "纽约",
         ["Newark"] = "纽瓦克", ["Piscataway"] = "皮斯卡特维", ["Secaucus"] = "锡考克斯", ["Buffalo"] = "布法罗",
         ["Washington"] = "华盛顿", ["Boston"] = "波士顿", ["Toronto"] = "多伦多", ["Montreal"] = "蒙特利尔",
-        ["Vancouver"] = "温哥华", ["Mexico City"] = "墨西哥城",
+        ["Vancouver"] = "温哥华", ["Mexico City"] = "墨西哥城", ["California"] = "加州", ["Virginia"] = "弗吉尼亚",
+        ["Texas"] = "德州", ["Oregon"] = "俄勒冈", ["New Jersey"] = "新泽西", ["Illinois"] = "伊利诺伊",
+        ["Florida"] = "佛州", ["Georgia"] = "佐治亚", ["Arizona"] = "亚利桑那", ["Nevada"] = "内华达", ["Utah"] = "犹他",
         // Europe
-        ["London"] = "伦敦", ["Manchester"] = "曼彻斯特", ["Frankfurt am Main"] = "法兰克福", ["Frankfurt"] = "法兰克福",
+        ["London"] = "伦敦", ["England"] = "英格兰", ["Hesse"] = "黑森", ["North Holland"] = "北荷兰", ["Île-de-France"] = "巴黎", ["Manchester"] = "曼彻斯特", ["Frankfurt am Main"] = "法兰克福", ["Frankfurt"] = "法兰克福",
         ["Falkenstein"] = "法尔肯施泰因", ["Nuremberg"] = "纽伦堡", ["Berlin"] = "柏林", ["Munich"] = "慕尼黑",
         ["Düsseldorf"] = "杜塞尔多夫", ["Amsterdam"] = "阿姆斯特丹", ["Rotterdam"] = "鹿特丹", ["Paris"] = "巴黎",
         ["Roubaix"] = "鲁贝", ["Gravelines"] = "格拉沃利讷", ["Marseille"] = "马赛", ["Brussels"] = "布鲁塞尔",

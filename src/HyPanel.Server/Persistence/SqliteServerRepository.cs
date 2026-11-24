@@ -305,7 +305,8 @@ internal sealed partial class SqliteServerRepository(
                                       n.agent_update_id, a.update_status, a.update_target_version,
                                        a.update_started_at_utc, a.update_error, a.public_ipv4, a.country_code,
                                        a.public_ipv6, n.traffic_upload_bytes, n.traffic_download_bytes,
-                                       n.traffic_reset_day, COALESCE(n.traffic_reset_at_utc, n.created_at_utc)
+                                       n.traffic_reset_day, COALESCE(n.traffic_reset_at_utc, n.created_at_utc),
+                                       a.city, a.region, n.city_override
                               FROM nodes n
                               LEFT JOIN agents a ON a.node_id = n.id
                               ORDER BY n.created_at_utc, n.id;
@@ -336,7 +337,10 @@ internal sealed partial class SqliteServerRepository(
                 reader.GetInt64(19),
                 reader.GetInt64(20),
                 reader.IsDBNull(21) ? null : reader.GetInt32(21),
-                SqliteValue.ToDateTimeOffset(reader.GetString(22))));
+                SqliteValue.ToDateTimeOffset(reader.GetString(22)),
+                reader.IsDBNull(23) ? null : reader.GetString(23),
+                reader.IsDBNull(24) ? null : reader.GetString(24),
+                reader.IsDBNull(25) ? null : reader.GetString(25)));
         }
 
         return observations;
@@ -532,7 +536,8 @@ internal sealed partial class SqliteServerRepository(
         string? publicIpv4 = null,
         string? countryCode = null,
         string? publicIpv6 = null,
-        string? city = null)
+        string? city = null,
+        string? region = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(reportedVersion);
         ArgumentException.ThrowIfNullOrWhiteSpace(reportedPlatform);
@@ -557,6 +562,7 @@ internal sealed partial class SqliteServerRepository(
                                                public_ipv4 = COALESCE(@publicIpv4, public_ipv4),
                                                country_code = COALESCE(@countryCode, country_code),
                                                city = COALESCE(@city, city),
+                                               region = COALESCE(@region, region),
                                                -- Not coalesced: the Agent forgets an IPv6 that stopped working, and
                                                -- the Panel must stop handing out entries for it.
                                                public_ipv6 = @publicIpv6
@@ -572,6 +578,7 @@ internal sealed partial class SqliteServerRepository(
                 updateAgent.Parameters.AddWithValue("@publicIpv4", SqliteValue.ToDbValue(publicIpv4));
                 updateAgent.Parameters.AddWithValue("@countryCode", SqliteValue.ToDbValue(countryCode));
                 updateAgent.Parameters.AddWithValue("@city", SqliteValue.ToDbValue(city));
+                updateAgent.Parameters.AddWithValue("@region", SqliteValue.ToDbValue(region));
                 updateAgent.Parameters.AddWithValue("@publicIpv6", SqliteValue.ToDbValue(publicIpv6));
                 if (await updateAgent.ExecuteNonQueryAsync(cancellationToken) != 1)
                 {
@@ -926,6 +933,37 @@ internal sealed partial class SqliteServerRepository(
         command.Parameters.AddWithValue("@template", template is null ? DBNull.Value : template);
         command.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>The rules-page settings of the built-in profile; defaults when never saved or unreadable.</summary>
+    public async Task<HyPanel.Server.Subscriptions.SubscriptionRules> GetSubscriptionRulesAsync(CancellationToken ct)
+    {
+        await using var connection = await connectionFactory.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT subscription_rules_json FROM global_settings WHERE singleton=1;";
+        if (await command.ExecuteScalarAsync(ct) is not string json) return HyPanel.Server.Subscriptions.SubscriptionRules.Default;
+        try
+        {
+            var rules = System.Text.Json.JsonSerializer.Deserialize(json,
+                HyPanel.Server.Endpoints.ServerJsonSerializerContext.Default.SubscriptionRules);
+            return rules is null ? HyPanel.Server.Subscriptions.SubscriptionRules.Default
+                : new HyPanel.Server.Subscriptions.SubscriptionRules(rules.Disabled ?? [], rules.CustomRules ?? []);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return HyPanel.Server.Subscriptions.SubscriptionRules.Default;
+        }
+    }
+
+    public async Task SetSubscriptionRulesAsync(HyPanel.Server.Subscriptions.SubscriptionRules rules, CancellationToken ct)
+    {
+        await using var connection = await connectionFactory.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE global_settings SET subscription_rules_json=@rules,updated_at_utc=@now WHERE singleton=1;";
+        command.Parameters.AddWithValue("@rules", System.Text.Json.JsonSerializer.Serialize(rules,
+            HyPanel.Server.Endpoints.ServerJsonSerializerContext.Default.SubscriptionRules));
+        command.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
+        await command.ExecuteNonQueryAsync(ct);
     }
 
     public async Task<GlobalSettingsRecord> GetGlobalSettingsAsync(CancellationToken cancellationToken)

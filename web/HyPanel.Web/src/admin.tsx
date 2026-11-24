@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ChevronRight, Plus, Trash2, Upload } from "lucide-preact";
-import { ApiError, type ApiClient, type InstallPlatform, type ProxyTestStatus } from "./api";
+import { ApiError, type ApiClient, type InstallPlatform, type ProxyTestStatus, type SubscriptionRules } from "./api";
 import { useAutoRefresh, readCache, writeCache, dropCache, setLiveClient } from "./hooks";
 import { LiveLogPanel } from "./logs";
 import { OwnSubscription } from "./subscription";
@@ -130,6 +130,8 @@ export function AdminApp({
     <NodesPage api={api} setError={setError} />
   ) : route === "users" ? (
     <UsersPage api={api} setError={setError} />
+  ) : route === "rules" ? (
+    <RulesPage api={api} setError={setError} />
   ) : route === "certificates" ? (
     <CertificatesPage api={api} setError={setError} />
   ) : route === "settings" ? (
@@ -217,15 +219,98 @@ function SettingsPage({ api, setError, account }: PageProps & { account: boolean
         <section className="card panel"><SectionTitle title="自动更新" description="新建节点和服务时的默认策略；已有节点可在节点设置里单独开关。" /><div className="modal-form"><label className="switch"><input type="checkbox" checked={settings.agentUpdateDefaultPolicy === "Auto"} onChange={event => setSettings({ ...settings, agentUpdateDefaultPolicy: event.currentTarget.checked ? "Auto" : "Manual" })} /><span />新节点自动更新 Agent</label><label className="switch"><input type="checkbox" checked={settings.backendUpdateDefaultPolicy === "Auto"} onChange={event => setSettings({ ...settings, backendUpdateDefaultPolicy: event.currentTarget.checked ? "Auto" : "Manual" })} /><span />新服务自动更新代理内核</label><label>GitHub 镜像地址<input placeholder="留空使用 GitHub 官方源" value={settings.githubMirrorBaseUrl ?? ""} onInput={event => setSettings({ ...settings, githubMirrorBaseUrl: event.currentTarget.value || null })} /></label><p className="field-help">面板服务器连不上 GitHub 时填写。只用于下载面板、Agent 和代理内核的安装包，版本检查和校验值仍直连 GitHub。节点都从面板下载，不需要访问 GitHub。</p><button className="button button-primary" type="button" onClick={() => void save()}>保存设置</button></div></section>
          <section className="card panel"><SectionTitle title="Release 与数据" description="受控的官方发布来源" /><dl className="facts-list"><div><dt>Agent Release</dt><dd>{settings.agentReleaseVersion ?? "Unavailable"}</dd></div>{Object.entries(settings.backendReleases).map(([name, version]) => <div key={name}><dt>{name}</dt><dd>{version}</dd></div>)}<div><dt>数据目录</dt><dd>{settings.dataDirectory}</dd></div><div><dt>数据库</dt><dd>{formatBytes(settings.databaseSizeBytes)}</dd></div></dl></section>
           {account && <PasskeyPanel api={api} setError={setError} />}
-          <SubscriptionTemplatePanel api={api} setError={setError} />
           <BackupPanel api={api} setError={setError} />
        </div>
     </Page>
   );
 }
 
-/** Editable Mihomo subscription template (routing groups and rules applied to every Mihomo subscription). */
-function SubscriptionTemplatePanel({ api, setError }: PageProps) {
+/**
+ * The routing rules every subscription carries: which kinds of traffic get their own group, the admin's own rules
+ * (placed first), and, for advanced use, a fully custom template that replaces both.
+ */
+function RulesPage({ api, setError }: PageProps) {
+  const [rules, setRules] = useState<SubscriptionRules | null>(null);
+  const [disabled, setDisabled] = useState<string[]>([]);
+  const [custom, setCustom] = useState("");
+  const [busy, setBusy] = useState(false);
+  const show = (value: SubscriptionRules) => {
+    setRules(value);
+    setDisabled(value.categories.filter((category) => !category.enabled).map((category) => category.id));
+    setCustom(value.customRules.join("\n"));
+  };
+  const load = async () => {
+    try { show(await api.subscriptionRules()); } catch (reason) { setError(messageFor(reason, "无法加载规则")); }
+  };
+  useEffect(() => { void load(); }, []);
+  const savedDisabled = rules?.categories.filter((category) => !category.enabled).map((category) => category.id) ?? [];
+  const dirty = !!rules && (custom !== rules.customRules.join("\n")
+    || disabled.length !== savedDisabled.length || disabled.some((id) => !savedDisabled.includes(id)));
+  const save = async () => {
+    setBusy(true);
+    try {
+      show(await api.saveSubscriptionRules({ disabled, customRules: custom.split("\n") }));
+      setError("规则已保存，用户更新订阅后生效。");
+    } catch (reason) {
+      setError(messageFor(reason, "无法保存规则"));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const toggle = (id: string, on: boolean) =>
+    setDisabled((current) => on ? current.filter((item) => item !== id) : [...current, id]);
+  return (
+    <Page
+      title="规则"
+      description="所有用户订阅里的分流规则。节点分组（节点选择、手动切换、自动选择）由面板自动生成。"
+      actions={<button className="button button-primary" type="button" disabled={busy || !dirty} onClick={() => void save()}>保存规则</button>}
+    >
+      {rules?.usingCustomTemplate && (
+        <Notice>正在使用下方“高级”里的自定义模板，这里的分类和自定义规则暂不生效。恢复内置规则后才会使用它们。</Notice>
+      )}
+      {!rules ? <Loading /> : (
+        <div className="rules-layout">
+          <section className="card panel">
+            <SectionTitle title="分类" description="每个分类在客户端里是一个单独的策略组，可以各自选节点。关闭后不再单独成组，这部分流量按其余规则走。" />
+            <div className="rule-categories">
+              {rules.categories.map((category) => (
+                <label className="switch rule-category" key={category.id}>
+                  <input type="checkbox" disabled={category.required} checked={category.required || !disabled.includes(category.id)}
+                    onChange={(event) => toggle(category.id, event.currentTarget.checked)} />
+                  <span />
+                  <div>
+                    <strong>{category.name}</strong>
+                    <small>{category.required ? `${category.description}（必需）` : category.description}</small>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </section>
+          <section className="card panel">
+            <SectionTitle title="自定义规则" description="放在所有内置规则之前，先匹配先生效。每行一条，# 开头的行是注释。" />
+            <textarea className="template-editor rules-editor" spellcheck={false} value={custom}
+              placeholder={"# 例如：\nDOMAIN-SUFFIX,example.com,DIRECT\nDOMAIN-KEYWORD,openai,🤖 ChatGPT\nPROCESS-NAME,rustdesk.exe,DIRECT\nIP-CIDR,10.0.0.0/8,DIRECT,no-resolve"}
+              onInput={(event) => setCustom(event.currentTarget.value)} />
+            <p className="field-help">
+              格式为“类型,内容,策略”，类型如 DOMAIN、DOMAIN-SUFFIX、DOMAIN-KEYWORD、IP-CIDR、PROCESS-NAME。可用的策略：
+              {rules.policies.join("、")}。
+            </p>
+          </section>
+          <details className="card panel advanced-template">
+            <summary>
+              <strong>高级：完全自定义模板</strong>
+              <span>自己写整份 Mihomo 配置。保存后上面的分类和自定义规则不再生效。</span>
+            </summary>
+            <SubscriptionTemplatePanel api={api} setError={setError} changed={() => void load()} />
+          </details>
+        </div>
+      )}
+    </Page>
+  );
+}
+
+/** A fully custom Mihomo template, starting from the built-in one; resetting goes back to the rules above. */
+function SubscriptionTemplatePanel({ api, setError, changed }: PageProps & { changed: () => void }) {
   const [value, setValue] = useState<{ template: string; isCustom: boolean; defaultTemplate: string } | null>(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -239,30 +324,29 @@ function SubscriptionTemplatePanel({ api, setError }: PageProps) {
   };
   const save = async () => {
     setBusy(true);
-    try { apply(await api.saveSubscriptionTemplate(draft), "订阅模板已保存，客户端下次更新订阅即生效。"); }
+    try { apply(await api.saveSubscriptionTemplate(draft), "订阅模板已保存，客户端下次更新订阅即生效。"); changed(); }
     catch (reason) { setError(messageFor(reason, "模板无效，请检查 YAML")); }
     finally { setBusy(false); }
   };
   const reset = async () => {
-    if (!confirm("恢复为内置默认模板？当前自定义内容会丢失。")) return;
+    if (!confirm("恢复为内置规则？当前自定义模板会丢失。")) return;
     setBusy(true);
-    try { apply(await api.resetSubscriptionTemplate(), "已恢复默认模板。"); }
+    try { apply(await api.resetSubscriptionTemplate(), "已恢复内置规则。"); changed(); }
     catch (reason) { setError(messageFor(reason, "无法恢复默认模板")); }
     finally { setBusy(false); }
   };
   return (
-    <section className="card panel template-panel">
+    <div className="template-panel">
       <div className="section-toolbar">
         <div>
-          <h2>订阅规则模板（Mihomo / Clash）</h2>
           <span>
-            {value ? (value.isCustom ? "当前使用：自定义模板" : "当前使用：内置默认模板（参考 ACL4SSR 分流）") : "加载中…"}
+            {value ? (value.isCustom ? "当前使用：自定义模板" : "当前使用：内置规则。下面是按上面的设置生成的模板，可以在此基础上修改。") : "加载中…"}
           </span>
         </div>
         <div className="row-actions">
           {value?.isCustom && (
             <button className="button button-secondary" type="button" disabled={busy} onClick={() => void reset()}>
-              恢复默认
+              恢复内置规则
             </button>
           )}
           <button className="button button-primary" type="button" disabled={busy || !value || draft === value.template} onClick={() => void save()}>
@@ -276,7 +360,7 @@ function SubscriptionTemplatePanel({ api, setError }: PageProps) {
         也可以用 Mihomo 自带的 <code>include-all: true</code> + <code>filter: "正则"</code> 按节点名自动归组（节点名格式见文档，例如“🇯🇵 东京 · 搬瓦工 Hy2”“🇺🇸 洛杉矶 · DMIT -&gt; 🇫🇷 WS130”）。
       </p>
       <textarea className="template-editor" spellcheck={false} value={draft} onInput={(event) => setDraft(event.currentTarget.value)} />
-    </section>
+    </div>
   );
 }
 
@@ -1691,17 +1775,21 @@ function NodeSettings({
 }) {
   const [deleting, setDeleting] = useState(false);
   const [name, setName] = useState(node.displayName);
+  const [city, setCity] = useState(node.cityOverride ?? "");
   useEffect(() => setName(node.displayName), [node.displayName]);
+  useEffect(() => setCity(node.cityOverride ?? ""), [node.cityOverride]);
+  const identityChanged = (name.trim() && name.trim() !== node.displayName) || city.trim() !== (node.cityOverride ?? "");
   const rename = async (event: Event) => {
     event.preventDefault();
     const value = name.trim();
-    if (!value || value === node.displayName) return;
+    if (!value) return;
     try {
-      await api.renameNode(node.id, value);
-      setError(`节点已改名为“${value}”，用户更新订阅后生效。`);
+      if (value !== node.displayName) await api.renameNode(node.id, value);
+      if (city.trim() !== (node.cityOverride ?? "")) await api.setNodeCity(node.id, city.trim() || null);
+      setError("已保存，用户更新订阅后生效。");
       reload();
     } catch (reason) {
-      setError(messageFor(reason, "无法修改节点名称"));
+      setError(messageFor(reason, "无法保存节点名称"));
     }
   };
   const check = async () => {
@@ -1767,14 +1855,21 @@ function NodeSettings({
   return (
     <div className="detail-grid">
       <section className="card panel">
-        <SectionTitle title="名称" description="订阅里显示在国旗和城市后面，适合填厂商名，例如“搬瓦工”或“DMIT”。" />
+        <SectionTitle title="名称" description="订阅里的节点名是“国旗 城市 · 节点名称”，节点名称适合填厂商名，例如“搬瓦工”或“DMIT”。" />
         <form className="modal-form" onSubmit={(event) => void rename(event)}>
           <label>
             节点名称
             <input value={name} maxLength={128} onInput={(event) => setName(event.currentTarget.value)} />
           </label>
-          <button className="button button-primary" type="submit" disabled={!name.trim() || name.trim() === node.displayName}>
-            保存名称
+          <label>
+            城市
+            <input value={city} maxLength={32}
+              placeholder={node.detectedCity ? `自动识别：${node.detectedCity}` : "未识别到，可手动填写"}
+              onInput={(event) => setCity(event.currentTarget.value)} />
+          </label>
+          <p className="field-help">留空时使用根据节点 IP 自动识别的城市。识别不准或识别不到时在这里填写，例如“上海”。</p>
+          <button className="button button-primary" type="submit" disabled={!name.trim() || !identityChanged}>
+            保存
           </button>
         </form>
       </section>

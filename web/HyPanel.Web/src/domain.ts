@@ -1,6 +1,6 @@
 export type Theme = 'light' | 'dark' | 'system'
 export type NodeTab = 'overview' | 'services' | 'network' | 'logs' | 'settings'
-export type AdminRoute = 'overview' | 'nodes' | 'users' | 'certificates' | 'settings' | `nodes/${string}/${NodeTab}`
+export type AdminRoute = 'overview' | 'nodes' | 'users' | 'rules' | 'certificates' | 'settings' | `nodes/${string}/${NodeTab}`
 export type AppRoute = AdminRoute | 'subscription'
 export type Role = 'Admin' | 'User'
 export type ServerUpdate = { currentVersion: string; latestVersion: string | null; deploymentMode: 'BareMetal' | 'Docker'; updateAvailable: boolean; status: string; error: string | null }
@@ -45,6 +45,10 @@ export type Node = {
   displayName: string
   /** ISO 3166-1 alpha-2 reported by the Agent, e.g. "GB". */
   countryCode?: string | null
+  /** The city found from the node's IP, as subscriptions would show it. */
+  detectedCity?: string | null
+  /** The admin's own city for subscriptions, replacing the detected one. */
+  cityOverride?: string | null
   agentId: string | null
   online: boolean
   lastSeenAt: string | null

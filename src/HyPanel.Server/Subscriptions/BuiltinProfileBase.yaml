@@ -1,0 +1,63 @@
+# HyPanel 内置订阅配置：客户端设置部分。节点、策略组、规则和规则集由面板按“规则”页的设置生成。
+port: 7890
+socks-port: 7891
+allow-lan: false
+mode: rule
+log-level: warning
+# 允许连接节点的 IPv6 地址；网站解析仍只用 IPv4（见 dns.ipv6）。
+ipv6: true
+unified-delay: true
+tcp-concurrent: true
+external-controller: 127.0.0.1:9090
+profile:
+  store-selected: true
+  store-fake-ip: true
+tun:
+  enable: true
+  stack: mixed
+  auto-route: true
+  auto-detect-interface: true
+  strict-route: true
+  # 使用 system DNS 时，禁止 TUN 把自身地址写成系统 DNS，避免解析回环。
+  # 需要支持 dns-mode 的新版 Mihomo；旧版会忽略此项。
+  dns-mode: disabled
+  dns-hijack:
+  - any:53
+  - tcp://any:53
+dns:
+  enable: true
+  listen: 127.0.0.1:1053
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter-mode: blacklist
+  fake-ip-filter:
+  - '*.lan'
+  - '*.local'
+  - localhost
+  - time.windows.com
+  - time.apple.com
+  - time.cloudflare.com
+  - '*.msftconnecttest.com'
+  - '*.msftncsi.com'
+  cache-algorithm: arc
+  use-hosts: true
+  use-system-hosts: false
+  prefer-h3: false
+  respect-rules: true
+  # 跟随设备的系统 DNS，适用于不同网络和设备。
+  default-nameserver:
+  - system
+  proxy-server-nameserver:
+  - system
+  direct-nameserver:
+  - system
+  direct-nameserver-follow-policy: false
+  nameserver-policy:
+    geosite:private,cn:
+    - system
+    __RULE_SET_NAMESERVERS__
+  nameserver:
+  - https://1.1.1.1/dns-query#🚀 节点选择
+  - https://dns.quad9.net/dns-query#🚀 节点选择
+proxies: ~

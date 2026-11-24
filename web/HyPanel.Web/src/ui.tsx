@@ -1,6 +1,6 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
-import { Check, ChevronDown, ChevronsUpDown, CircleAlert, CircleCheck, Eye, EyeOff, LayoutDashboard, LogOut, Monitor, Moon, Server, Settings, ShieldCheck, Sun, Users, X } from 'lucide-preact'
+import { Check, ChevronDown, ChevronsUpDown, CircleAlert, CircleCheck, Eye, EyeOff, LayoutDashboard, LogOut, Monitor, Moon, Route, Server, Settings, ShieldCheck, Sun, Users, X } from 'lucide-preact'
 import type { AppRoute, Role, Theme } from './domain'
 import { BrandLockup, BrandMark } from './brand'
 
@@ -10,6 +10,7 @@ const navigation: { route: AppRoute; label: string; admin: boolean; icon: typeof
   { route: 'overview', label: '概览', admin: true, icon: LayoutDashboard },
   { route: 'nodes', label: '节点', admin: true, icon: Server },
   { route: 'users', label: '用户', admin: true, icon: Users },
+  { route: 'rules', label: '规则', admin: true, icon: Route },
   { route: 'certificates', label: '证书', admin: true, icon: ShieldCheck },
   { route: 'settings', label: '设置', admin: true, icon: Settings },
   { route: 'subscription', label: '我的订阅', admin: false, icon: LayoutDashboard },

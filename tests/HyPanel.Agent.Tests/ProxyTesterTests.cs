@@ -22,7 +22,7 @@ public sealed class ProxyTesterTests
             {
                 Interlocked.Increment(ref calls);
                 Assert.AreEqual("secret", proxy.Password);
-                return Task.FromResult(("198.51.100.7", (string?)"FR", (string?)"Paris"));
+                return Task.FromResult(("198.51.100.7", (string?)"FR", (string?)"Paris", (string?)"Île-de-France"));
             }
         };
         var request = Request();

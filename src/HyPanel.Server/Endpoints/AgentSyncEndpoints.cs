@@ -75,7 +75,8 @@ internal static class AgentSyncEndpoints
                 publicIpv4,
                 request.CountryCode,
                 request.PublicIpv6,
-                request.City))
+                request.City,
+                request.Region))
         {
             // Authentication already succeeded. Reject invalid payloads without claiming the secret is wrong.
             return Results.BadRequest();
@@ -282,6 +283,7 @@ internal static class AgentSyncEndpoints
             || !IsValidPublicIpv6(request.PublicIpv6)
             || request.CountryCode is not null && !IsCountryCode(request.CountryCode)
             || request.City is not null && !IsCity(request.City)
+            || request.Region is not null && !IsCity(request.Region)
             || !IsValidUpdateReport(request.AgentUpdate, request.Platform, nowUtc))
         {
             return false;

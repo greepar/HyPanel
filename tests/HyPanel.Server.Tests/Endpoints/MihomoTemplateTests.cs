@@ -44,7 +44,7 @@ public sealed class MihomoTemplateTests
     [TestMethod]
     public void TryValidate_RequiresGroupsAndRules()
     {
-        Assert.IsTrue(MihomoTemplate.TryValidate(MihomoTemplate.Default, out _));
+        Assert.IsTrue(MihomoTemplate.TryValidate(HyPanel.Server.Subscriptions.BuiltinProfile.DefaultTemplate, out _));
         Assert.IsFalse(MihomoTemplate.TryValidate("rules:\n  - MATCH,DIRECT\n", out var error));
         StringAssert.Contains(error, "proxy-groups");
         Assert.IsFalse(MihomoTemplate.TryValidate("proxy-groups: []\nrules:\n\t- MATCH,DIRECT\n", out _));

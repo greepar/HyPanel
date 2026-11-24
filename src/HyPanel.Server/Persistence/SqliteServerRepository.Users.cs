@@ -577,7 +577,7 @@ internal sealed partial class SqliteServerRepository
                                   p.tls_server_name,COALESCE(p.updated_at_utc,a.last_seen_at_utc),
                                    k.nonce,k.ciphertext,k.tag,c.san,c.certificate_pem,n.display_name,a.city,
                                    CASE WHEN p.host IS NOT NULL OR s.ipv6_entry=0 THEN NULL WHEN rn.id IS NULL THEN a.public_ipv6 ELSE ra.public_ipv6 END,
-                                   a.country_code,rs.exit_country_code,rs.route_exit_countries_json
+                                   a.country_code,rs.exit_country_code,rs.route_exit_countries_json,a.region,n.city_override
                            FROM user_service_bindings b
                            JOIN service_instances s ON s.id=b.service_id
                            JOIN nodes n ON n.id=s.node_id
@@ -611,7 +611,8 @@ internal sealed partial class SqliteServerRepository
             var pem = r.IsDBNull(12) ? null : r.GetString(12);
             var serverName = r.IsDBNull(6) ? ServerNameFor(san, r.GetString(13), serviceId) : r.GetString(6);
             var nodeName = r.GetString(13);
-            var city = r.IsDBNull(14) ? null : r.GetString(14);
+            var city = SubscriptionNames.DisplayCity(r.IsDBNull(20) ? null : r.GetString(20),
+                r.IsDBNull(14) ? null : r.GetString(14), r.IsDBNull(19) ? null : r.GetString(19));
             var country = r.IsDBNull(16) ? null : r.GetString(16);
             var protocol = BackendDefinitionCatalog.TryGet(backend, out var definition)
                 ? definition.ServiceProtocol.ShortName : backend;

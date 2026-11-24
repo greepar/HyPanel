@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using HyPanel.Server.Backends;
 using HyPanel.Server.Persistence;
+using HyPanel.Server.Subscriptions;
 using HyPanel.Shared.Networking;
 
 namespace HyPanel.Server.Endpoints;
@@ -27,7 +28,8 @@ internal static class SubscriptionEndpoints
         }
 
         var proxies = services.SelectMany(Project).ToArray();
-        var output = RenderMihomo(proxies, await repository.GetMihomoTemplateAsync(ct) ?? MihomoTemplate.Default);
+        var output = RenderMihomo(proxies, await repository.GetMihomoTemplateAsync(ct)
+            ?? BuiltinProfile.BuildTemplate(await repository.GetSubscriptionRulesAsync(ct)));
         var info = await repository.GetSubscriptionUserInfoAsync(token, ct);
         // Clients name the profile after profile-title (Clash Verge, Mihomo Party) or the attachment file name;
         // without them they fall back to the last URL segment, i.e. the token.

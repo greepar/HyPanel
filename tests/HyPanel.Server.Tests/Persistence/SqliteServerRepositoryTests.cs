@@ -79,7 +79,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L), (22L, 1L), (23L, 1L), (24L, 1L), (25L, 1L), (26L, 1L), (27L, 1L), (28L, 1L), (29L, 1L), (30L, 1L), (31L, 1L), (32L, 1L), (33L, 1L), (34L, 1L), (35L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L), (22L, 1L), (23L, 1L), (24L, 1L), (25L, 1L), (26L, 1L), (27L, 1L), (28L, 1L), (29L, 1L), (30L, 1L), (31L, 1L), (32L, 1L), (33L, 1L), (34L, 1L), (35L, 1L), (36L, 1L), (37L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -1563,10 +1563,10 @@ public sealed class SqliteServerRepositoryTests
         var mihomo = await RenderSubscriptionAsync(fixture, "mixed-token");
         StringAssert.Contains(mihomo, "type: hysteria2");
         // Default template: proxies expand into the placeholder groups and the routing rules are present.
-        StringAssert.Contains(mihomo, "  - name: 🚀 手动切换\n    type: select\n    proxies:\n      - 🔗 直连\n      - 🌐 直连 v6\n      - 🔀 代理节点\n");
-        StringAssert.Contains(mihomo, "  - name: 🔗 直连\n    type: select\n    proxies:\n      - \"mixed Hy2\"\n      - \"mixed VLESS\"");
-        StringAssert.Contains(mihomo, "  - name: 🔀 代理节点\n    type: select\n    proxies:\n      - DIRECT\n");
-        StringAssert.Contains(mihomo, "  - MATCH,🐟 漏网之鱼");
+        StringAssert.Contains(mihomo, "  - name: \"✈️ 手动切换\"\n    type: select\n    proxies:\n      - \"🔗 直连节点\"\n      - \"🌐 直连节点 v6\"\n      - \"🔀 代理节点\"\n");
+        StringAssert.Contains(mihomo, "  - name: \"🔗 直连节点\"\n    type: select\n    proxies:\n      - \"mixed Hy2\"\n      - \"mixed VLESS\"");
+        StringAssert.Contains(mihomo, "  - name: \"🔀 代理节点\"\n    type: select\n    proxies:\n      - DIRECT\n");
+        StringAssert.Contains(mihomo, "  - \"MATCH,🐟 漏网之鱼\"");
         Assert.IsFalse(mihomo.Contains("- __", StringComparison.Ordinal), "every placeholder is expanded");
         Assert.IsFalse(mihomo.Contains("proxies: ~", StringComparison.Ordinal));
         StringAssert.Contains(mihomo, $"password: \"{hyUser}:{hyCredential}\"");

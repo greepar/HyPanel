@@ -13,26 +13,20 @@ namespace HyPanel.Server.Endpoints;
 internal static class MihomoTemplate
 {
     public const string AllProxiesPlaceholder = "__ALL_PROXIES__";
+    public const string DirectPlaceholder = "__DIRECT_PROXIES__";
+    public const string DirectV6Placeholder = "__DIRECT_V6_PROXIES__";
+    public const string RelayPlaceholder = "__RELAY_PROXIES__";
 
     /// <summary>The list placeholders and which entries each takes; null takes them all.</summary>
     private static readonly Dictionary<string, SubscriptionGroup?> Placeholders = new(StringComparer.Ordinal)
     {
         [AllProxiesPlaceholder] = null,
-        ["__DIRECT_PROXIES__"] = SubscriptionGroup.Direct,
-        ["__DIRECT_V6_PROXIES__"] = SubscriptionGroup.DirectIpv6,
-        ["__RELAY_PROXIES__"] = SubscriptionGroup.Relay,
+        [DirectPlaceholder] = SubscriptionGroup.Direct,
+        [DirectV6Placeholder] = SubscriptionGroup.DirectIpv6,
+        [RelayPlaceholder] = SubscriptionGroup.Relay,
     };
     public const int MaximumLength = 512 * 1024;
 
-    public static string Default { get; } = LoadDefault();
-
-    private static string LoadDefault()
-    {
-        using var stream = typeof(MihomoTemplate).Assembly.GetManifestResourceStream("HyPanel.Server.DefaultMihomoTemplate.yaml")
-                           ?? throw new InvalidOperationException("The default Mihomo template is not embedded.");
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-        return reader.ReadToEnd();
-    }
 
     /// <summary>Basic structural checks; Mihomo itself validates the rest when the client loads it.</summary>
     public static bool TryValidate(string? template, out string error)

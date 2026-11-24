@@ -66,7 +66,10 @@ internal sealed record NodeObservationRecord(
     long TrafficUploadBytes = 0,
     long TrafficDownloadBytes = 0,
     int? TrafficResetDay = null,
-    DateTimeOffset? TrafficPeriodStartUtc = null);
+    DateTimeOffset? TrafficPeriodStartUtc = null,
+    string? City = null,
+    string? Region = null,
+    string? CityOverride = null);
 
 internal sealed record AgentUpdateTargetRecord(
     Guid NodeId,

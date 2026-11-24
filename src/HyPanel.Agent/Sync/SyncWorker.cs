@@ -467,7 +467,7 @@ public sealed class SyncWorker(
             metricsCollector.Collect(), services, usageBatches, results, updateReport, publicIpv4,
             publicIpv4Resolver.CountryCode, CpuFeatures.SupportsX64V3, desired?.BackendArtifacts ?? [], publicIpv6,
             logs is null ? null : logStreamId, logs, acmeChallenges.Reports(), publicIpv4Resolver.City,
-            proxyTester.Reports());
+            proxyTester.Reports(), publicIpv4Resolver.Region);
         using var message =
             new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(credentials.PanelBaseUrl), SyncPath));
         message.Headers.Add("X-HyPanel-Agent-Id", credentials.AgentId.ToString("D"));

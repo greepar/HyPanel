@@ -4,7 +4,7 @@ namespace HyPanel.Server.Persistence;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 35;
+    public const long CurrentSchemaVersion = 37;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -749,6 +749,25 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             await ExecuteAsync(connection, transaction, """
                 ALTER TABLE agents ADD COLUMN city TEXT NULL;
                 INSERT INTO schema_migrations (version, applied_at_utc) VALUES (35, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                """, cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, 36, cancellationToken))
+        {
+            // The rules page: categories turned off and the admin's own rules, for the built-in profile.
+            await ExecuteAsync(connection, transaction, """
+                ALTER TABLE global_settings ADD COLUMN subscription_rules_json TEXT NULL;
+                INSERT INTO schema_migrations (version, applied_at_utc) VALUES (36, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                """, cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, 37, cancellationToken))
+        {
+            // The region the Agent's IP lookup names (used when the city is a district), and the admin's own city.
+            await ExecuteAsync(connection, transaction, """
+                ALTER TABLE agents ADD COLUMN region TEXT NULL;
+                ALTER TABLE nodes ADD COLUMN city_override TEXT NULL;
+                INSERT INTO schema_migrations (version, applied_at_utc) VALUES (37, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
                 """, cancellationToken);
         }
 

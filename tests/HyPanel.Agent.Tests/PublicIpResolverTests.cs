@@ -18,6 +18,7 @@ public sealed class PublicIpResolverTests
         Assert.AreEqual("203.0.113.42", await resolver.GetAsync(CancellationToken.None));
         Assert.AreEqual("GB", resolver.CountryCode);
         Assert.AreEqual("London", resolver.City);
+        Assert.AreEqual("England", resolver.Region);
         Assert.AreEqual(1, handler.RequestCount);
     }
 

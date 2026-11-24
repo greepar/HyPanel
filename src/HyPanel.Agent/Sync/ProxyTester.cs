@@ -22,7 +22,7 @@ public sealed class ProxyTester(ILogger<ProxyTester> logger)
     private readonly ConcurrentDictionary<Guid, ProxyTestReport?> tests = new();
 
     /// <summary>Lookup override for tests.</summary>
-    internal Func<UpstreamProxy, CancellationToken, Task<(string Ip, string? Country, string? City)>>? Lookup { get; init; }
+    internal Func<UpstreamProxy, CancellationToken, Task<(string Ip, string? Country, string? City, string? Region)>>? Lookup { get; init; }
 
     /// <summary>
     /// Starts the tests not seen before and forgets the ones the Panel no longer lists. <paramref name="finished"/> is
@@ -57,7 +57,7 @@ public sealed class ProxyTester(ILogger<ProxyTester> logger)
         try
         {
             using var timeout = new CancellationTokenSource(Timeout);
-            var (ip, country, city) = await (Lookup ?? LookupAsync)(proxy, timeout.Token);
+            var (ip, country, city, _) = await (Lookup ?? LookupAsync)(proxy, timeout.Token);
             return new ProxyTestReport(request.TestId, true, ip, country, city, (int)watch.ElapsedMilliseconds, null);
         }
         catch (Exception exception)
@@ -98,7 +98,7 @@ public sealed class ProxyTester(ILogger<ProxyTester> logger)
         return exception.Message;
     }
 
-    private static async Task<(string Ip, string? Country, string? City)> LookupAsync(UpstreamProxy proxy,
+    private static async Task<(string Ip, string? Country, string? City, string? Region)> LookupAsync(UpstreamProxy proxy,
         CancellationToken cancellationToken)
     {
         var address = new Uri(proxy.ToUrl());

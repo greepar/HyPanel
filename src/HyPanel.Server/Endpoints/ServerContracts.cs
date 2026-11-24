@@ -40,7 +40,11 @@ internal sealed record AdminNodeObservationResponse(
     long TrafficUploadBytes = 0,
     long TrafficDownloadBytes = 0,
     int? TrafficResetDay = null,
-    DateTimeOffset? TrafficPeriodStart = null);
+    DateTimeOffset? TrafficPeriodStart = null,
+    string? DetectedCity = null,
+    string? CityOverride = null);
+
+internal sealed record SetNodeCityRequest(string? City);
 
 internal sealed record SetNodeTrafficResetDayRequest(int? Day);
 

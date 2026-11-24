@@ -17,6 +17,7 @@ internal static class AdminNodesEndpoints
         endpoints.MapPost("/api/admin/v1/agent-releases/check", CheckReleasesAsync);
         endpoints.MapDelete("/api/admin/v1/nodes/{nodeId:guid}", DeleteAsync);
         endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/name", RenameAsync);
+        endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/city", SetCityAsync);
         endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/traffic-reset-day", SetTrafficResetDayAsync);
         endpoints.MapPost("/api/admin/v1/nodes/{nodeId:guid}/traffic-reset", ResetTrafficAsync);
     }
@@ -48,6 +49,18 @@ internal static class AdminNodesEndpoints
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
         if (!TryNormalize(request.DisplayName, MaximumDisplayNameLength, out var displayName)) return Results.BadRequest();
         return await repository.RenameNodeAsync(nodeId, displayName, cancellationToken)
+            ? Results.NoContent() : Results.NotFound();
+    }
+
+    /// <summary>The city subscriptions show for the node, replacing what the IP lookup found; empty goes back to it.</summary>
+    private static async Task<IResult> SetCityAsync(Guid nodeId, SetNodeCityRequest request, HttpRequest httpRequest,
+        AdminAuthorization authorization, SqliteServerRepository repository, CancellationToken cancellationToken)
+    {
+        var access = await authorization.AuthorizeAsync(httpRequest, cancellationToken);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        var city = request.City?.Trim();
+        if (city is { Length: > 32 } || city?.Any(char.IsControl) == true) return Results.BadRequest();
+        return await repository.SetNodeCityAsync(nodeId, string.IsNullOrEmpty(city) ? null : city, cancellationToken)
             ? Results.NoContent() : Results.NotFound();
     }
 

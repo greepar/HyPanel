@@ -14,7 +14,7 @@ public sealed class PublicIpv4Resolver(HttpClient httpClient, TimeProvider timeP
 {
     private static readonly Uri LookupUri = new("https://4.qwq.lu/?detail", UriKind.Absolute);
 
-    protected override async Task<(string Ip, string? Country, string? City)> LookupAsync(CancellationToken cancellationToken)
+    protected override async Task<(string Ip, string? Country, string? City, string? Region)> LookupAsync(CancellationToken cancellationToken)
     {
         var result = await FetchAsync(httpClient, LookupUri, cancellationToken);
         return IPAddress.TryParse(result.Ip, out var address) && address.AddressFamily == AddressFamily.InterNetwork &&
@@ -49,7 +49,7 @@ public sealed class PublicIpv6Resolver : PublicIpResolver
         this.clientFor = clientFor;
     }
 
-    protected override async Task<(string Ip, string? Country, string? City)> LookupAsync(CancellationToken cancellationToken)
+    protected override async Task<(string Ip, string? Country, string? City, string? Region)> LookupAsync(CancellationToken cancellationToken)
     {
         foreach (var source in localAddresses().Where(IsGlobalUnicast).Take(MaximumCandidates))
         {
@@ -113,6 +113,7 @@ public abstract class PublicIpResolver(TimeProvider timeProvider, TimeSpan? forg
     private string? cached;
     private string? cachedCountry;
     private string? cachedCity;
+    private string? cachedRegion;
     private DateTimeOffset succeededAt;
 
     /// <summary>Country from the last successful lookup; call <see cref="GetAsync"/> first.</summary>
@@ -120,6 +121,12 @@ public abstract class PublicIpResolver(TimeProvider timeProvider, TimeSpan? forg
 
     /// <summary>City from the last successful lookup, in English as the lookup host names it.</summary>
     public string? City => cachedCity;
+
+    /// <summary>
+    /// Region (state, prefecture or province) from the last successful lookup. The lookup's city is sometimes a
+    /// district ("Asagaya-minami" for a Tokyo address), so the Panel falls back to the region for a known name.
+    /// </summary>
+    public string? Region => cachedRegion;
     private DateTimeOffset refreshAt;
 
     public async Task<string?> GetAsync(CancellationToken cancellationToken)
@@ -135,10 +142,11 @@ public abstract class PublicIpResolver(TimeProvider timeProvider, TimeSpan? forg
 
             try
             {
-                var (value, country, city) = await LookupAsync(cancellationToken);
+                var (value, country, city, region) = await LookupAsync(cancellationToken);
                 cached = value;
                 cachedCountry = country;
                 cachedCity = city;
+                cachedRegion = region;
                 succeededAt = now;
                 refreshAt = now + SuccessLifetime;
             }
@@ -146,7 +154,7 @@ public abstract class PublicIpResolver(TimeProvider timeProvider, TimeSpan? forg
                                                    OperationCanceledException && !cancellationToken.IsCancellationRequested)
             {
                 refreshAt = now + FailureLifetime;
-                if (forgetAfter is { } limit && now - succeededAt >= limit) cached = cachedCountry = cachedCity = null;
+                if (forgetAfter is { } limit && now - succeededAt >= limit) cached = cachedCountry = cachedCity = cachedRegion = null;
             }
 
             return cached;
@@ -158,9 +166,9 @@ public abstract class PublicIpResolver(TimeProvider timeProvider, TimeSpan? forg
     }
 
     /// <summary>The address and country seen by the lookup host; throws when it cannot be used.</summary>
-    protected abstract Task<(string Ip, string? Country, string? City)> LookupAsync(CancellationToken cancellationToken);
+    protected abstract Task<(string Ip, string? Country, string? City, string? Region)> LookupAsync(CancellationToken cancellationToken);
 
-    protected static async Task<(string Ip, string? Country, string? City)> FetchAsync(HttpClient client, Uri uri,
+    protected static async Task<(string Ip, string? Country, string? City, string? Region)> FetchAsync(HttpClient client, Uri uri,
         CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, uri);
@@ -183,7 +191,7 @@ public abstract class PublicIpResolver(TimeProvider timeProvider, TimeSpan? forg
     }
 
     /// <summary>Reads <c>{"ip":"…","country":"GB","city":"London",…}</c>; a missing or malformed country or city is ignored.</summary>
-    internal static (string Ip, string? Country, string? City) Parse(ReadOnlySpan<byte> body)
+    internal static (string Ip, string? Country, string? City, string? Region) Parse(ReadOnlySpan<byte> body)
     {
         var reader = new Utf8JsonReader(body);
         using var document = JsonDocument.ParseValue(ref reader);
@@ -194,10 +202,10 @@ public abstract class PublicIpResolver(TimeProvider timeProvider, TimeSpan? forg
         if (root.TryGetProperty("country", out var value) && value.ValueKind == JsonValueKind.String &&
             value.GetString() is { Length: 2 } code && char.IsAsciiLetter(code[0]) && char.IsAsciiLetter(code[1]))
             country = code.ToUpperInvariant();
-        string? city = null;
-        if (root.TryGetProperty("city", out var cityValue) && cityValue.ValueKind == JsonValueKind.String &&
-            cityValue.GetString()?.Trim() is { Length: > 0 and <= MaximumCityLength } name && !name.Any(char.IsControl))
-            city = name;
-        return (ip.GetString() ?? string.Empty, country, city);
+        string? Place(string property) =>
+            root.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String &&
+            value.GetString()?.Trim() is { Length: > 0 and <= MaximumCityLength } name && !name.Any(char.IsControl)
+                ? name : null;
+        return (ip.GetString() ?? string.Empty, country, Place("city"), Place("region"));
     }
 }

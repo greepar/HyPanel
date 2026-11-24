@@ -58,7 +58,9 @@ internal static class AdminObservationEndpoints
                 observation.TrafficUploadBytes,
                 observation.TrafficDownloadBytes,
                 observation.TrafficResetDay,
-                observation.TrafficPeriodStartUtc);
+                observation.TrafficPeriodStartUtc,
+                HyPanel.Server.Backends.SubscriptionNames.DisplayCity(null, observation.City, observation.Region),
+                observation.CityOverride);
         }
 
         return Results.Json(response, ServerJsonSerializerContext.Default.AdminNodeObservationResponseArray);
