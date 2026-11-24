@@ -425,6 +425,24 @@ public sealed class ReconciliationInfrastructureTests
     }
 
     [TestMethod]
+    public async Task ApplyAsync_SuccessfulUpdate_DropsTheRollbackCopy()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("This process assertion uses Unix test binaries.");
+        await using var fixture = await ReconcilerFixture.CreateAsync(dataDirectory, new FakeProvider());
+        var service = Service("update", "tcp");
+        Assert.IsTrue((await fixture.Reconciler.ApplyAsync(Desired(1, [service]), fixture.Credentials, CancellationToken.None)).Succeeded);
+
+        var updated = new NodeDesiredState(2, [service with { BackendVersion = "2.0.0" }],
+            [Artifact(ReconcilerFixture.ArtifactPayload) with { Version = "2.0.0" }]);
+        Assert.IsTrue((await fixture.Reconciler.ApplyAsync(updated, fixture.Credentials, CancellationToken.None)).Succeeded);
+
+        var directory = fixture.InstanceStore.GetInstanceDirectory(service.ServiceId);
+        Assert.IsFalse(Directory.Exists(Path.Combine(directory, "last-known-good")),
+            "the new version runs, so the copy kept for rolling back is removed");
+        Assert.AreEqual(1, Directory.GetFiles(directory, "*-config*").Length, "only the running config is left");
+    }
+
+    [TestMethod]
     public async Task ApplyAsync_RemovedService_StopsProcessAndDeletesManagedDirectory()
     {
         if (OperatingSystem.IsWindows())

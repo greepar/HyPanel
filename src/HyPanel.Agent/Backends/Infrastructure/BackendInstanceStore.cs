@@ -126,6 +126,16 @@ public sealed class BackendInstanceStore(AgentEnrollmentOptions options)
             if (!keep.Contains(Path.GetFileName(directory))) Directory.Delete(directory, recursive: true);
     }
 
+    /// <summary>
+    /// Removes the rollback copy once the new config is running and saved, and the TLS files only it referred to.
+    /// </summary>
+    public async Task DiscardLastKnownGoodAsync(Guid serviceId, CancellationToken cancellationToken)
+    {
+        var snapshot = Path.Combine(GetInstanceDirectory(serviceId), LastKnownGoodDirectory);
+        if (Directory.Exists(snapshot)) Directory.Delete(snapshot, recursive: true);
+        await PruneTlsAssetsAsync(serviceId, cancellationToken);
+    }
+
     public async Task SaveLastKnownGoodAsync(Guid serviceId, CancellationToken cancellationToken)
     {
         var directory = GetInstanceDirectory(serviceId);

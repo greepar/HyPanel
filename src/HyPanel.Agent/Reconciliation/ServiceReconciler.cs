@@ -169,6 +169,20 @@ public sealed class ServiceReconciler(
                         logger.LogWarning("Could not remove unused backend binaries: {Error}", exception.Message);
                     }
                 }
+                // The new configs run and the state is saved: their rollback copies and the certificates only those
+                // copies used are no longer needed.
+                foreach (var serviceId in appliedChanges.Distinct())
+                {
+                    try
+                    {
+                        await instanceStore.DiscardLastKnownGoodAsync(serviceId, cancellationToken);
+                    }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                    {
+                        logger.LogWarning("Could not remove the rollback copy of {ServiceId}: {Error}", serviceId,
+                            exception.Message);
+                    }
+                }
                 return failed
                     ? new ApplyResult(false, firstErrorCode ?? "apply_failed",
                         firstErrorMessage ?? SafeMessage(firstErrorCode ?? "apply_failed"))
