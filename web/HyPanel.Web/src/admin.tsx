@@ -790,6 +790,30 @@ function NodesPage({ api, setError }: PageProps) {
       setBusy(false);
     }
   };
+  /** Asks GitHub for a new Agent release now, then offers the update when this node is behind. */
+  const checkUpdate = async (node: Node) => {
+    setBusy(true);
+    try {
+      const result = await api.checkAgentRelease();
+      const next = await api.nodes();
+      setNodes(next);
+      const current = next.find((item) => item.id === node.id) ?? node;
+      if (current.agentUpdateStatus === "Available" || current.agentUpdateStatus === "Failed") {
+        if (confirm(`${node.displayName} 可更新到 ${current.latestAgentVersion}（当前 ${current.reportedVersion ?? "未知"}），现在更新吗？`))
+          await updateOne(current);
+      } else if (result.error) {
+        setError(`检查更新失败：${result.error}`);
+      } else if (current.agentUpdateStatus === "UpToDate" || current.agentUpdateStatus === "Succeeded") {
+        setError(`${node.displayName} 已是最新版本 ${current.reportedVersion ?? result.latestVersion ?? ""}。`);
+      } else {
+        setError(`${node.displayName} 正在更新中。`);
+      }
+    } catch (reason) {
+      setError(messageFor(reason, "无法检查更新"));
+    } finally {
+      setBusy(false);
+    }
+  };
   const updateOne = async (node: Node) => {
     setBusy(true);
     try {
@@ -939,6 +963,11 @@ function NodesPage({ api, setError }: PageProps) {
                           onClick={() => void check(node)}
                         >
                           健康检查
+                        </button>
+                      )}
+                      {node.agentId && node.agentUpdateStatus !== "Available" && node.agentUpdateStatus !== "Failed" && (
+                        <button type="button" disabled={busy} onClick={() => void checkUpdate(node)}>
+                          检查更新
                         </button>
                       )}
                       {(node.agentUpdateStatus === "Available" ||

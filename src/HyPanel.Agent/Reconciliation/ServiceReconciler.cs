@@ -266,12 +266,12 @@ public sealed class ServiceReconciler(
                             : process.Status;
                     // A new config blocked by a taken port leaves the old instance running; keep saying why until an
                     // apply succeeds.
-                    var errorCode = item.Value.ErrorCode is "backend_update_rolled_back" or "port_in_use"
+                    var errorCode = item.Value.ErrorCode is "backend_update_rolled_back" or "port_in_use" or "config_rejected"
                         ? item.Value.ErrorCode
                         : status == ServiceRuntimeStatus.Failed ? "health_check_failed" : null;
                     runtimeStates[item.Key] = State(item.Key, status, metadata.DesiredState.BackendVersion,
                         metadata.ConfigSha256, traffic, errorCode,
-                        errorCode == "port_in_use" ? item.Value.ErrorMessage : null);
+                        errorCode is "port_in_use" or "config_rejected" ? item.Value.ErrorMessage : null);
                     if (status == ServiceRuntimeStatus.Running &&
                         recoveryStates.TryGetValue(item.Key, out var recovery) &&
                         timeProvider.GetUtcNow() - recovery.StartedAt >= StableProcessWindow)
@@ -348,6 +348,9 @@ public sealed class ServiceReconciler(
         var running = processSupervisor.GetStatus(plan.Desired.ServiceId).Status == ServiceRuntimeStatus.Running;
         if (isChanged || !running)
             await EnsurePortsFreeAsync(plan.TcpPorts, plan.UdpPorts, running ? prior : null, cancellationToken);
+        // The new program checks the new config while the old instance still serves (e.g. switching Xray to Mihomo).
+        if (isChanged && plan.Provider is IConfigTestingBackend tester)
+            await TestConfigAsync(tester, plan, binaryPath, cancellationToken);
         if (isChanged && prior is not null)
         {
             await instanceStore.SaveLastKnownGoodAsync(plan.Desired.ServiceId, cancellationToken);
@@ -411,6 +414,26 @@ public sealed class ServiceReconciler(
         if (PortProbe.FindTaken(tcpPorts.Except(ownTcp), udpPorts.Except(ownUdp),
                 processSupervisor.RunningProcessIds()) is { } holder)
             throw new PortInUseException(holder);
+    }
+
+    private async Task TestConfigAsync(IConfigTestingBackend tester, ServicePlan plan, string binaryPath,
+        CancellationToken cancellationToken)
+    {
+        var directory = instanceStore.GetInstanceDirectory(plan.Desired.ServiceId);
+        Directory.CreateDirectory(directory);
+        var candidate = Path.Combine(directory, $".candidate-{Guid.NewGuid():N}-{plan.Config.FileName}");
+        try
+        {
+            await File.WriteAllBytesAsync(candidate, plan.Config.Content, cancellationToken);
+            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(candidate, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            var problem = await tester.TestConfigAsync(new BackendInstanceContext(plan.Desired, directory, binaryPath, candidate),
+                cancellationToken);
+            if (problem is not null) throw new ConfigRejectedException(problem);
+        }
+        finally
+        {
+            File.Delete(candidate);
+        }
     }
 
     private async Task RecoverProcessAsync(Guid serviceId, BackendInstanceMetadata metadata,
@@ -714,10 +737,13 @@ public sealed class ServiceReconciler(
                 ? "backend_restart_backoff"
             : exception is PortInUseException
                 ? "port_in_use"
+            : exception is ConfigRejectedException
+                ? "config_rejected"
             : "apply_failed";
 
     /// <summary>A message for the admin when the failure carries one of its own (which port, which program).</summary>
-    private static string? DetailMessage(Exception exception) => exception is PortInUseException ? exception.Message : null;
+    private static string? DetailMessage(Exception exception) =>
+        exception is PortInUseException or ConfigRejectedException ? exception.Message : null;
 
     private void SetFailed(Guid serviceId, string code, string? message = null)
     {
@@ -790,6 +816,7 @@ public sealed class ServiceReconciler(
         "unsupported_schema" => "The service configuration schema is not supported by this Agent.",
         "port_conflict" => "Another service on this node already uses one of this service's ports.",
         "port_in_use" => "Another program on the node already uses one of this service's ports.",
+        "config_rejected" => "The backend rejected the new configuration; the previous one keeps running.",
         "runtime_refresh_failed" => "Runtime status could not be refreshed.",
         "health_check_failed" => "Service health check failed.",
         "process_failed" => "Backend process is not running.",
@@ -812,6 +839,9 @@ public sealed class ServiceReconciler(
         DateTimeOffset StartedAt);
 
     private sealed class BackendBackoffException : InvalidOperationException;
+
+    /// <summary>The backend program rejected the new config in its test mode; the running instance was left alone.</summary>
+    private sealed class ConfigRejectedException(string message) : InvalidOperationException(message);
 
     /// <summary>Another program holds one of the service's ports; the message names it for the admin.</summary>
     private sealed class PortInUseException(PortHolder holder) : InvalidOperationException(holder.Describe());

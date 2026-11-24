@@ -33,7 +33,7 @@ internal readonly record struct XrayClientIdentity(Guid UserId, string Credentia
 /// per-user traffic. A protocol supplies only its config type, its validation and its inbound. To serve another
 /// protocol with Xray, derive from this class and register the provider.
 /// </summary>
-internal abstract class XrayEngineProvider<TConfig>(TimeProvider timeProvider) : IBackendProvider
+internal abstract class XrayEngineProvider<TConfig>(TimeProvider timeProvider) : IBackendProvider, IConfigTestingBackend
     where TConfig : class, IXrayServiceConfig
 {
     private const int MaximumStatsOutputBytes = 1024 * 1024;
@@ -139,6 +139,10 @@ internal abstract class XrayEngineProvider<TConfig>(TimeProvider timeProvider) :
         return ValueTask.FromResult(new BackendProcessSpec(instance.BinaryPath, ["run", "-c", instance.ConfigPath],
             instance.InstanceDirectory, new Dictionary<string, string>()));
     }
+
+    public ValueTask<string?> TestConfigAsync(BackendInstanceContext instance, CancellationToken cancellationToken) =>
+        Infrastructure.ConfigTest.RunAsync(instance.BinaryPath, ["run", "-test", "-c", instance.ConfigPath],
+            instance.InstanceDirectory, new Dictionary<string, string>(), cancellationToken);
 
     public ValueTask<BackendHealthResult> CheckHealthAsync(BackendInstanceContext instance,
         CancellationToken cancellationToken)

@@ -21,7 +21,7 @@ internal readonly record struct MihomoIdentity(Guid UserId, string Credential, s
 /// The config is written as JSON, which Mihomo reads as YAML.
 /// </summary>
 internal abstract class MihomoEngineProvider<TConfig>(HttpClient? httpClient, TimeProvider timeProvider)
-    : IBackendProvider where TConfig : class, IMihomoServiceConfig
+    : IBackendProvider, IConfigTestingBackend where TConfig : class, IMihomoServiceConfig
 {
     private const int MaximumUsers = 256;
     private const int MaximumApiResponseBytes = 8 * 1024 * 1024;
@@ -144,6 +144,14 @@ internal abstract class MihomoEngineProvider<TConfig>(HttpClient? httpClient, Ti
         if (extra.Length > 0) environment["SAFE_PATHS"] = string.Join(Path.PathSeparator, extra);
         return ValueTask.FromResult(new BackendProcessSpec(instance.BinaryPath,
             ["-d", instance.InstanceDirectory, "-f", instance.ConfigPath], instance.InstanceDirectory, environment));
+    }
+
+    public async ValueTask<string?> TestConfigAsync(BackendInstanceContext instance, CancellationToken cancellationToken)
+    {
+        // Same directory and SAFE_PATHS as the real run, so certificate paths are judged the same way.
+        var spec = await CreateProcessSpecAsync(instance, cancellationToken);
+        return await Infrastructure.ConfigTest.RunAsync(instance.BinaryPath, ["-t", .. spec.Arguments],
+            instance.InstanceDirectory, spec.Environment, cancellationToken);
     }
 
     public ValueTask<BackendHealthResult> CheckHealthAsync(BackendInstanceContext instance,

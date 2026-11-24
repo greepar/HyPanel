@@ -1,0 +1,1 @@
+{"mode":"rule","listeners":[{"name":"x","type":"vless","listen":"127.0.0.1","port":24999,"users":[{"username":"a","uuid":"not-a-uuid"}],"reality-config":{"dest":"a.com:443","private-key":"bad","short-id":["01"],"server-names":["a.com"]}}],"rules":["MATCH,DIRECT"]}

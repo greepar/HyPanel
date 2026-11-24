@@ -437,6 +437,28 @@ public sealed class ReconciliationInfrastructureTests
     }
 
     [TestMethod]
+    public async Task ApplyAsync_ConfigTheProgramRejects_LeavesTheRunningInstanceUntouched()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("This process assertion uses Unix test binaries.");
+        await using var fixture = await ReconcilerFixture.CreateAsync(dataDirectory, new FakeProvider());
+        var service = Service("switch", "tcp");
+        Assert.IsTrue((await fixture.Reconciler.ApplyAsync(Desired(1, [service]), fixture.Credentials, CancellationToken.None)).Succeeded);
+        var processId = fixture.Supervisor.GetStatus(service.ServiceId).ProcessId;
+
+        var result = await fixture.Reconciler.ApplyAsync(Desired(2, [service with { ConfigJson = "rejected" }]),
+            fixture.Credentials, CancellationToken.None);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(processId, fixture.Supervisor.GetStatus(service.ServiceId).ProcessId, "never stopped");
+        Assert.AreEqual("tcp", (await fixture.InstanceStore.TryLoadAsync(service.ServiceId, CancellationToken.None))!
+            .DesiredState.ConfigJson);
+        var runtime = fixture.Reconciler.GetRuntimeStates().Single(item => item.ServiceId == service.ServiceId);
+        Assert.AreEqual("config_rejected", runtime.ErrorCode);
+        StringAssert.Contains(runtime.ErrorMessage, "bad key");
+        Assert.AreEqual(0, Directory.GetFiles(fixture.InstanceStore.GetInstanceDirectory(service.ServiceId), ".candidate-*").Length);
+    }
+
+    [TestMethod]
     public async Task ApplyAsync_SuccessfulUpdate_DropsTheRollbackCopy()
     {
         if (OperatingSystem.IsWindows()) Assert.Inconclusive("This process assertion uses Unix test binaries.");
@@ -574,8 +596,14 @@ public sealed class ReconciliationInfrastructureTests
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 
-    private sealed class FakeProvider : IBackendProvider
+    private sealed class FakeProvider : IBackendProvider, IConfigTestingBackend
     {
+        /// <summary>Configs containing "rejected" fail the program's own test, like <c>xray run -test</c> would.</summary>
+        public ValueTask<string?> TestConfigAsync(BackendInstanceContext instance, CancellationToken cancellationToken) =>
+            ValueTask.FromResult(File.ReadAllText(instance.ConfigPath).Contains("rejected", StringComparison.Ordinal)
+                ? "内核拒绝了新配置：bad key"
+                : null);
+
         public string BackendType => "fake";
         public BackendCapabilities Capabilities => BackendCapabilities.ConfigValidation;
 

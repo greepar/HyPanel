@@ -34,6 +34,17 @@ public interface IBackendProvider
 /// A backend whose services can listen on extra UDP ports that the Agent redirects to the listen port
 /// (see <see cref="Infrastructure.PortHoppingManager"/>).
 /// </summary>
+/// <summary>
+/// A backend whose program can check a config without serving it (<c>xray run -test</c>, <c>mihomo -t</c>). The Agent
+/// checks a new config with the new binary before the running instance is stopped, so a config the program rejects
+/// never takes the service down.
+/// </summary>
+public interface IConfigTestingBackend
+{
+    /// <summary>Null when the program accepts the config at <see cref="BackendInstanceContext.ConfigPath"/>; else why not.</summary>
+    ValueTask<string?> TestConfigAsync(BackendInstanceContext instance, CancellationToken cancellationToken);
+}
+
 public interface IPortHoppingBackend
 {
     /// <summary>The listen port and the hopping ports of a service config, or null when it has none.</summary>

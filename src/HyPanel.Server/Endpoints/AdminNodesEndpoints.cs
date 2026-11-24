@@ -14,6 +14,7 @@ internal static class AdminNodesEndpoints
         endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/agent-update-policy", SetUpdatePolicyAsync);
         endpoints.MapPost("/api/admin/v1/nodes/{nodeId:guid}/agent-update", RequestUpdateAsync);
         endpoints.MapPost("/api/admin/v1/nodes/agent-update", RequestBatchUpdateAsync);
+        endpoints.MapPost("/api/admin/v1/agent-releases/check", CheckReleasesAsync);
         endpoints.MapDelete("/api/admin/v1/nodes/{nodeId:guid}", DeleteAsync);
         endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/traffic-reset-day", SetTrafficResetDayAsync);
         endpoints.MapPost("/api/admin/v1/nodes/{nodeId:guid}/traffic-reset", ResetTrafficAsync);
@@ -55,6 +56,29 @@ internal static class AdminNodesEndpoints
         if (request.Policy is not ("Manual" or "Auto")) return Results.BadRequest();
         return await repository.SetAgentUpdatePolicyAsync(nodeId, request.Policy, cancellationToken)
             ? Results.NoContent() : Results.NotFound();
+    }
+
+    /// <summary>Looks for a new Agent release now instead of waiting for the next five-minute refresh.</summary>
+    private static async Task<IResult> CheckReleasesAsync(HttpRequest httpRequest, AdminAuthorization authorization,
+        ReleaseSyncWorker releaseSync, ReleaseCatalog catalog, ILoggerFactory loggers, CancellationToken cancellationToken)
+    {
+        var access = await authorization.AuthorizeAsync(httpRequest, cancellationToken);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        string? error = null;
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(60));
+            await releaseSync.RefreshAsync(timeout.Token);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            // The catalog keeps what it had; say why the check did not get through.
+            error = exception is OperationCanceledException ? "连接 GitHub 超时。" : exception.Message;
+            loggers.CreateLogger("ReleaseCheck").LogWarning(exception, "Agent release check failed.");
+        }
+        return Results.Json(new AgentReleaseCheckResponse(catalog.Manifest?.Version, error),
+            ServerJsonSerializerContext.Default.AgentReleaseCheckResponse);
     }
 
     private static async Task<IResult> RequestUpdateAsync(Guid nodeId, HttpRequest httpRequest,

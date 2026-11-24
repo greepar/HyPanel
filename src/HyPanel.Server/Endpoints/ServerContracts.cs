@@ -224,3 +224,6 @@ internal sealed record PreviousUsageEntryResponse(Guid ServiceId, string NodeNam
 
 /// <summary>The signed-in user's usage per node and service: this period, and the one their last reset closed.</summary>
 internal sealed record OwnUsageBreakdownResponse(PreviousUsageEntryResponse[] Current, PreviousUsagePeriodResponse? Previous);
+
+/// <summary>The newest Agent release the Panel knows after checking; <see cref="Error"/> when GitHub could not be reached.</summary>
+internal sealed record AgentReleaseCheckResponse(string? LatestVersion, string? Error);

@@ -45,6 +45,7 @@ export class ApiClient {
   installCommand = (nodeId: string, platform: InstallPlatform) => this.request<{ command: string }>(`/api/admin/v1/nodes/${nodeId}/install-command`, { method: 'POST', body: JSON.stringify({ platform }) })
   healthCheck = (agentId: string) => this.request<{ commandId: string }>(`/api/admin/v1/agents/${agentId}/commands/health-check`, { method: 'POST' })
   updateAgent = (nodeId: string) => this.request<{ updateId: string; version: string }>(`/api/admin/v1/nodes/${nodeId}/agent-update`, { method: 'POST' })
+  checkAgentRelease = () => this.request<{ latestVersion: string | null; error: string | null }>('/api/admin/v1/agent-releases/check', { method: 'POST' })
   updateAgents = (nodeIds: string[]) => this.request<{ version: string; updatedNodes: number }>('/api/admin/v1/nodes/agent-update', { method: 'POST', body: JSON.stringify({ nodeIds }) })
   setAgentUpdatePolicy = (nodeId: string, policy: 'Manual' | 'Auto') => this.request<void>(`/api/admin/v1/nodes/${nodeId}/agent-update-policy`, { method: 'PUT', body: JSON.stringify({ policy }) })
   setNodeTrafficResetDay = (nodeId: string, day: number | null) => this.request<void>(`/api/admin/v1/nodes/${nodeId}/traffic-reset-day`, { method: 'PUT', body: JSON.stringify({ day }) })
