@@ -360,6 +360,27 @@ public sealed class ReconciliationInfrastructureTests
     }
 
     [TestMethod]
+    public async Task ApplyAsync_TakenPort_KeepsItsReasonWhileBackingOff()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("This process assertion uses Unix test binaries.");
+        // Something else (nginx, say) holds the service's port.
+        using var occupant = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Any, 32100);
+        occupant.Start();
+        await using var fixture = await ReconcilerFixture.CreateAsync(dataDirectory, new FakeProvider());
+        var service = Service("blocked", "tcp");
+
+        Assert.IsFalse((await fixture.Reconciler.ApplyAsync(Desired(1, [service]), fixture.Credentials,
+            CancellationToken.None)).Succeeded);
+        Assert.IsFalse((await fixture.Reconciler.ApplyAsync(Desired(1, [service]), fixture.Credentials,
+            CancellationToken.None)).Succeeded);
+        var runtime = fixture.Reconciler.GetRuntimeStates().Single(item => item.ServiceId == service.ServiceId);
+
+        Assert.AreEqual(ServiceRuntimeStatus.Backoff, runtime.Status);
+        Assert.AreEqual("port_in_use", runtime.ErrorCode, "waiting to retry does not hide why it failed");
+        StringAssert.Contains(runtime.ErrorMessage, "32100");
+    }
+
+    [TestMethod]
     public async Task ApplyAsync_InvalidSecondRevision_PreservesPreviousRevisionAndDesiredState()
     {
         if (OperatingSystem.IsWindows())

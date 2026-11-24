@@ -593,6 +593,7 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 .badge-applying .pending-dot, .live-status .pending-dot { width: 7px; height: 7px; border: 0; background: currentColor; animation: breathe 1.4s ease-in-out infinite }
 .service-card.applying { border-color: color-mix(in srgb, var(--info) 40%, var(--border)) }
 .live-status { display: inline-flex; align-items: center; gap: 7px; color: var(--info) !important }
+.live-status.live-status-error { color: var(--danger) !important }
 @keyframes breathe { 0%, 100% { opacity: .35; transform: scale(.8) } 50% { opacity: 1; transform: scale(1) } }
 
 /* ---------- live log console ---------- */

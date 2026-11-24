@@ -317,8 +317,13 @@ public sealed class ServiceReconciler(
             && blocked.Key == recoveryKey && timeProvider.GetUtcNow() < blocked.NextAttemptAt
             && (isChanged || processSupervisor.GetStatus(plan.Desired.ServiceId).Status != ServiceRuntimeStatus.Running))
         {
+            // Waiting to retry says nothing new: keep the reason the last attempt failed (a taken port, a rejected
+            // config) so the admin sees what to fix instead of only "retrying later".
+            var last = runtimeStates.TryGetValue(plan.Desired.ServiceId, out var current) ? current : null;
+            var known = last?.ErrorCode is "port_in_use" or "config_rejected";
             runtimeStates[plan.Desired.ServiceId] = State(plan.Desired.ServiceId, ServiceRuntimeStatus.Backoff,
-                plan.Desired.BackendVersion, prior?.ConfigSha256, null, "backend_restart_backoff");
+                plan.Desired.BackendVersion, prior?.ConfigSha256, null,
+                known ? last!.ErrorCode : "backend_restart_backoff", known ? last!.ErrorMessage : null);
             throw new BackendBackoffException();
         }
 

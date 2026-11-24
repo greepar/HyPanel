@@ -2008,6 +2008,9 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
   // Services touched since the node last caught up: their badge says 下发中 until the Agent applies the revision.
   const [touched, setTouched] = useState<{ ids: Set<string>; revision: number } | null>(null);
   const applyingNode = node.online && node.appliedRevision !== null && node.appliedRevision < node.desiredRevision;
+  // The Agent only counts a revision applied when every service runs, so one service that cannot start (a taken
+  // port, say) keeps the node "applying" while the others already run their new config. Name that service instead.
+  const failing = services.filter((service) => service.enabled && (service.runtime?.status === 6 || service.runtime?.status === 9));
   useEffect(() => {
     if (touched && node.appliedRevision !== null && node.appliedRevision >= touched.revision) setTouched(null);
   }, [node.appliedRevision, touched]);
@@ -2141,7 +2144,11 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
       <div className="section-toolbar">
         <div>
           <strong>{services.length} 个服务实例</strong>
-          {applyingNode ? (
+          {applyingNode && failing.length > 0 ? (
+            <span className="live-status live-status-error" role="status">
+              {failing.map((service) => `“${service.name}”`).join("、")} 没能启动，其他服务已按新配置运行。按下方的错误说明修改后再保存。
+            </span>
+          ) : applyingNode ? (
             <span className="live-status" role="status"><i className="pending-dot" />正在下发配置到节点，完成后状态会自动更新</span>
           ) : (
             <span>服务只在当前节点范围内管理。</span>
@@ -2171,7 +2178,7 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
                 edit={() => setEditor({ service })}
                 remove={() => void remove(service)}
                 enabled={(value) => void enabled(service, value)}
-                applying={applyingNode && !!touched?.ids.has(service.id)}
+                applying={applyingNode && !!touched?.ids.has(service.id) && !failing.includes(service)}
               />
             ))}
           </div>
@@ -2279,8 +2286,11 @@ function ServiceCard({
       )}
       {service.runtime?.errorMessage && (
         <div className="service-error">
-          <strong>运行错误</strong>
-          <span>{service.runtime.errorMessage}</span>
+          <strong>{service.runtime.errorCode === "port_in_use" ? "端口被占用" : "运行错误"}</strong>
+          <span>
+            {service.runtime.errorMessage}
+            {service.runtime.status === 9 && "。节点会自动重试，改好配置保存后立即生效。"}
+          </span>
         </div>
       )}
     </article>
