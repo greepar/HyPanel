@@ -471,18 +471,22 @@ public sealed class ReconciliationInfrastructureTests
     {
         using var client = new HttpClient();
         var manager = await CreateBinaryManagerAsync(client);
-        var root = Path.Combine(dataDirectory, "backends", "hysteria2");
-        string Binary(string version, string name)
+        var root = Path.Combine(dataDirectory, "backends");
+        string Binary(string name)
         {
-            var directory = Path.Combine(root, version, "linux-x64");
+            var directory = Path.Combine(root, name);
             Directory.CreateDirectory(directory);
             var path = Path.Combine(directory, name);
             File.WriteAllText(path, name);
             return path;
         }
-        var standard = Binary("2.12.3", "hysteria2-2.12.3-linux-x64");
-        var avx = Binary("2.12.3", "hysteria2-2.12.3-linux-x64-avx");
-        var older = Binary("2.12.2", "hysteria2-2.12.2-linux-x64");
+        var standard = Binary("hysteria2-2.12.3-linux-x64");
+        var avx = Binary("hysteria2-2.12.3-linux-x64-avx");
+        var older = Binary("hysteria2-2.12.2-linux-x64");
+        // The layout of Agents before 0.5.38, one copy per backend type: removed as well.
+        var legacyDirectory = Path.Combine(root, "xray-hysteria2", "26.11.9", "linux-x64");
+        Directory.CreateDirectory(legacyDirectory);
+        File.WriteAllText(Path.Combine(legacyDirectory, "xray-26.11.9-linux-x64"), "legacy");
 
         await manager.PruneUnusedAsync(
             [new BackendArtifact("hysteria2", "2.12.3", "linux-x64", "hysteria2-2.12.3-linux-x64-avx", new string('0', 64), 1, true)],
@@ -491,7 +495,30 @@ public sealed class ReconciliationInfrastructureTests
         Assert.IsTrue(File.Exists(avx));
         Assert.IsFalse(File.Exists(standard));
         Assert.IsFalse(File.Exists(older));
-        Assert.IsFalse(Directory.Exists(Path.Combine(root, "2.12.2")));
+        Assert.IsFalse(Directory.Exists(Path.GetDirectoryName(older)));
+        Assert.IsFalse(Directory.Exists(Path.Combine(root, "xray-hysteria2")));
+    }
+
+    [TestMethod]
+    public async Task EnsureAsync_BackendsOfOneEngineShareOneCopyAndReuseALegacyOne()
+    {
+        // No Panel is reachable: every binary must come from what is already on disk.
+        using var client = new HttpClient();
+        var manager = await CreateBinaryManagerAsync(client);
+        var payload = "xray-binary"u8.ToArray();
+        var sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(payload)).ToLowerInvariant();
+        var legacy = Path.Combine(dataDirectory, "backends", "xray", "26.11.9", manager.CurrentRid);
+        Directory.CreateDirectory(legacy);
+        File.WriteAllBytes(Path.Combine(legacy, "xray-26.11.9-test"), payload);
+        BackendArtifact For(string backendType) =>
+            new(backendType, "26.11.9", manager.CurrentRid, "xray-26.11.9-test", sha, payload.Length);
+
+        var reality = await manager.EnsureAsync(For("xray"), CancellationToken.None);
+        var hysteria = await manager.EnsureAsync(For("xray-hysteria2"), CancellationToken.None);
+
+        Assert.AreEqual(reality, hysteria, "one engine, one file");
+        Assert.AreEqual(Path.Combine(dataDirectory, "backends", "xray-26.11.9-test", "xray-26.11.9-test"), reality);
+        CollectionAssert.AreEqual(payload, File.ReadAllBytes(reality));
     }
 
     private async Task<BackendBinaryManager> CreateBinaryManagerAsync(HttpClient client, Guid? agentId = null)

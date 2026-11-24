@@ -26,8 +26,8 @@ public sealed class BackendBinaryManager(
     {
         var root = Path.Combine(options.DataDirectory, "backends");
         if (!Directory.Exists(root)) return;
-        var kept = keep.Select(artifact => Path.GetFullPath(Path.Combine(root, artifact.BackendType, artifact.Version,
-            artifact.Rid, artifact.FileName))).ToHashSet(StringComparer.Ordinal);
+        var kept = keep.Select(artifact => Path.GetFullPath(Path.Combine(root, BinaryFolder(artifact), artifact.FileName)))
+            .ToHashSet(StringComparer.Ordinal);
         await DownloadLock.WaitAsync(cancellationToken);
         try
         {
@@ -68,7 +68,8 @@ public sealed class BackendBinaryManager(
         CancellationToken cancellationToken)
     {
         ValidateArtifact(artifact);
-        var destinationDirectory = Path.Combine(options.DataDirectory, directoryName, artifact.BackendType, artifact.Version, artifact.Rid);
+        var root = Path.Combine(options.DataDirectory, directoryName);
+        var destinationDirectory = Path.Combine(root, BinaryFolder(artifact));
         var destination = EnsureChildPath(destinationDirectory, artifact.FileName);
         Directory.CreateDirectory(destinationDirectory);
 
@@ -78,6 +79,27 @@ public sealed class BackendBinaryManager(
             if (await IsExpectedFileAsync(destination, artifact, cancellationToken))
             {
                 SetExecutable(destination);
+                return destination;
+            }
+
+            // Agents before 0.5.38 kept a copy per backend type (backends/<type>/<version>/<rid>/<file>); reuse one.
+            foreach (var legacy in Directory.Exists(root)
+                         ? Directory.EnumerateFiles(root, artifact.FileName, SearchOption.AllDirectories)
+                         : [])
+            {
+                if (Path.GetFullPath(legacy) == destination || !await IsExpectedFileAsync(legacy, artifact, cancellationToken))
+                    continue;
+                var copy = EnsureChildPath(destinationDirectory, $".{artifact.FileName}.{Guid.NewGuid():N}.tmp");
+                try
+                {
+                    File.Copy(legacy, copy);
+                    SetExecutable(copy);
+                    File.Move(copy, destination, overwrite: true);
+                }
+                finally
+                {
+                    if (File.Exists(copy)) File.Delete(copy);
+                }
                 return destination;
             }
 
@@ -131,6 +153,13 @@ public sealed class BackendBinaryManager(
             DownloadLock.Release();
         }
     }
+
+    /// <summary>
+    /// One folder per released file. The file name already names the engine, version, platform and build variant, so
+    /// backends sharing an engine (Xray REALITY and Hysteria 2 on Xray, every Mihomo protocol) share one copy.
+    /// </summary>
+    // The whole name: versions contain dots, so dropping an "extension" would merge different versions.
+    private static string BinaryFolder(BackendArtifact artifact) => artifact.FileName;
 
     private async Task<bool> IsExpectedFileAsync(string path, BackendArtifact artifact, CancellationToken cancellationToken)
     {
