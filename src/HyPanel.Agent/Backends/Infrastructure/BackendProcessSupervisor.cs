@@ -89,6 +89,13 @@ public sealed class BackendProcessSupervisor(ILogger<BackendProcessSupervisor> l
         }
     }
 
+    /// <summary>Drops a deleted service's record and log buffer; call after it was stopped.</summary>
+    public void Forget(Guid serviceId)
+    {
+        if (processes.TryGetValue(serviceId, out var managed) && managed.Process is { HasExited: false }) return;
+        processes.TryRemove(serviceId, out _);
+    }
+
     public async Task<BackendProcessStatus> StopAsync(Guid serviceId, TimeSpan timeout,
         CancellationToken cancellationToken)
     {

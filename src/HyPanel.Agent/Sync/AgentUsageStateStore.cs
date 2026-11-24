@@ -108,6 +108,27 @@ public sealed class AgentUsageStateStore(AgentEnrollmentOptions options)
         }
     }
 
+    /// <summary>
+    /// Forgets the last counters of service/user pairs no longer in the desired state. Pending batches stay until the
+    /// Panel acknowledges them, so no usage is lost.
+    /// </summary>
+    public async Task RetainCountersAsync(IReadOnlySet<(Guid ServiceId, Guid UserId)> keep, CancellationToken cancellationToken)
+    {
+        await EnsureLoadedAsync(cancellationToken);
+        await stateGate.WaitAsync(cancellationToken);
+        try
+        {
+            var kept = lastObserved.Where(item => keep.Contains((item.ServiceId, item.UserId))).ToArray();
+            if (kept.Length == lastObserved.Count) return;
+            await PersistAsync(new AgentUsageStoreState(pendingBatches, kept), cancellationToken);
+            lock (snapshotLock) lastObserved = kept;
+        }
+        finally
+        {
+            stateGate.Release();
+        }
+    }
+
     public async Task EnsureBaselinesAsync(Guid serviceId, IReadOnlyList<BackendUser>? users,
         CancellationToken cancellationToken)
     {

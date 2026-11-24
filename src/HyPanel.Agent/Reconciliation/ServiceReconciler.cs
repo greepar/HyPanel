@@ -95,8 +95,10 @@ public sealed class ServiceReconciler(
                                 throw new InvalidOperationException("A removed backend process could not be stopped.");
                             instanceStore.Delete(removed.ServiceId);
                             recoveryStates.TryRemove(removed.ServiceId, out _);
-                            runtimeStates[removed.ServiceId] = State(removed.ServiceId, ServiceRuntimeStatus.Stopped,
-                                removed.BackendVersion, null, null, null);
+                            // Nothing is left of a deleted service: no state to report, no logs kept in memory.
+                            runtimeStates.TryRemove(removed.ServiceId, out _);
+                            reportedFailures.TryRemove(removed.ServiceId, out _);
+                            processSupervisor.Forget(removed.ServiceId);
                         }
                         catch (Exception exception) when (IsExpectedFailure(exception))
                         {
@@ -153,6 +155,10 @@ public sealed class ServiceReconciler(
                 {
                     await stateStore.SaveAsync(new AgentLocalState(desiredState.Revision,
                         WithoutTlsMaterial(desiredState)), cancellationToken);
+                    // Counters of deleted services and revoked users are no longer needed to compute deltas.
+                    await usageStateStore.RetainCountersAsync(desiredState.Services
+                        .SelectMany(service => (service.Users ?? []).Select(user => (service.ServiceId, user.UserId)))
+                        .ToHashSet(), cancellationToken);
                     // Only after a fully applied state: a failed apply may still roll back to an older binary.
                     try
                     {

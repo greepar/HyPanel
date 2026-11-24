@@ -211,6 +211,27 @@ public sealed class AgentUsageStateStoreTests
     }
 
     [TestMethod]
+    public async Task RetainCountersAsync_DropsDeletedServicesButKeepsUnsentUsage()
+    {
+        var kept = Guid.NewGuid();
+        var deleted = Guid.NewGuid();
+        var user = Guid.NewGuid();
+        var observedAt = DateTimeOffset.Parse("2026-09-10T12:34:56+00:00");
+        var store = CreateStore();
+        await store.LoadAsync(CancellationToken.None);
+        await store.RecordCumulativeAsync(kept, [new BackendUserTraffic(user, 10, 10, observedAt)], CancellationToken.None);
+        await store.RecordCumulativeAsync(deleted, [new BackendUserTraffic(user, 10, 10, observedAt)], CancellationToken.None);
+        await store.RecordCumulativeAsync(deleted, [new BackendUserTraffic(user, 50, 50, observedAt.AddSeconds(8))], CancellationToken.None);
+
+        await store.RetainCountersAsync(new HashSet<(Guid, Guid)> { (kept, user) }, CancellationToken.None);
+
+        var reloaded = await CreateStore().LoadAsync(CancellationToken.None);
+        Assert.AreEqual(kept, reloaded.LastObserved!.Single().ServiceId);
+        Assert.AreEqual(deleted, reloaded.PendingBatches.Single().Records.Single().ServiceId,
+            "usage the Panel has not acknowledged is still sent");
+    }
+
+    [TestMethod]
     public async Task EnsureBaselinesAsync_CapturesFirstObservationAndDoesNotResetExistingCounter()
     {
         var serviceId = Guid.NewGuid();
