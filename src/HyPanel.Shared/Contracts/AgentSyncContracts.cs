@@ -16,7 +16,9 @@ public sealed record AgentSyncRequest(
     string? PublicIpv6 = null,
     Guid? LogStreamId = null,
     IReadOnlyList<ServiceLogChunk>? ServiceLogs = null,
-    IReadOnlyList<AcmeChallengeReport>? AcmeChallenges = null);
+    IReadOnlyList<AcmeChallengeReport>? AcmeChallenges = null,
+    string? City = null,
+    IReadOnlyList<ProxyTestReport>? ProxyTests = null);
 
 public sealed record AgentSyncResponse(
     long DesiredRevision,
@@ -28,7 +30,22 @@ public sealed record AgentSyncResponse(
     string? PanelUrl = null,
     IReadOnlyList<PortRelayRule>? Relays = null,
     IReadOnlyList<ServiceLogCursor>? LogCursors = null,
-    IReadOnlyList<AcmeChallengeAssignment>? AcmeChallenges = null);
+    IReadOnlyList<AcmeChallengeAssignment>? AcmeChallenges = null,
+    IReadOnlyList<ProxyTestRequest>? ProxyTests = null);
+
+/// <summary>
+/// An upstream proxy the admin wants checked from this node before saving it: the Agent looks up its own address
+/// through the proxy. The list is the full set of tests still waiting for a report.
+/// </summary>
+public sealed record ProxyTestRequest(Guid TestId, string Type, string Host, int Port, string? Username,
+    string? Password);
+
+/// <summary>
+/// The outcome of a proxy test: the address, country and city the lookup host saw through the proxy and how long it
+/// took, or why it failed.
+/// </summary>
+public sealed record ProxyTestReport(Guid TestId, bool Succeeded, string? Ip, string? CountryCode, string? City,
+    int? LatencyMs, string? Error);
 
 /// <summary>
 /// An ACME challenge the Panel is answering for a certificate it obtains, which the Agent proves on the Panel's behalf:

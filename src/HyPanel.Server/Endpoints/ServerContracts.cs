@@ -6,6 +6,14 @@ internal sealed record ApiErrorResponse(string Error);
 
 internal sealed record CreateNodeRequest(string DisplayName);
 
+internal sealed record ProxyTestStartRequest(string? Type, string? Host, int? Port, string? Username, string? Password);
+
+internal sealed record ProxyTestStartResponse(Guid Id);
+
+/// <summary>A proxy test: <see cref="Done"/> once the node answered, then the outcome.</summary>
+internal sealed record ProxyTestStatusResponse(bool Done, bool Succeeded, string? Ip, string? CountryCode, string? City,
+    int? LatencyMs, string? Error);
+
 internal sealed record CreateNodeResponse(Guid Id, string DisplayName, DateTimeOffset CreatedAtUtc);
 
 internal sealed record CreateEnrollmentTokenResponse(string Token, DateTimeOffset ExpiresAtUtc);

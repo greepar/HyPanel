@@ -51,6 +51,9 @@ internal abstract class ServiceProtocol
     /// <summary>Stable protocol id, e.g. <c>hysteria2</c> or <c>vless-reality</c>.</summary>
     public abstract string Id { get; }
 
+    /// <summary>The protocol as subscription names show it, e.g. "Hy2" or "VLESS".</summary>
+    public abstract string ShortName { get; }
+
     public abstract ListenTransport Transport { get; }
 
     /// <summary>

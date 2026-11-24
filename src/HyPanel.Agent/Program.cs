@@ -45,6 +45,7 @@ public static class Program
         builder.Services.AddSingleton<PublicIpv4Resolver>();
         builder.Services.AddSingleton<PublicIpv6Resolver>();
         builder.Services.AddSingleton<UpstreamExitCountryProbe>();
+        builder.Services.AddSingleton<ProxyTester>();
         builder.Services.AddSingleton<IBackendProvider, Hysteria2Provider>();
         builder.Services.AddSingleton<IBackendProvider, XrayProvider>();
         builder.Services.AddSingleton<IBackendProvider, XrayHysteria2Provider>();

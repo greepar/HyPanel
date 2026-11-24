@@ -12,6 +12,8 @@ internal sealed class Hysteria2Protocol : ServiceProtocol
 
     public override string Id => "hysteria2";
 
+    public override string ShortName => "Hy2";
+
     public override ListenTransport Transport => ListenTransport.Udp;
 
     /// <summary>The userpass name of a user; every Hysteria2 engine authenticates users by this name.</summary>
@@ -64,6 +66,8 @@ internal sealed class VlessRealityProtocol : ServiceProtocol
 
     public override string Id => "vless-reality";
 
+    public override string ShortName => "VLESS";
+
     public override ListenTransport Transport => ListenTransport.Tcp;
 
     public override SubscriptionProxy? Project(SubscriptionServiceRecord service, JsonElement config, string name,
@@ -113,6 +117,8 @@ internal sealed class AnyTlsProtocol : ServiceProtocol
 
     public override string Id => "anytls";
 
+    public override string ShortName => "AnyTLS";
+
     public override ListenTransport Transport => ListenTransport.Tcp;
 
     public override SubscriptionProxy Project(SubscriptionServiceRecord service, JsonElement config, string name,
@@ -154,6 +160,8 @@ internal sealed class Shadowsocks2022Protocol : ServiceProtocol
     public static Shadowsocks2022Protocol Instance { get; } = new();
 
     public override string Id => "shadowsocks-2022";
+
+    public override string ShortName => "SS";
 
     public override ListenTransport Transport => ListenTransport.Tcp | ListenTransport.Udp;
 

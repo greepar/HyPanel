@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ChevronRight, Plus, Trash2, Upload } from "lucide-preact";
-import { ApiError, type ApiClient, type InstallPlatform } from "./api";
+import { ApiError, type ApiClient, type InstallPlatform, type ProxyTestStatus } from "./api";
 import { useAutoRefresh, readCache, writeCache, dropCache, setLiveClient } from "./hooks";
 import { LiveLogPanel } from "./logs";
 import { OwnSubscription } from "./subscription";
@@ -271,8 +271,9 @@ function SubscriptionTemplatePanel({ api, setError }: PageProps) {
         </div>
       </div>
       <p className="field-help">
-        标准 Mihomo YAML。<code>proxies: ~</code> 这一行会被替换成用户可用的节点；策略组里的 <code>- __ALL_PROXIES__</code> 会展开为全部节点名；
-        也可以用 Mihomo 自带的 <code>include-all: true</code> + <code>filter: "正则"</code> 按节点名自动归组（节点名格式为“节点 · 服务”）。
+        标准 Mihomo YAML。<code>proxies: ~</code> 这一行会被替换成用户可用的节点；策略组里的 <code>- __ALL_PROXIES__</code> 会展开为全部节点名，
+        <code>- __DIRECT_PROXIES__</code>、<code>- __DIRECT_V6_PROXIES__</code>、<code>- __RELAY_PROXIES__</code> 分别展开为直连、直连 IPv6 和经代理出去的节点；
+        也可以用 Mihomo 自带的 <code>include-all: true</code> + <code>filter: "正则"</code> 按节点名自动归组（节点名格式见文档，例如“🇯🇵 东京 · 搬瓦工 Hy2”“🇺🇸 洛杉矶 · DMIT -&gt; 🇫🇷 WS130”）。
       </p>
       <textarea className="template-editor" spellcheck={false} value={draft} onInput={(event) => setDraft(event.currentTarget.value)} />
     </section>
@@ -1689,6 +1690,20 @@ function NodeSettings({
   reload: () => void;
 }) {
   const [deleting, setDeleting] = useState(false);
+  const [name, setName] = useState(node.displayName);
+  useEffect(() => setName(node.displayName), [node.displayName]);
+  const rename = async (event: Event) => {
+    event.preventDefault();
+    const value = name.trim();
+    if (!value || value === node.displayName) return;
+    try {
+      await api.renameNode(node.id, value);
+      setError(`节点已改名为“${value}”，用户更新订阅后生效。`);
+      reload();
+    } catch (reason) {
+      setError(messageFor(reason, "无法修改节点名称"));
+    }
+  };
   const check = async () => {
     if (!node.agentId) return;
     try {
@@ -1751,6 +1766,18 @@ function NodeSettings({
     node.agentUpdateStatus === "Failed";
   return (
     <div className="detail-grid">
+      <section className="card panel">
+        <SectionTitle title="名称" description="订阅里显示在国旗和城市后面，适合填厂商名，例如“搬瓦工”或“DMIT”。" />
+        <form className="modal-form" onSubmit={(event) => void rename(event)}>
+          <label>
+            节点名称
+            <input value={name} maxLength={128} onInput={(event) => setName(event.currentTarget.value)} />
+          </label>
+          <button className="button button-primary" type="submit" disabled={!name.trim() || name.trim() === node.displayName}>
+            保存名称
+          </button>
+        </form>
+      </section>
       <section className="card panel">
         <SectionTitle
           title="流量统计"
@@ -2656,7 +2683,7 @@ function ServiceEditor({
                 </span>
                 <ExitPicker value={defaultExit} onChange={setDefaultExit} />
               </div>
-              <ExitFields value={defaultExit} onChange={setDefaultExit} reveal={revealSecrets} />
+              <ExitFields value={defaultExit} onChange={setDefaultExit} reveal={revealSecrets} api={api} nodeId={nodeId} />
             </li>
             {form.routes.map((route) => (
               <li className="route-item" key={route.id}>
@@ -2679,7 +2706,7 @@ function ServiceEditor({
                     <Trash2 size={15} />
                   </button>
                 </div>
-                <ExitFields value={route.exit} onChange={(exit) => setRoute(route.id, { exit })} reveal={revealSecrets} />
+                <ExitFields value={route.exit} onChange={(exit) => setRoute(route.id, { exit })} reveal={revealSecrets} api={api} nodeId={nodeId} />
               </li>
             ))}
           </ol>
@@ -2795,7 +2822,13 @@ function ExitPicker({ value, onChange }: { value: ExitForm; onChange: (value: Ex
 }
 
 /** Proxy address and credentials, shown only when the line leaves through a proxy. */
-function ExitFields({ value, onChange, reveal }: { value: ExitForm; onChange: (value: ExitForm) => void; reveal: () => Promise<boolean> }) {
+function ExitFields({ value, onChange, reveal, api, nodeId }: {
+  value: ExitForm;
+  onChange: (value: ExitForm) => void;
+  reveal: () => Promise<boolean>;
+  api: ApiClient;
+  nodeId: string;
+}) {
   if (!value.type) return null;
   return (
     <div className="exit-fields">
@@ -2818,6 +2851,63 @@ function ExitFields({ value, onChange, reveal }: { value: ExitForm; onChange: (v
         密码
         <PasswordInput value={value.password} placeholder="可选" onValue={(password) => onChange({ ...value, password })} beforeReveal={reveal} />
       </label>
+      <ProxyCheck api={api} nodeId={nodeId} value={value} />
+    </div>
+  );
+}
+
+/** Checks the proxy from the node itself: whether it works, and the IP, country and city traffic leaves from. */
+function ProxyCheck({ api, nodeId, value }: { api: ApiClient; nodeId: string; value: ExitForm }) {
+  type State = { kind: "idle" } | { kind: "running" } | { kind: "done"; result: ProxyTestStatus } | { kind: "error"; message: string };
+  const [state, setState] = useState<State>({ kind: "idle" });
+  const run = useRef(0);
+  const key = `${value.type}|${value.host}|${value.port}|${value.username}|${value.password}`;
+  // Edited fields make an earlier result stale.
+  useEffect(() => {
+    run.current++;
+    setState({ kind: "idle" });
+  }, [key]);
+  const ready = value.type && value.host.trim() && Number(value.port) >= 1 && Number(value.port) <= 65535;
+  const check = async () => {
+    const current = ++run.current;
+    setState({ kind: "running" });
+    try {
+      const { id } = await api.startProxyTest(nodeId, {
+        type: value.type, host: value.host.trim(), port: Number(value.port),
+        username: value.username || null, password: value.password || null,
+      });
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (run.current !== current) return;
+        const result = await api.proxyTest(nodeId, id);
+        if (result.done) {
+          if (run.current === current) setState({ kind: "done", result });
+          return;
+        }
+      }
+      if (run.current === current) setState({ kind: "error", message: "节点 30 秒内没有回报结果，可能不在线。" });
+    } catch (reason) {
+      if (run.current === current) setState({ kind: "error", message: messageFor(reason, "无法检测代理") });
+    }
+  };
+  return (
+    <div className="proxy-check">
+      <button className="button button-secondary button-small" type="button" disabled={!ready || state.kind === "running"}
+        onClick={() => void check()}>
+        {state.kind === "running" ? "检测中…" : "检测"}
+      </button>
+      {state.kind === "idle" && <span className="muted">从这个节点经代理访问一次，看能不能用、从哪个国家出去。</span>}
+      {state.kind === "done" && (state.result.succeeded ? (
+        <span className="proxy-check-ok">
+          可用 · {`${countryFlag(state.result.countryCode)} ${state.result.countryCode ?? ""}`.trim()}
+          {state.result.city ? ` ${state.result.city}` : ""} · <span className="mono">{state.result.ip}</span>
+          {state.result.latencyMs != null ? ` · ${state.result.latencyMs} ms` : ""}
+        </span>
+      ) : (
+        <span className="proxy-check-error">{state.result.error ?? "代理不可用。"}</span>
+      ))}
+      {state.kind === "error" && <span className="proxy-check-error">{state.message}</span>}
     </div>
   );
 }

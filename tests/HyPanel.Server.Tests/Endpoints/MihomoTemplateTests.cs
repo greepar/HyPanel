@@ -1,3 +1,4 @@
+using HyPanel.Server.Backends;
 using HyPanel.Server.Endpoints;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -13,9 +14,22 @@ public sealed class MihomoTemplateTests
     {
         const string template = "mode: rule\nproxies: ~\nproxy-groups:\n  - name: PICK\n    proxies:\n      - DIRECT\n      - __ALL_PROXIES__\nrules:\n  - MATCH,PICK\n";
 
-        var output = MihomoTemplate.Render(template, [("a", "  - name: \"a\"\n"), ("b", "  - name: \"b\"\n")], Quote);
+        var output = MihomoTemplate.Render(template, [("a", "  - name: \"a\"\n", SubscriptionGroup.Direct), ("b", "  - name: \"b\"\n", SubscriptionGroup.Relay)], Quote);
 
         Assert.AreEqual("mode: rule\nproxies:\n  - name: \"a\"\n  - name: \"b\"\nproxy-groups:\n  - name: PICK\n    proxies:\n      - DIRECT\n      - \"a\"\n      - \"b\"\nrules:\n  - MATCH,PICK\n", output);
+    }
+
+    [TestMethod]
+    public void Render_GroupPlaceholdersTakeTheirOwnLines()
+    {
+        const string template = "proxy-groups:\n  - name: D\n    proxies:\n      - __DIRECT_PROXIES__\n  - name: V6\n    proxies:\n      - \"__DIRECT_V6_PROXIES__\"\n  - name: R\n    proxies:\n      - __RELAY_PROXIES__\nrules: []\n";
+
+        var output = MihomoTemplate.Render(template,
+            [("a", "  - name: \"a\"\n", SubscriptionGroup.Direct), ("b", "  - name: \"b\"\n", SubscriptionGroup.Relay),
+             ("c", "  - name: \"c\"\n", SubscriptionGroup.Relay)], Quote);
+
+        StringAssert.Contains(output, "  - name: D\n    proxies:\n      - \"a\"\n  - name: V6\n    proxies:\n      - DIRECT\n" +
+                                      "  - name: R\n    proxies:\n      - \"b\"\n      - \"c\"\n");
     }
 
     [TestMethod]

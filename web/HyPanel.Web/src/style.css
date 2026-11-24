@@ -705,6 +705,10 @@ a.issue:hover, .snapshot-row:hover { background: var(--surface-2) }
 .route-name-input { height: 34px; font-weight: 600 }
 .exit-picker .select-trigger { height: 34px }
 .exit-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, .8fr) minmax(0, 1fr) minmax(0, 1fr); gap: 10px }
+.proxy-check { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 12px; min-width: 0 }
+.proxy-check > span { overflow-wrap: anywhere }
+.proxy-check-ok { color: var(--success) }
+.proxy-check-error { color: var(--danger) }
 .route-item .icon-button:hover:not(:disabled) { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)) }
 .add-route { display: inline-flex; align-items: center; justify-self: start; gap: 6px; height: 32px; padding: 0 12px 0 10px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); color: var(--muted); background: transparent; cursor: pointer; font-size: 13px; font-weight: 500; transition: color .12s, border-color .12s, background .12s }
 .add-route:hover { border-style: solid; color: var(--text); background: var(--surface-2) }

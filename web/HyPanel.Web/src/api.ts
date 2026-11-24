@@ -48,6 +48,9 @@ export class ApiClient {
   checkAgentRelease = () => this.request<{ latestVersion: string | null; error: string | null }>('/api/admin/v1/agent-releases/check', { method: 'POST' })
   updateAgents = (nodeIds: string[]) => this.request<{ version: string; updatedNodes: number }>('/api/admin/v1/nodes/agent-update', { method: 'POST', body: JSON.stringify({ nodeIds }) })
   setAgentUpdatePolicy = (nodeId: string, policy: 'Manual' | 'Auto') => this.request<void>(`/api/admin/v1/nodes/${nodeId}/agent-update-policy`, { method: 'PUT', body: JSON.stringify({ policy }) })
+  startProxyTest = (nodeId: string, proxy: { type: string; host: string; port: number; username: string | null; password: string | null }) => this.request<{ id: string }>(`/api/admin/v1/nodes/${nodeId}/proxy-tests`, { method: 'POST', body: JSON.stringify(proxy) })
+  proxyTest = (nodeId: string, testId: string) => this.request<ProxyTestStatus>(`/api/admin/v1/nodes/${nodeId}/proxy-tests/${testId}`)
+  renameNode = (nodeId: string, displayName: string) => this.request<void>(`/api/admin/v1/nodes/${nodeId}/name`, { method: 'PUT', body: JSON.stringify({ displayName }) })
   setNodeTrafficResetDay = (nodeId: string, day: number | null) => this.request<void>(`/api/admin/v1/nodes/${nodeId}/traffic-reset-day`, { method: 'PUT', body: JSON.stringify({ day }) })
   resetNodeTraffic = (nodeId: string) => this.request<void>(`/api/admin/v1/nodes/${nodeId}/traffic-reset`, { method: 'POST' })
   services = (nodeId: string, signal?: AbortSignal) => this.request<Service[]>(`/api/admin/v1/nodes/${nodeId}/services`, { signal })
@@ -124,3 +127,6 @@ export class ApiClient {
   restoreBackup = (validationId: string) => this.request<{ status: string }>('/api/admin/v1/backups/restore', { method: 'POST', body: JSON.stringify({ validationId, confirmation: 'RESTORE' }) })
   createUser = (payload: Record<string, unknown>) => this.request<{ user: User; subscriptionToken: string }>('/api/admin/v1/users', { method: 'POST', body: JSON.stringify(payload) })
 }
+
+/** A proxy test run from a node: `done` once the node answered. */
+export type ProxyTestStatus = { done: boolean; succeeded: boolean; ip: string | null; countryCode: string | null; city: string | null; latencyMs: number | null; error: string | null }

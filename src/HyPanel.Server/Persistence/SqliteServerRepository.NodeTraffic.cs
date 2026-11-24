@@ -6,6 +6,16 @@ internal sealed partial class SqliteServerRepository
     /// Sets the day of month (1-28) the node's traffic counter restarts, or null to never reset. Like a user's reset
     /// day, changing it does not wipe the current period.
     /// </summary>
+    public async Task<bool> RenameNodeAsync(Guid nodeId, string displayName, CancellationToken ct)
+    {
+        await using var c = await connectionFactory.OpenAsync(ct);
+        await using var cmd = c.CreateCommand();
+        cmd.CommandText = "UPDATE nodes SET display_name=@name WHERE id=@id;";
+        cmd.Parameters.AddWithValue("@id", nodeId.ToString("D"));
+        cmd.Parameters.AddWithValue("@name", displayName);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
     public async Task<bool> SetNodeTrafficResetDayAsync(Guid nodeId, int? day, CancellationToken ct)
     {
         await using var c = await connectionFactory.OpenAsync(ct);

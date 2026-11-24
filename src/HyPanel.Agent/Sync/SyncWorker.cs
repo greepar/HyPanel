@@ -30,6 +30,7 @@ public sealed class SyncWorker(
     TcpPortRelay tcpRelay,
     FirewallManager firewall,
     AcmeChallengeResponder acmeChallenges,
+    ProxyTester proxyTester,
     AgentEnrollmentOptions enrollmentOptions,
     HttpClient httpClient,
     TimeProvider timeProvider,
@@ -144,6 +145,9 @@ public sealed class SyncWorker(
                     // Report readiness at once: the Panel waits for it before asking the CA to validate.
                     if (response.AcmeChallenges.Count != before) reportSoon = true;
                 }
+
+                // Proxies the admin wants checked from this node (null from an older Panel).
+                if (response.ProxyTests is not null) proxyTester.Apply(response.ProxyTests, Wake);
 
                 if (response.Relays is not null)
                 {
@@ -462,7 +466,8 @@ public sealed class SyncWorker(
         var request = new AgentSyncRequest(BuildInfo.Version, BuildInfo.RuntimeIdentifier, appliedRevision,
             metricsCollector.Collect(), services, usageBatches, results, updateReport, publicIpv4,
             publicIpv4Resolver.CountryCode, CpuFeatures.SupportsX64V3, desired?.BackendArtifacts ?? [], publicIpv6,
-            logs is null ? null : logStreamId, logs, acmeChallenges.Reports());
+            logs is null ? null : logStreamId, logs, acmeChallenges.Reports(), publicIpv4Resolver.City,
+            proxyTester.Reports());
         using var message =
             new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(credentials.PanelBaseUrl), SyncPath));
         message.Headers.Add("X-HyPanel-Agent-Id", credentials.AgentId.ToString("D"));

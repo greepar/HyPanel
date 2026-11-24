@@ -50,7 +50,7 @@ internal static class SubscriptionEndpoints
     }
 
     /// <summary>The entries of one service: itself, then one per extra line (route) under the route's own credential.</summary>
-    private static IEnumerable<SubscriptionProxy> Project(SubscriptionServiceRecord service)
+    private static IEnumerable<(SubscriptionProxy Proxy, SubscriptionGroup Group)> Project(SubscriptionServiceRecord service)
     {
         if (!BackendDefinitionCatalog.TryGet(service.BackendType, out var definition)) return [];
         try
@@ -58,14 +58,14 @@ internal static class SubscriptionEndpoints
             using var document = JsonDocument.Parse(service.ConfigJson);
             if (document.RootElement.ValueKind != JsonValueKind.Object) return [];
             var protocol = definition.ServiceProtocol;
-            var entries = new List<SubscriptionProxy>();
+            var entries = new List<(SubscriptionProxy, SubscriptionGroup)>();
             if (protocol.Project(service, document.RootElement, service.Name, service.Credential) is not { } main)
                 return [];
-            if (service.IncludeDefault) entries.Add(main);
+            if (service.IncludeDefault) entries.Add((main, service.DefaultGroup));
             foreach (var route in service.Routes ?? [])
                 if (protocol.Project(service, document.RootElement, route.Name,
                         ServiceRoute.Credential(service.Credential, route.RouteId)) is { } entry)
-                    entries.Add(entry);
+                    entries.Add((entry, route.Group));
             return entries;
         }
         catch (JsonException)
@@ -76,18 +76,19 @@ internal static class SubscriptionEndpoints
 
     internal static string Hysteria2UserName(Guid userId) => Hysteria2Protocol.UserName(userId);
 
-    private static string RenderMihomo(IEnumerable<SubscriptionProxy> proxies, string template)
+    private static string RenderMihomo(IEnumerable<(SubscriptionProxy Proxy, SubscriptionGroup Group)> proxies,
+        string template)
     {
-        var rendered = new List<(string Name, string Yaml)>();
+        var rendered = new List<(string Name, string Yaml, SubscriptionGroup Group)>();
         // Mihomo rejects a profile with two proxies of one name; names can meet when a line shares another's name.
         var taken = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var original in proxies)
+        foreach (var (original, group) in proxies)
         {
             var proxy = original;
             for (var copy = 2; !taken.Add(proxy.Name); copy++) proxy = original with { Name = $"{original.Name} ({copy})" };
             var yaml = new StringBuilder();
             proxy.AppendMihomo(yaml);
-            rendered.Add((proxy.Name, yaml.ToString()));
+            rendered.Add((proxy.Name, yaml.ToString(), group));
         }
 
         return MihomoTemplate.Render(template, rendered, SubscriptionProxy.Quote);

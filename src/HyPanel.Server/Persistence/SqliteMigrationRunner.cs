@@ -4,7 +4,7 @@ namespace HyPanel.Server.Persistence;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 34;
+    public const long CurrentSchemaVersion = 35;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -740,6 +740,15 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
             await ExecuteAsync(connection, transaction, """
                 ALTER TABLE user_groups ADD COLUMN direct_only INTEGER NOT NULL DEFAULT 0;
                 INSERT INTO schema_migrations (version, applied_at_utc) VALUES (34, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                """, cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, 35, cancellationToken))
+        {
+            // The node's city as the Agent's IP lookup names it, shown in subscription entry names.
+            await ExecuteAsync(connection, transaction, """
+                ALTER TABLE agents ADD COLUMN city TEXT NULL;
+                INSERT INTO schema_migrations (version, applied_at_utc) VALUES (35, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
                 """, cancellationToken);
         }
 

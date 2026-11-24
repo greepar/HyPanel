@@ -39,6 +39,7 @@ internal static class AgentSyncEndpoints
         ServiceLogStore logStore,
         ChangeFeed changeFeed,
         HyPanel.Server.Acme.AcmeChallengeBoard acmeChallenges,
+        HyPanel.Server.Proxies.ProxyTestBoard proxyTests,
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
@@ -58,6 +59,7 @@ internal static class AgentSyncEndpoints
         }
 
         acmeChallenges.Record(agent.NodeId, request.AcmeChallenges);
+        if (request.ProxyTests is { Count: <= 16 } reports) proxyTests.Record(agent.NodeId, reports);
         var metricSnapshotJson = JsonSerializer.Serialize(request.Metrics, HyPanelJsonSerializerContext.Default.NodeMetrics);
         var publicIpv4 = request.PublicIpv4 ?? PublicIpv4From(httpRequest.HttpContext.Connection.RemoteIpAddress);
         if (!await repository.TryUpdateAgentSyncAsync(
@@ -72,7 +74,8 @@ internal static class AgentSyncEndpoints
                 request.UsageBatches,
                 publicIpv4,
                 request.CountryCode,
-                request.PublicIpv6))
+                request.PublicIpv6,
+                request.City))
         {
             // Authentication already succeeded. Reject invalid payloads without claiming the secret is wrong.
             return Results.BadRequest();
@@ -165,7 +168,8 @@ internal static class AgentSyncEndpoints
             (await repository.GetGlobalSettingsAsync(cancellationToken)).PanelUrl,
             await repository.GetPortRelaysAsync(agent.NodeId, cancellationToken),
             logCursors,
-            acmeChallenges.For(agent.NodeId));
+            acmeChallenges.For(agent.NodeId),
+            proxyTests.For(agent.NodeId));
         return Results.Json(response, HyPanelJsonSerializerContext.Default.AgentSyncResponse);
     }
 
@@ -277,6 +281,7 @@ internal static class AgentSyncEndpoints
             || !IsValidPublicIpv4(request.PublicIpv4)
             || !IsValidPublicIpv6(request.PublicIpv6)
             || request.CountryCode is not null && !IsCountryCode(request.CountryCode)
+            || request.City is not null && !IsCity(request.City)
             || !IsValidUpdateReport(request.AgentUpdate, request.Platform, nowUtc))
         {
             return false;
@@ -313,6 +318,9 @@ internal static class AgentSyncEndpoints
     }
 
     /// <summary>ISO 3166-1 alpha-2, upper case.</summary>
+    internal static bool IsCity(string value) =>
+        value.Length is > 0 and <= 64 && value.Trim() == value && !value.Any(char.IsControl);
+
     internal static bool IsCountryCode(string value) => value.Length == 2 && char.IsAsciiLetterUpper(value[0]) &&
                                                         char.IsAsciiLetterUpper(value[1]);
 

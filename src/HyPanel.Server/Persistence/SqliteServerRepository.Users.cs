@@ -575,11 +575,9 @@ internal sealed partial class SqliteServerRepository
                                   COALESCE(p.port,CASE WHEN rn.id IS NULL THEN NULL ELSE CAST(json_extract(s.config_json,'$.relayPort') AS INTEGER) END,
                                            CAST(json_extract(s.config_json,'$.listenPort') AS INTEGER)),
                                   p.tls_server_name,COALESCE(p.updated_at_utc,a.last_seen_at_utc),
-                                   k.nonce,k.ciphertext,k.tag,c.san,c.certificate_pem,n.display_name,
-                                   COALESCE(CASE WHEN COALESCE(json_extract(s.config_json,'$.upstreamProxyType'),'')<>'' THEN rs.exit_country_code END,
-                                            a.country_code),
+                                   k.nonce,k.ciphertext,k.tag,c.san,c.certificate_pem,n.display_name,a.city,
                                    CASE WHEN p.host IS NOT NULL OR s.ipv6_entry=0 THEN NULL WHEN rn.id IS NULL THEN a.public_ipv6 ELSE ra.public_ipv6 END,
-                                   rs.route_exit_countries_json,a.country_code
+                                   a.country_code,rs.exit_country_code,rs.route_exit_countries_json
                            FROM user_service_bindings b
                            JOIN service_instances s ON s.id=b.service_id
                            JOIN nodes n ON n.id=s.node_id
@@ -613,44 +611,46 @@ internal sealed partial class SqliteServerRepository
             var pem = r.IsDBNull(12) ? null : r.GetString(12);
             var serverName = r.IsDBNull(6) ? ServerNameFor(san, r.GetString(13), serviceId) : r.GetString(6);
             var nodeName = r.GetString(13);
-            var defaultCountry = r.IsDBNull(14) ? null : r.GetString(14);
+            var city = r.IsDBNull(14) ? null : r.GetString(14);
+            var country = r.IsDBNull(16) ? null : r.GetString(16);
+            var protocol = BackendDefinitionCatalog.TryGet(backend, out var definition)
+                ? definition.ServiceProtocol.ShortName : backend;
             var updated = SqliteValue.ToDateTimeOffset(r.GetString(7));
             // A node with a public IPv6 gets a second entry dialling it unless the service turned that off; an explicit
             // endpoint replaces both.
-            var hosts = new List<(string Host, string Suffix)>(2);
-            if (!r.IsDBNull(4)) hosts.Add((r.GetString(4), ""));
-            if (!r.IsDBNull(15)) hosts.Add((r.GetString(15), " · IPv6"));
+            var hosts = new List<(string Host, bool Ipv6)>(2);
+            if (!r.IsDBNull(4)) hosts.Add((r.GetString(4), false));
+            if (!r.IsDBNull(15)) hosts.Add((r.GetString(15), true));
             // A direct-only group sees only the lines that go out directly; the Agent admits no others for them.
             var lines = ServiceLines.Of(backend, r.GetString(3));
             if (directOnly && !lines.AnyDirect) continue;
             var routes = directOnly ? [.. lines.Routes.Where(static route => route.Proxy is null)] : lines.Routes;
-            // Extra lines: labelled with their proxy's country, or the node's when they go direct.
-            var routeCountries = routes.Count == 0 || r.IsDBNull(16) ? null : RouteCountries(r.GetString(16));
-            var nodeCountry = r.IsDBNull(17) ? null : r.GetString(17);
-            foreach (var (host, suffix) in hosts)
+            // Where each proxied line leaves, as the Agent found by looking up its address through the proxy.
+            var exitCountry = r.IsDBNull(17) ? null : r.GetString(17);
+            var routeCountries = routes.Count == 0 || r.IsDBNull(18) ? null : RouteCountries(r.GetString(18));
+            foreach (var (host, ipv6) in hosts)
+            {
+                var direct = ipv6 ? SubscriptionGroup.DirectIpv6 : SubscriptionGroup.Direct;
                 services.Add(new SubscriptionServiceRecord(SqliteValue.ToGuid(userId), serviceId,
-                    SubscriptionName(defaultCountry, r.GetString(1) + suffix, nodeName), backend,
-                    r.GetString(3), credential,
+                    lines.DefaultProxied
+                        ? SubscriptionNames.Relay(country, city, nodeName, ipv6, r.GetString(1), exitCountry)
+                        : SubscriptionNames.Direct(country, city, nodeName, protocol, ipv6),
+                    backend, r.GetString(3), credential,
                     new ServicePublicEndpointRecord(serviceId, host, r.GetInt32(5), serverName, updated),
                     SelfSignedFingerprint(pem),
-                    routes.Count == 0 ? null : routes.Select(route => new SubscriptionRouteEntry(route.Id,
-                        SubscriptionName(route.Proxy is null ? nodeCountry : routeCountries?.GetValueOrDefault(route.Id),
-                            route.Name + suffix, nodeName))).ToArray(),
-                    IncludeDefault: !(directOnly && lines.DefaultProxied)));
+                    routes.Count == 0 ? null : routes.Select(route => route.Proxy is null
+                        ? new SubscriptionRouteEntry(route.Id,
+                            SubscriptionNames.Direct(country, city, nodeName, protocol, ipv6, route.Name), direct)
+                        : new SubscriptionRouteEntry(route.Id,
+                            SubscriptionNames.Relay(country, city, nodeName, ipv6, route.Name,
+                                routeCountries?.GetValueOrDefault(route.Id)), SubscriptionGroup.Relay))
+                        .ToArray(),
+                    IncludeDefault: !(directOnly && lines.DefaultProxied),
+                    DefaultGroup: lines.DefaultProxied ? SubscriptionGroup.Relay : direct));
+            }
         }
 
         return services;
-    }
-
-    /// <summary>
-    /// A subscription entry's name: where traffic leaves (flag and country code), the line's own name, then the node it
-    /// enters through, e.g. "🇯🇵 JP · WebshareJp · From jp-nb".
-    /// </summary>
-    internal static string SubscriptionName(string? countryCode, string line, string nodeName)
-    {
-        var flag = countryCode is null ? string.Empty : CountryFlag(countryCode);
-        var origin = $"{line} · From {nodeName}";
-        return flag.Length == 0 ? origin : $"{flag} {countryCode!.ToUpperInvariant()} · {origin}";
     }
 
     private static Dictionary<Guid, string>? RouteCountries(string json)

@@ -531,7 +531,8 @@ internal sealed partial class SqliteServerRepository(
         IReadOnlyList<UsageBatch>? usageBatches = null,
         string? publicIpv4 = null,
         string? countryCode = null,
-        string? publicIpv6 = null)
+        string? publicIpv6 = null,
+        string? city = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(reportedVersion);
         ArgumentException.ThrowIfNullOrWhiteSpace(reportedPlatform);
@@ -555,6 +556,7 @@ internal sealed partial class SqliteServerRepository(
                                                latest_metric_snapshot_json = @latestMetricSnapshotJson,
                                                public_ipv4 = COALESCE(@publicIpv4, public_ipv4),
                                                country_code = COALESCE(@countryCode, country_code),
+                                               city = COALESCE(@city, city),
                                                -- Not coalesced: the Agent forgets an IPv6 that stopped working, and
                                                -- the Panel must stop handing out entries for it.
                                                public_ipv6 = @publicIpv6
@@ -569,6 +571,7 @@ internal sealed partial class SqliteServerRepository(
                     SqliteValue.ToDbValue(latestMetricSnapshotJson));
                 updateAgent.Parameters.AddWithValue("@publicIpv4", SqliteValue.ToDbValue(publicIpv4));
                 updateAgent.Parameters.AddWithValue("@countryCode", SqliteValue.ToDbValue(countryCode));
+                updateAgent.Parameters.AddWithValue("@city", SqliteValue.ToDbValue(city));
                 updateAgent.Parameters.AddWithValue("@publicIpv6", SqliteValue.ToDbValue(publicIpv6));
                 if (await updateAgent.ExecuteNonQueryAsync(cancellationToken) != 1)
                 {

@@ -17,6 +17,7 @@ public sealed class PublicIpResolverTests
         Assert.AreEqual("203.0.113.42", await resolver.GetAsync(CancellationToken.None));
         Assert.AreEqual("203.0.113.42", await resolver.GetAsync(CancellationToken.None));
         Assert.AreEqual("GB", resolver.CountryCode);
+        Assert.AreEqual("London", resolver.City);
         Assert.AreEqual(1, handler.RequestCount);
     }
 
@@ -113,7 +114,7 @@ public sealed class PublicIpResolverTests
     }
 
     private static string Detail(string ip, string country) =>
-        $$"""{"ip":"{{ip}}","family":"v4","country":{{country}},"region":"England","asn":1}""";
+        $$"""{"ip":"{{ip}}","family":"v4","country":{{country}},"region":"England","city":"London","asn":1}""";
 
     private sealed class StubHandler(string response, string uri = "https://4.qwq.lu/?detail") : HttpMessageHandler
     {

@@ -1,16 +1,27 @@
 using System.Text;
+using HyPanel.Server.Backends;
 
 namespace HyPanel.Server.Endpoints;
 
 /// <summary>
-/// Mihomo subscription template. A template is ordinary Mihomo YAML with two placeholders:
-/// the top-level <c>proxies:</c> line is replaced by the user's proxies, and every list item
-/// <c>- __ALL_PROXIES__</c> expands to all proxy names. Groups may also use Mihomo's own
-/// <c>include-all</c> + <c>filter</c> to select proxies by name.
+/// Mihomo subscription template. A template is ordinary Mihomo YAML with placeholders: the top-level
+/// <c>proxies:</c> line is replaced by the user's proxies, and a list item <c>- __ALL_PROXIES__</c> expands to all
+/// proxy names; <c>- __DIRECT_PROXIES__</c>, <c>- __DIRECT_V6_PROXIES__</c> and <c>- __RELAY_PROXIES__</c> expand to
+/// the direct lines over IPv4, the direct lines over IPv6 and the lines through a proxy. Groups may also use Mihomo's
+/// own <c>include-all</c> + <c>filter</c> to select proxies by name.
 /// </summary>
 internal static class MihomoTemplate
 {
     public const string AllProxiesPlaceholder = "__ALL_PROXIES__";
+
+    /// <summary>The list placeholders and which entries each takes; null takes them all.</summary>
+    private static readonly Dictionary<string, SubscriptionGroup?> Placeholders = new(StringComparer.Ordinal)
+    {
+        [AllProxiesPlaceholder] = null,
+        ["__DIRECT_PROXIES__"] = SubscriptionGroup.Direct,
+        ["__DIRECT_V6_PROXIES__"] = SubscriptionGroup.DirectIpv6,
+        ["__RELAY_PROXIES__"] = SubscriptionGroup.Relay,
+    };
     public const int MaximumLength = 512 * 1024;
 
     public static string Default { get; } = LoadDefault();
@@ -35,7 +46,7 @@ internal static class MihomoTemplate
         return error.Length == 0;
     }
 
-    public static string Render(string template, IReadOnlyList<(string Name, string Yaml)> proxies,
+    public static string Render(string template, IReadOnlyList<(string Name, string Yaml, SubscriptionGroup Group)> proxies,
         Func<string, string> quote)
     {
         var output = new StringBuilder(template.Length + proxies.Count * 256);
@@ -51,11 +62,13 @@ internal static class MihomoTemplate
             }
             var trimmed = line.TrimStart();
             if (trimmed.StartsWith("- ", StringComparison.Ordinal) &&
-                trimmed[2..].Trim() is var item && (item == AllProxiesPlaceholder || item == $"\"{AllProxiesPlaceholder}\""))
+                Placeholders.TryGetValue(trimmed[2..].Trim().Trim('"'), out var group))
             {
                 var indent = line[..(line.Length - trimmed.Length)];
-                if (proxies.Count == 0) output.Append(indent).Append("- DIRECT\n");
-                foreach (var proxy in proxies) output.Append(indent).Append("- ").Append(quote(proxy.Name)).Append('\n');
+                var names = proxies.Where(proxy => group is null || proxy.Group == group).Select(proxy => proxy.Name).ToArray();
+                // A group must list something; an empty one would make Mihomo reject the whole profile.
+                if (names.Length == 0) output.Append(indent).Append("- DIRECT\n");
+                foreach (var name in names) output.Append(indent).Append("- ").Append(quote(name)).Append('\n');
                 continue;
             }
             output.Append(line).Append('\n');
@@ -69,7 +82,8 @@ internal static class MihomoTemplate
         return output.ToString().TrimEnd('\n') + "\n";
     }
 
-    private static void AppendProxies(StringBuilder output, IReadOnlyList<(string Name, string Yaml)> proxies)
+    private static void AppendProxies(StringBuilder output,
+        IReadOnlyList<(string Name, string Yaml, SubscriptionGroup Group)> proxies)
     {
         if (proxies.Count == 0)
         {

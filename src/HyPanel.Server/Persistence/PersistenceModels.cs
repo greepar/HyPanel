@@ -1,3 +1,5 @@
+using HyPanel.Server.Backends;
+
 namespace HyPanel.Server.Persistence;
 
 internal sealed record NodeRecord(Guid Id, string DisplayName, long DesiredRevision, DateTimeOffset CreatedAtUtc);
@@ -144,10 +146,12 @@ internal sealed record SubscriptionServiceRecord(
     ServicePublicEndpointRecord PublicEndpoint,
     string? PinnedCertificateSha256 = null,
     IReadOnlyList<SubscriptionRouteEntry>? Routes = null,
-    bool IncludeDefault = true);
+    bool IncludeDefault = true,
+    SubscriptionGroup DefaultGroup = SubscriptionGroup.Direct);
 
 /// <summary>An extra line of a REALITY service as a subscription entry: same server, its own name and UUID.</summary>
-internal sealed record SubscriptionRouteEntry(Guid RouteId, string Name);
+internal sealed record SubscriptionRouteEntry(Guid RouteId, string Name,
+    SubscriptionGroup Group = SubscriptionGroup.Direct);
 
 /// <summary>The period a user's latest traffic reset closed, with what each service carried in it.</summary>
 internal sealed record PreviousUsagePeriodRecord(Guid UserId, DateTimeOffset StartUtc, DateTimeOffset EndUtc,

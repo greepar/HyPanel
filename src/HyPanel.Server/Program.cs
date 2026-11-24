@@ -64,6 +64,7 @@ public static class Program
             client.DefaultRequestHeaders.UserAgent.ParseAdd("HyPanel-ACME/1.0");
         });
         builder.Services.AddSingleton<HyPanel.Server.Acme.AcmeChallengeBoard>();
+        builder.Services.AddSingleton<HyPanel.Server.Proxies.ProxyTestBoard>();
         builder.Services.AddSingleton<HyPanel.Server.Acme.AcmeIssuer>();
         builder.Services.AddSingleton<HyPanel.Server.Acme.AcmeWorker>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<HyPanel.Server.Acme.AcmeWorker>());
@@ -129,6 +130,7 @@ public static class Program
         app.MapGet("/health", static () =>
             Results.Json(HealthResponse.Instance, HealthJsonSerializerContext.Default.HealthResponse));
         AdminNodesEndpoints.Map(app);
+        AdminProxyTestEndpoints.Map(app);
         AdminServicesEndpoints.Map(app);
         AdminCertificatesEndpoints.Map(app);
         AdminBackendEndpoints.Map(app);

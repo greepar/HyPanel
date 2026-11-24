@@ -16,6 +16,7 @@ internal static class AdminNodesEndpoints
         endpoints.MapPost("/api/admin/v1/nodes/agent-update", RequestBatchUpdateAsync);
         endpoints.MapPost("/api/admin/v1/agent-releases/check", CheckReleasesAsync);
         endpoints.MapDelete("/api/admin/v1/nodes/{nodeId:guid}", DeleteAsync);
+        endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/name", RenameAsync);
         endpoints.MapPut("/api/admin/v1/nodes/{nodeId:guid}/traffic-reset-day", SetTrafficResetDayAsync);
         endpoints.MapPost("/api/admin/v1/nodes/{nodeId:guid}/traffic-reset", ResetTrafficAsync);
     }
@@ -37,6 +38,17 @@ internal static class AdminNodesEndpoints
         var access = await authorization.AuthorizeAsync(httpRequest, cancellationToken);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
         return await repository.ResetNodeTrafficAsync(nodeId, cancellationToken) ? Results.NoContent() : Results.NotFound();
+    }
+
+    /// <summary>Renames a node. The name is also what subscriptions show for it (e.g. the provider's name).</summary>
+    private static async Task<IResult> RenameAsync(Guid nodeId, CreateNodeRequest request, HttpRequest httpRequest,
+        AdminAuthorization authorization, SqliteServerRepository repository, CancellationToken cancellationToken)
+    {
+        var access = await authorization.AuthorizeAsync(httpRequest, cancellationToken);
+        if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
+        if (!TryNormalize(request.DisplayName, MaximumDisplayNameLength, out var displayName)) return Results.BadRequest();
+        return await repository.RenameNodeAsync(nodeId, displayName, cancellationToken)
+            ? Results.NoContent() : Results.NotFound();
     }
 
     private static async Task<IResult> DeleteAsync(Guid nodeId, HttpRequest httpRequest,
