@@ -160,9 +160,10 @@ internal sealed record UpdateUserRequest(
     Guid? GroupId = null,
     int? TrafficResetDay = null);
 
-internal sealed record UserGroupRequest(string Name, bool AutoIncludeNewServices, Guid[]? ServiceIds);
+internal sealed record UserGroupRequest(string Name, bool AutoIncludeNewServices, Guid[]? ServiceIds,
+    bool DirectOnly = false);
 internal sealed record UserGroupResponse(Guid Id, string Name, bool IsDefault, bool AutoIncludeNewServices,
-    Guid[] ServiceIds, int MemberCount);
+    Guid[] ServiceIds, int MemberCount, bool DirectOnly);
 
 internal sealed record CreateUserResponse(UserResponse User, string SubscriptionToken);
 
@@ -184,14 +185,6 @@ internal sealed record ServicePublicEndpointResponse(
     int Port,
     string? TlsServerName,
     DateTimeOffset UpdatedAtUtc);
-
-internal sealed record BatchServiceEnabledItem(Guid NodeId, Guid ServiceId, bool Enabled);
-
-internal sealed record BatchServiceEnabledRequest(BatchServiceEnabledItem[] Items);
-
-internal sealed record BatchServiceEnabledNodeResponse(Guid NodeId, long Revision);
-
-internal sealed record BatchServiceEnabledResponse(BatchServiceEnabledNodeResponse[] Nodes);
 
 internal sealed record HealthSummaryCounts(
     int NodesTotal,

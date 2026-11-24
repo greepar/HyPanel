@@ -89,11 +89,15 @@ internal abstract class XrayEngineProvider<TConfig>(TimeProvider timeProvider) :
             throw new InvalidOperationException("Xray users are invalid.");
 
         var routes = config.Routes?.OfType<XrayRouteConfig>().ToArray() ?? [];
-        // Every user gets one client per line: the default line keeps their credential, each route a derived one.
-        var clients = users.SelectMany(user => routes
-                .Select(route => new XrayClientIdentity(user.UserId, ServiceRoute.Credential(user.Credential, route.Id),
-                    ServiceRoute.UserTag(user.UserId, route.Id)))
-                .Prepend(new XrayClientIdentity(user.UserId, user.Credential, ServiceRoute.UserTag(user.UserId))))
+        var defaultProxied = config.ProxyOrNull() is not null;
+        // Every user gets one client per line they may take: the default line keeps their credential, each route a
+        // derived one. A direct-only user gets no client on a line that leaves through a proxy.
+        var clients = users.SelectMany(user => (user.Admits(defaultProxied)
+                    ? [new XrayClientIdentity(user.UserId, user.Credential, ServiceRoute.UserTag(user.UserId))]
+                    : Array.Empty<XrayClientIdentity>())
+                .Concat(routes.Where(route => user.Admits(route.ProxyOrNull() is not null))
+                    .Select(route => new XrayClientIdentity(user.UserId, ServiceRoute.Credential(user.Credential, route.Id),
+                        ServiceRoute.UserTag(user.UserId, route.Id)))))
             .ToArray();
         var ipv4Only = config.Ipv4Only == true;
         var outbounds = XrayOutbound.Create(config.ProxyOrNull(), ipv4Only).ToList();
@@ -103,12 +107,10 @@ internal abstract class XrayEngineProvider<TConfig>(TimeProvider timeProvider) :
             var tag = $"route-{route.Id:N}";
             // Before the trailing blackhole, which stays last.
             outbounds.Insert(outbounds.Count - 1, XrayOutbound.For(route.ProxyOrNull(), tag, ipv4Only));
-            if (users.Count > 0)
-                rules.Add(new XrayRoutingRule
-                {
-                    Type = "field", OutboundTag = tag,
-                    User = [.. users.Select(user => ServiceRoute.UserTag(user.UserId, route.Id))]
-                });
+            string[] routeUsers = [.. users.Where(user => user.Admits(route.ProxyOrNull() is not null))
+                .Select(user => ServiceRoute.UserTag(user.UserId, route.Id))];
+            if (routeUsers.Length > 0)
+                rules.Add(new XrayRoutingRule { Type = "field", OutboundTag = tag, User = routeUsers });
         }
 
         var runtime = new XrayRuntimeConfig

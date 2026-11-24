@@ -65,7 +65,7 @@ export class ApiClient {
   subscriptionTemplate = () => this.request<{ template: string; isCustom: boolean; defaultTemplate: string }>('/api/admin/v1/subscription-template')
   saveSubscriptionTemplate = (template: string) => this.request<{ template: string; isCustom: boolean; defaultTemplate: string }>('/api/admin/v1/subscription-template', { method: 'PUT', body: JSON.stringify({ template }) })
   resetSubscriptionTemplate = () => this.request<{ template: string; isCustom: boolean; defaultTemplate: string }>('/api/admin/v1/subscription-template', { method: 'DELETE' })
-  saveGroup = (id: string | null, value: { name: string; autoIncludeNewServices: boolean; serviceIds: string[] }) => this.request<UserGroup>(id ? `/api/admin/v1/groups/${id}` : '/api/admin/v1/groups', { method: id ? 'PUT' : 'POST', body: JSON.stringify(value) })
+  saveGroup = (id: string | null, value: { name: string; autoIncludeNewServices: boolean; directOnly: boolean; serviceIds: string[] }) => this.request<UserGroup>(id ? `/api/admin/v1/groups/${id}` : '/api/admin/v1/groups', { method: id ? 'PUT' : 'POST', body: JSON.stringify(value) })
   deleteGroup = (id: string) => this.request<void>(`/api/admin/v1/groups/${id}`, { method: 'DELETE' })
   usage = () => this.request<Usage[]>('/api/admin/v1/usage')
   previousUsage = () => this.request<PreviousUsage[]>('/api/admin/v1/usage/previous')

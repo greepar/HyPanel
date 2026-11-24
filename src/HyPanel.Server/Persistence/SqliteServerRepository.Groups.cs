@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 namespace HyPanel.Server.Persistence;
 
 internal sealed record UserGroupRecord(Guid Id, string Name, bool IsDefault, bool AutoIncludeNewServices,
-    IReadOnlyList<Guid> ServiceIds, int MemberCount);
+    IReadOnlyList<Guid> ServiceIds, int MemberCount, bool DirectOnly = false);
 
 /// <summary>
 /// Group-based access. A user's service bindings (and therefore their proxy credentials) always mirror their
@@ -34,7 +34,7 @@ internal sealed partial class SqliteServerRepository
         {
             cmd.CommandText = """
                 SELECT g.id,g.name,g.is_default,g.auto_include_new_services,
-                  (SELECT COUNT(*) FROM users u WHERE u.group_id=g.id)
+                  (SELECT COUNT(*) FROM users u WHERE u.group_id=g.id),g.direct_only
                 FROM user_groups g ORDER BY g.is_default DESC,g.normalized_name;
                 """;
             await using var r = await cmd.ExecuteReaderAsync(ct);
@@ -42,7 +42,7 @@ internal sealed partial class SqliteServerRepository
             {
                 var id = SqliteValue.ToGuid(r.GetString(0));
                 groups.Add(new UserGroupRecord(id, r.GetString(1), r.GetInt64(2) == 1, r.GetInt64(3) == 1,
-                    services.TryGetValue(id, out var list) ? list : [], r.GetInt32(4)));
+                    services.TryGetValue(id, out var list) ? list : [], r.GetInt32(4), r.GetInt64(5) == 1));
             }
         }
         return groups;
@@ -61,7 +61,7 @@ internal sealed partial class SqliteServerRepository
 
     /// <summary>Creates or updates a group. Returns false on a duplicate name or unknown group.</summary>
     public async Task<bool> SaveGroupAsync(Guid id, string name, bool autoInclude, IReadOnlyList<Guid> serviceIds,
-        bool create, CancellationToken ct)
+        bool create, CancellationToken ct, bool directOnly = false)
     {
         await using (var c = await connectionFactory.OpenAsync(ct))
         await using (var tx = (SqliteTransaction)await c.BeginTransactionAsync(ct))
@@ -72,12 +72,13 @@ internal sealed partial class SqliteServerRepository
                 {
                     cmd.Transaction = tx;
                     cmd.CommandText = create
-                        ? "INSERT INTO user_groups (id,name,normalized_name,is_default,auto_include_new_services,created_at_utc) VALUES (@id,@name,@normalized,0,@auto,@now);"
-                        : "UPDATE user_groups SET name=@name,normalized_name=@normalized,auto_include_new_services=@auto WHERE id=@id;";
+                        ? "INSERT INTO user_groups (id,name,normalized_name,is_default,auto_include_new_services,direct_only,created_at_utc) VALUES (@id,@name,@normalized,0,@auto,@direct,@now);"
+                        : "UPDATE user_groups SET name=@name,normalized_name=@normalized,auto_include_new_services=@auto,direct_only=@direct WHERE id=@id;";
                     cmd.Parameters.AddWithValue("@id", id.ToString("D"));
                     cmd.Parameters.AddWithValue("@name", name);
                     cmd.Parameters.AddWithValue("@normalized", name.ToUpperInvariant());
                     cmd.Parameters.AddWithValue("@auto", autoInclude ? 1 : 0);
+                    cmd.Parameters.AddWithValue("@direct", directOnly ? 1 : 0);
                     cmd.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(timeProvider.GetUtcNow()));
                     if (await cmd.ExecuteNonQueryAsync(ct) != 1) { await tx.RollbackAsync(ct); return false; }
                 }
@@ -109,6 +110,8 @@ internal sealed partial class SqliteServerRepository
             }
         }
         await SyncGroupMembersAsync(id, ct);
+        // Members keep their services but may have gained or lost the proxied lines on them.
+        await IncrementMemberNodeRevisionsAsync(id, ct);
         return true;
     }
 
@@ -144,6 +147,7 @@ internal sealed partial class SqliteServerRepository
             await tx.CommitAsync(ct);
         }
         foreach (var member in members) await SyncUserBindingsAsync(member, ct);
+        await IncrementMemberNodeRevisionsAsync(DefaultGroupId, ct);
         return true;
     }
 
@@ -158,7 +162,29 @@ internal sealed partial class SqliteServerRepository
             if (await cmd.ExecuteNonQueryAsync(ct) != 1) return false;
         }
         await SyncUserBindingsAsync(userId, ct);
+        // Services both groups share stay bound, but the new group may allow different lines on them.
+        await using (var c = await connectionFactory.OpenAsync(ct))
+        await using (var tx = (SqliteTransaction)await c.BeginTransactionAsync(ct))
+        {
+            await IncrementBoundNodeRevisionsAsync(c, tx, userId, ct);
+            await tx.CommitAsync(ct);
+        }
         return true;
+    }
+
+    /// <summary>Re-sends the desired state of every node serving a member of the group.</summary>
+    private async Task IncrementMemberNodeRevisionsAsync(Guid groupId, CancellationToken ct)
+    {
+        await using var c = await connectionFactory.OpenAsync(ct);
+        await using var cmd = c.CreateCommand();
+        cmd.CommandText = """
+            UPDATE nodes SET desired_revision=desired_revision+1 WHERE id IN (
+              SELECT DISTINCT s.node_id FROM user_service_bindings b
+              JOIN users u ON u.id=b.user_id JOIN service_instances s ON s.id=b.service_id
+              WHERE u.group_id=@id);
+            """;
+        cmd.Parameters.AddWithValue("@id", groupId.ToString("D"));
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 
     /// <summary>Adds a new service to every auto-including group and grants it to their members.</summary>

@@ -184,6 +184,32 @@ public sealed class MihomoProviderTests
     }
 
     [TestMethod]
+    public async Task DirectOnlyUserLogsInOnlyOnDirectLines()
+    {
+        var route = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        var direct = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        var desired = Reality(
+            $$""","upstreamProxyType":"http","upstreamProxyHost":"default.example","upstreamProxyPort":8080,"routes":[{"id":"{{route}}","name":"jp","upstreamProxyType":"socks5","upstreamProxyHost":"jp.example","upstreamProxyPort":1080},{"id":"{{direct}}","name":"direct"}]""")
+            with { Users = [new BackendUser(UserId, Credential), new BackendUser(OtherId, OtherCredential, DirectOnly: true)] };
+        var root = await RenderAsync(reality, desired);
+
+        var logins = root.GetProperty("listeners")[0].GetProperty("users").EnumerateArray()
+            .Select(item => item.GetProperty("username").GetString()).ToArray();
+        CollectionAssert.AreEquivalent(new[]
+        {
+            ServiceRoute.UserTag(UserId), ServiceRoute.UserTag(UserId, route), ServiceRoute.UserTag(UserId, direct),
+            ServiceRoute.UserTag(OtherId, direct)
+        }, logins, "the direct-only user has neither the proxied default line nor the proxied route");
+        var rules = root.GetProperty("rules").EnumerateArray().Select(item => item.GetString()).ToArray();
+        CollectionAssert.AreEqual(new[]
+        {
+            $"IN-USER,{ServiceRoute.UserTag(UserId, route)},route-{route:N}",
+            $"IN-USER,{ServiceRoute.UserTag(UserId, direct)}/{ServiceRoute.UserTag(OtherId, direct)},DIRECT",
+            "MATCH,upstream"
+        }, rules);
+    }
+
+    [TestMethod]
     public async Task Shadowsocks2022LinesGetTheirOwnUserKeys()
     {
         var route = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");

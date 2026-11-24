@@ -130,10 +130,12 @@ internal static class AgentSyncEndpoints
             var desiredServices = new List<ServiceDesiredState>(desired.Value.Services.Count);
             var controlPorts = await repository.EnsureControlPortsAsync(agent.NodeId,
                 [.. desired.Value.Services.Where(service => BackendCapabilities.NeedsControlPort(service.BackendType)).Select(service => service.Id)], cancellationToken);
+            var understandsDirectOnly = UnderstandsDirectOnly(request.AgentVersion);
             foreach (var service in desired.Value.Services)
             {
                 var users = BackendCapabilities.IsMultiUser(service.BackendType)
-                    ? [.. (await repository.GetServiceCredentialsAsync(service.Id, true, cancellationToken)).Select(item => new BackendUser(item.UserId, item.Credential))]
+                    ? DesiredUsers(await repository.GetServiceCredentialsAsync(service.Id, true, cancellationToken),
+                        ServiceLines.Of(service.BackendType, service.ConfigJson), understandsDirectOnly)
                     : Array.Empty<BackendUser>();
                 TlsCertificateAsset? tls = null;
                 if (BackendDefinitionCatalog.Has(service.BackendType, BackendFeatures.Certificate)
@@ -166,6 +168,24 @@ internal static class AgentSyncEndpoints
             acmeChallenges.For(agent.NodeId));
         return Results.Json(response, HyPanelJsonSerializerContext.Default.AgentSyncResponse);
     }
+
+    /// <summary>
+    /// The users a service admits. A direct-only user is left out when no line of the service goes direct, and, on an
+    /// Agent too old to filter lines per user, whenever any line goes through a proxy.
+    /// </summary>
+    internal static BackendUser[] DesiredUsers(IEnumerable<UserServiceCredentialRecord> credentials, ServiceLines lines,
+        bool understandsDirectOnly) =>
+    [
+        .. credentials
+            .Where(item => !item.DirectOnly || !lines.AnyProxied || understandsDirectOnly && lines.AnyDirect)
+            .Select(item => new BackendUser(item.UserId, item.Credential, item.DirectOnly && lines.AnyProxied))
+    ];
+
+    /// <summary>An unparseable (development) version is taken to be current.</summary>
+    private static bool UnderstandsDirectOnly(string agentVersion) =>
+        !SemanticVersion.TryParse(agentVersion, out var current)
+        || !SemanticVersion.TryParse(ServiceLines.DirectOnlyMinimumAgentVersion, out var minimum)
+        || current.CompareTo(minimum) >= 0;
 
     /// <summary>What the admin UI shows of a sync, minus the metrics that change every time.</summary>
     internal static string StatusFingerprint(AgentSyncRequest request, string? publicIpv4)

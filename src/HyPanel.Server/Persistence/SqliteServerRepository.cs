@@ -664,59 +664,6 @@ internal sealed partial class SqliteServerRepository(
         return services;
     }
 
-    public async Task<IReadOnlyList<BatchServiceEnabledNodeResult>?> SetServicesEnabledBatchAsync(
-        IReadOnlyList<BatchServiceEnabledItemRecord> items, CancellationToken cancellationToken)
-    {
-        if (items.Count is < 1 or > 256 ||
-            items.Select(static item => item.ServiceId).Distinct().Count() != items.Count)
-            return null;
-
-        await using var connection = await connectionFactory.OpenAsync(cancellationToken);
-        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
-        try
-        {
-            foreach (var item in items)
-            {
-                await using var valid = connection.CreateCommand();
-                valid.Transaction = transaction;
-                valid.CommandText = "SELECT 1 FROM service_instances WHERE id=@serviceId AND node_id=@nodeId;";
-                valid.Parameters.AddWithValue("@serviceId", item.ServiceId.ToString("D"));
-                valid.Parameters.AddWithValue("@nodeId", item.NodeId.ToString("D"));
-                if (await valid.ExecuteScalarAsync(cancellationToken) is null)
-                {
-                    await transaction.RollbackAsync(cancellationToken);
-                    return null;
-                }
-            }
-
-            var now = SqliteValue.ToUtcText(timeProvider.GetUtcNow());
-            foreach (var item in items)
-            {
-                await using var update = connection.CreateCommand();
-                update.Transaction = transaction;
-                update.CommandText =
-                    "UPDATE service_instances SET enabled=@enabled,updated_at_utc=@now WHERE id=@serviceId AND node_id=@nodeId;";
-                update.Parameters.AddWithValue("@enabled", item.Enabled ? 1 : 0);
-                update.Parameters.AddWithValue("@now", now);
-                update.Parameters.AddWithValue("@serviceId", item.ServiceId.ToString("D"));
-                update.Parameters.AddWithValue("@nodeId", item.NodeId.ToString("D"));
-                await update.ExecuteNonQueryAsync(cancellationToken);
-            }
-
-            var results = new List<BatchServiceEnabledNodeResult>();
-            foreach (var nodeId in items.Select(static item => item.NodeId).Distinct().Order())
-                results.Add(new BatchServiceEnabledNodeResult(nodeId,
-                    await IncrementRevisionAsync(connection, transaction, nodeId, cancellationToken)));
-            await transaction.CommitAsync(cancellationToken);
-            return results;
-        }
-        catch
-        {
-            await transaction.RollbackAsync(CancellationToken.None);
-            throw;
-        }
-    }
-
     public async Task<IReadOnlyList<HealthServiceRecord>> GetHealthServicesAsync(CancellationToken cancellationToken)
     {
         var services = new List<HealthServiceRecord>();

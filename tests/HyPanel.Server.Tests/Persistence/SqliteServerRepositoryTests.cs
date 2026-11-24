@@ -1,9 +1,11 @@
 using System.Text;
 using System.Text.Json;
+using HyPanel.Server.Backends;
 using HyPanel.Server.Endpoints;
 using HyPanel.Server.Persistence;
 using HyPanel.Server.Security;
 using HyPanel.Shared.Contracts;
+using HyPanel.Shared.Networking;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
@@ -77,7 +79,7 @@ public sealed class SqliteServerRepositoryTests
         }
 
         CollectionAssert.AreEqual(
-            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L), (22L, 1L), (23L, 1L), (24L, 1L), (25L, 1L), (26L, 1L), (27L, 1L), (28L, 1L), (29L, 1L), (30L, 1L), (31L, 1L), (32L, 1L), (33L, 1L) },
+            new List<(long Version, long Count)> { (1L, 1L), (2L, 1L), (3L, 1L), (4L, 1L), (5L, 1L), (6L, 1L), (7L, 1L), (8L, 1L), (9L, 1L), (10L, 1L), (11L, 1L), (12L, 1L), (13L, 1L), (14L, 1L), (15L, 1L), (16L, 1L), (17L, 1L), (18L, 1L), (19L, 1L), (20L, 1L), (21L, 1L), (22L, 1L), (23L, 1L), (24L, 1L), (25L, 1L), (26L, 1L), (27L, 1L), (28L, 1L), (29L, 1L), (30L, 1L), (31L, 1L), (32L, 1L), (33L, 1L), (34L, 1L) },
             appliedMigrations);
 
         var names = new List<string>();
@@ -210,48 +212,6 @@ public sealed class SqliteServerRepositoryTests
             repository.InitializeCertificatesAsync(CancellationToken.None));
 
         StringAssert.Contains(exception.Message, "MasterKey");
-    }
-
-    [TestMethod]
-    public async Task BatchEnabled_IncrementsAffectedNodesOnce()
-    {
-        await using var fixture = await TestDatabase.CreateAsync();
-        var nodeOne = Guid.NewGuid();
-        var nodeTwo = Guid.NewGuid();
-        await fixture.Repository.CreateNodeAsync(nodeOne, "one", CancellationToken.None);
-        await fixture.Repository.CreateNodeAsync(nodeTwo, "two", CancellationToken.None);
-        var first = await fixture.Repository.CreateServiceAsync(CreateService(nodeOne, Guid.NewGuid(), "first"),
-            CancellationToken.None);
-        var second = await fixture.Repository.CreateServiceAsync(CreateService(nodeTwo, Guid.NewGuid(), "second"),
-            CancellationToken.None);
-        var third = await fixture.Repository.CreateServiceAsync(CreateService(nodeOne, Guid.NewGuid(), "third"),
-            CancellationToken.None);
-
-        var result = await fixture.Repository.SetServicesEnabledBatchAsync(
-        [
-            new BatchServiceEnabledItemRecord(nodeOne, first.Service!.Id, false),
-            new BatchServiceEnabledItemRecord(nodeOne, third.Service!.Id, false),
-            new BatchServiceEnabledItemRecord(nodeTwo, second.Service!.Id, false),
-        ], CancellationToken.None);
-        Assert.IsNotNull(result);
-        CollectionAssert.AreEqual(new[] { nodeOne, nodeTwo }.Order().ToArray(), result.Select(x => x.NodeId).ToArray());
-        CollectionAssert.AreEquivalent(new[] { 3L, 2L }, result.Select(x => x.Revision).ToArray());
-
-        var before = await fixture.Repository.GetNodeAsync(nodeOne, CancellationToken.None);
-        Assert.IsNull(await fixture.Repository.SetServicesEnabledBatchAsync(
-        [
-            new BatchServiceEnabledItemRecord(nodeOne, second.Service.Id, true)
-        ], CancellationToken.None));
-        Assert.AreEqual(before!.DesiredRevision,
-            (await fixture.Repository.GetNodeAsync(nodeOne, CancellationToken.None))!.DesiredRevision);
-
-        Assert.IsNull(await fixture.Repository.SetServicesEnabledBatchAsync(
-        [
-            new BatchServiceEnabledItemRecord(nodeOne, first.Service!.Id, true),
-            new BatchServiceEnabledItemRecord(nodeOne, first.Service!.Id, false)
-        ], CancellationToken.None));
-        Assert.IsFalse((await fixture.Repository.GetServicesForNodeAsync(nodeOne, CancellationToken.None))
-            .Single(item => item.Service.Id == first.Service!.Id).Service.Enabled);
     }
 
     [TestMethod]
@@ -810,7 +770,7 @@ public sealed class SqliteServerRepositoryTests
         var names = (await fixture.Repository.GetSubscriptionServicesAsync("order-token", CancellationToken.None))!
             .Select(item => item.Name).ToArray();
 
-        CollectionAssert.AreEqual(new[] { "a-node · b-svc", "a-node · z-svc", "b-node · a-svc", "b-node · c-svc" }, names);
+        CollectionAssert.AreEqual(new[] { "b-svc · From a-node", "z-svc · From a-node", "a-svc · From b-node", "c-svc · From b-node" }, names);
     }
 
     [TestMethod]
@@ -920,12 +880,12 @@ public sealed class SqliteServerRepositoryTests
         Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "2.0", "linux-x64", 1, null, [], [],
             CancellationToken.None, null, "203.0.113.9", null, "2a01:4f8::9"));
         var node = (await fixture.Repository.GetNodeAsync(nodeId, CancellationToken.None))!.DisplayName;
-        CollectionAssert.AreEqual(new[] { $"{node} · svc@203.0.113.9", $"{node} · svc · IPv6@2a01:4f8::9" }, await Entries());
+        CollectionAssert.AreEqual(new[] { $"svc · From {node}@203.0.113.9", $"svc · IPv6 · From {node}@2a01:4f8::9" }, await Entries());
         Assert.AreEqual("2a01:4f8::9", (await fixture.Repository.GetNodeObservationsAsync(CancellationToken.None)).Single().PublicIpv6);
 
         // The service can opt out of the IPv6 entry.
         Assert.IsTrue(await fixture.Repository.SetServiceIpv6EntryAsync(nodeId, service.Id, false, CancellationToken.None));
-        CollectionAssert.AreEqual(new[] { $"{node} · svc@203.0.113.9" }, await Entries());
+        CollectionAssert.AreEqual(new[] { $"svc · From {node}@203.0.113.9" }, await Entries());
         Assert.IsFalse((await fixture.Repository.GetServicesForNodeAsync(nodeId, CancellationToken.None)).Single().Service.Ipv6Entry);
         Assert.IsFalse(await fixture.Repository.SetServiceIpv6EntryAsync(Guid.NewGuid(), service.Id, true, CancellationToken.None));
         Assert.IsTrue(await fixture.Repository.SetServiceIpv6EntryAsync(nodeId, service.Id, true, CancellationToken.None));
@@ -933,7 +893,7 @@ public sealed class SqliteServerRepositoryTests
         // The Agent forgot its IPv6: the entry goes away instead of lingering.
         Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "2.0", "linux-x64", 1, null, [], [],
             CancellationToken.None, null, "203.0.113.9"));
-        CollectionAssert.AreEqual(new[] { $"{node} · svc@203.0.113.9" }, await Entries());
+        CollectionAssert.AreEqual(new[] { $"svc · From {node}@203.0.113.9" }, await Entries());
 
         // An explicit endpoint replaces both automatic entries.
         Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "2.0", "linux-x64", 1, null, [], [],
@@ -941,7 +901,73 @@ public sealed class SqliteServerRepositoryTests
         Assert.IsTrue(await fixture.Repository.SetServicePublicEndpointAsync(nodeId,
             new ServicePublicEndpointRecord(service.Id, "edge.example.com", 443, null, fixture.Time.GetUtcNow()),
             CancellationToken.None));
-        CollectionAssert.AreEqual(new[] { $"{node} · svc@edge.example.com" }, await Entries());
+        CollectionAssert.AreEqual(new[] { $"svc · From {node}@edge.example.com" }, await Entries());
+    }
+
+    [TestMethod]
+    public async Task Subscription_DirectOnlyGroupSeesOnlyDirectLines()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        var nodeId = Guid.NewGuid();
+        var agentId = await CreateAgentAsync(fixture, nodeId, "direct-token", "direct-secret");
+        Assert.IsTrue(await fixture.Repository.TryUpdateAgentSyncAsync(agentId, "2.0", "linux-x64", 1, null, [], [],
+            CancellationToken.None, null, "203.0.113.9", "JP"));
+        var node = (await fixture.Repository.GetNodeAsync(nodeId, CancellationToken.None))!.DisplayName;
+        const string socks = "\"upstreamProxyType\":\"socks5\",\"upstreamProxyHost\":\"p.example\",\"upstreamProxyPort\":1080";
+        var directRoute = Guid.NewGuid();
+        var proxiedRoute = Guid.NewGuid();
+        var mixed = XrayService(CreateService(nodeId, Guid.NewGuid(), "mixed")) with
+        {
+            ConfigJson = $$"""{"listenPort":443,{{socks}},"routes":[{"id":"{{directRoute}}","name":"Home"},{"id":"{{proxiedRoute}}","name":"Webshare",{{socks}}}]}"""
+        };
+        var proxied = XrayService(CreateService(nodeId, Guid.NewGuid(), "proxied")) with { ConfigJson = $"{{\"listenPort\":444,{socks}}}" };
+        var direct = XrayService(CreateService(nodeId, Guid.NewGuid(), "direct")) with { ConfigJson = "{\"listenPort\":445}" };
+        var group = Guid.NewGuid();
+        Assert.IsTrue(await fixture.Repository.SaveGroupAsync(group, "Direct", false, [], true, CancellationToken.None,
+            directOnly: true));
+        var user = await fixture.Repository.CreateUserAsync(Guid.NewGuid(), "Direct", "direct", "hash", "User", true,
+            null, null, "direct-sub", CancellationToken.None);
+        Assert.IsTrue(await fixture.Repository.SetUserGroupAsync(user.User.Id, group, CancellationToken.None));
+        foreach (var service in new[] { mixed, proxied, direct })
+            await fixture.Repository.CreateServiceAsync(service, CancellationToken.None);
+        Assert.IsTrue(await fixture.Repository.SaveGroupAsync(group, "Direct", false, [mixed.Id, proxied.Id, direct.Id],
+            false, CancellationToken.None, directOnly: true));
+        async Task<string[]> Entries() =>
+        [
+            .. (await fixture.Repository.GetSubscriptionServicesAsync("direct-sub", CancellationToken.None))!
+                .SelectMany(item => (item.IncludeDefault ? [item.Name] : Array.Empty<string>())
+                    .Concat((item.Routes ?? []).Select(route => route.Name)))
+        ];
+
+        CollectionAssert.AreEqual(new[] { $"🇯🇵 JP · direct · From {node}", $"🇯🇵 JP · Home · From {node}" }, await Entries(),
+            "the proxied default lines, the proxied route and the service without a direct line are left out");
+        Assert.IsTrue((await fixture.Repository.GetServiceCredentialsAsync(mixed.Id, true, CancellationToken.None)).Single().DirectOnly);
+
+        var before = (await fixture.Repository.GetNodeAsync(nodeId, CancellationToken.None))!.DesiredRevision;
+        Assert.IsTrue(await fixture.Repository.SaveGroupAsync(group, "Direct", false, [mixed.Id, proxied.Id, direct.Id],
+            false, CancellationToken.None));
+        Assert.IsTrue((await fixture.Repository.GetNodeAsync(nodeId, CancellationToken.None))!.DesiredRevision > before,
+            "turning the switch off re-sends the node's users");
+        Assert.AreEqual(5, (await Entries()).Length);
+    }
+
+    [TestMethod]
+    public void AgentSync_DirectOnlyUsersAreLeftOutWhereNoLineGoesDirect()
+    {
+        var plain = new UserServiceCredentialRecord(Guid.NewGuid(), Guid.NewGuid(), "xray", "a", "Active",
+            DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch);
+        var restricted = plain with { UserId = Guid.NewGuid(), Credential = "b", DirectOnly = true };
+        UserServiceCredentialRecord[] credentials = [plain, restricted];
+        var direct = new ServiceRoute(Guid.NewGuid(), "direct", null);
+        var proxy = new UpstreamProxy("socks5", "p.example", 1080, null, null);
+
+        string Users(ServiceLines lines, bool current) => string.Join(',',
+            AgentSyncEndpoints.DesiredUsers(credentials, lines, current).Select(user => $"{user.Credential}{(user.DirectOnly ? "!" : "")}"));
+        Assert.AreEqual("a,b", Users(new ServiceLines(false, []), false), "nothing proxied: no flag, even for old Agents");
+        Assert.AreEqual("a,b!", Users(new ServiceLines(true, [direct]), true));
+        Assert.AreEqual("a", Users(new ServiceLines(true, []), true), "no direct line at all");
+        Assert.AreEqual("a", Users(new ServiceLines(false, [direct with { Proxy = proxy }]), false),
+            "an old Agent would admit the user to the proxied route");
     }
 
     [TestMethod]
@@ -970,8 +996,9 @@ public sealed class SqliteServerRepositoryTests
             [], CancellationToken.None, null, "203.0.113.9", "US"));
 
         var names = (await fixture.Repository.GetSubscriptionServicesAsync("exit-token-sub", CancellationToken.None))!
-            .Select(item => item.Name[..item.Name.IndexOf(' ')]).ToArray();
-        CollectionAssert.AreEqual(new[] { "🇫🇷", "🇺🇸" }, names);
+            .Select(item => item.Name).ToArray();
+        var node = (await fixture.Repository.GetNodeAsync(nodeId, CancellationToken.None))!.DisplayName;
+        CollectionAssert.AreEqual(new[] { $"🇫🇷 FR · a-proxied · From {node}", $"🇺🇸 US · b-direct · From {node}" }, names);
     }
 
     [TestMethod]
@@ -1526,7 +1553,7 @@ public sealed class SqliteServerRepositoryTests
         var mihomo = await RenderSubscriptionAsync(fixture, "mixed-token");
         StringAssert.Contains(mihomo, "type: hysteria2");
         // Default template: proxies expand into the placeholder groups and the routing rules are present.
-        StringAssert.Contains(mihomo, "  - name: 🚀 手动切换\n    type: select\n    proxies:\n      - \"mixed · hy two\"\n      - \"mixed · xray # one\"");
+        StringAssert.Contains(mihomo, "  - name: 🚀 手动切换\n    type: select\n    proxies:\n      - \"hy two · From mixed\"\n      - \"xray # one · From mixed\"");
         StringAssert.Contains(mihomo, "  - MATCH,🐟 漏网之鱼");
         Assert.IsFalse(mihomo.Contains("- __ALL_PROXIES__", StringComparison.Ordinal));
         Assert.IsFalse(mihomo.Contains("proxies: ~", StringComparison.Ordinal));

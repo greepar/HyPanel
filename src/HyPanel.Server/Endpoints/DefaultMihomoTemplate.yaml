@@ -1,5 +1,5 @@
 # HyPanel 默认 Mihomo 订阅模板（分流规则参考 ACL4SSR / sublinkPro）
-# __ALL_PROXIES__ 会被替换为该用户可用的全部节点；地区组按节点名称自动归类（include-all + filter）。
+# __ALL_PROXIES__ 会被替换为该用户可用的全部节点；地区组按节点名开头的出口国旗自动归类（include-all + filter）。
 mixed-port: 7890
 allow-lan: false
 mode: rule
@@ -209,49 +209,49 @@ proxy-groups:
     interval: 300
     tolerance: 50
     include-all: true
-    filter: "(?i)(🇭🇰|港|hk|hong ?kong)"
+    filter: "^🇭🇰"
   - name: 🇨🇳 台湾节点
     type: url-test
     url: http://www.gstatic.com/generate_204
     interval: 300
     tolerance: 50
     include-all: true
-    filter: "(?i)(🇹🇼|台|tw|taiwan)"
+    filter: "^🇹🇼"
   - name: 🇸🇬 狮城节点
     type: url-test
     url: http://www.gstatic.com/generate_204
     interval: 300
     tolerance: 50
     include-all: true
-    filter: "(?i)(🇸🇬|新加坡|狮城|sg|singapore)"
+    filter: "^🇸🇬"
   - name: 🇯🇵 日本节点
     type: url-test
     url: http://www.gstatic.com/generate_204
     interval: 300
     tolerance: 50
     include-all: true
-    filter: "(?i)(🇯🇵|日本|东京|大阪|jp|japan)"
+    filter: "^🇯🇵"
   - name: 🇺🇲 美国节点
     type: url-test
     url: http://www.gstatic.com/generate_204
     interval: 300
     tolerance: 50
     include-all: true
-    filter: "(?i)(🇺🇸|美|洛杉矶|硅谷|西雅图|us|united states|america)"
+    filter: "^🇺🇸"
   - name: 🇰🇷 韩国节点
     type: url-test
     url: http://www.gstatic.com/generate_204
     interval: 300
     tolerance: 50
     include-all: true
-    filter: "(?i)(🇰🇷|韩|韓|首尔|kr|korea)"
+    filter: "^🇰🇷"
   - name: 🇬🇧 英国节点
     type: url-test
     url: http://www.gstatic.com/generate_204
     interval: 300
     tolerance: 50
     include-all: true
-    filter: "(?i)(🇬🇧|英|伦敦|uk|united kingdom|britain)"
+    filter: "^🇬🇧"
 
 rules:
   - DOMAIN,clash.razord.top,DIRECT

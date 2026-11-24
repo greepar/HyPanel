@@ -26,7 +26,7 @@ export type User = {
   trafficResetDay?: number | null
 }
 
-export type UserGroup = { id: string; name: string; isDefault: boolean; autoIncludeNewServices: boolean; serviceIds: string[]; memberCount: number }
+export type UserGroup = { id: string; name: string; isDefault: boolean; autoIncludeNewServices: boolean; directOnly: boolean; serviceIds: string[]; memberCount: number }
 
 export type NodeMetrics = {
   observedAt: string

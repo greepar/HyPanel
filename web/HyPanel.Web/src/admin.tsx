@@ -1883,7 +1883,6 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
   const [editor, setEditor] = useState<{ service: Service | null } | null>(
     null,
   );
-  const [selected, setSelected] = useState<string[]>([]);
   // Services touched since the node last caught up: their badge says 下发中 until the Agent applies the revision.
   const [touched, setTouched] = useState<{ ids: Set<string>; revision: number } | null>(null);
   const applyingNode = node.online && node.appliedRevision !== null && node.appliedRevision < node.desiredRevision;
@@ -1932,10 +1931,6 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
             ? next
             : next.map((service) => ({ ...service, runtime: null })),
         ),
-      );
-      // A background refresh keeps the selection of services that still exist.
-      setSelected((current) =>
-        silent ? current.filter((serviceId) => next.some((service) => service.id === serviceId)) : [],
       );
     } catch (reason) {
       if (!silent && !(reason instanceof DOMException && reason.name === "AbortError"))
@@ -2015,28 +2010,6 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
       setError(messageFor(reason, "无法更新服务状态"));
     }
   };
-  const batch = async (value: boolean) => {
-    for (const serviceId of selected) override(serviceId, { enabled: value });
-    touch(selected);
-    setServices((current) => current.map((item) => (selected.includes(item.id) ? { ...item, enabled: value } : item)));
-    try {
-      await api.request("/api/admin/v1/services/batch-enabled", {
-        method: "POST",
-        body: JSON.stringify({
-          items: selected.map((serviceId) => ({
-            nodeId,
-            serviceId,
-            enabled: value,
-          })),
-        }),
-      });
-      await loadServices(nodeId, undefined, true);
-    } catch (reason) {
-      for (const serviceId of selected) clearOverride(serviceId);
-      await loadServices(nodeId, undefined, true);
-      setError(messageFor(reason, "无法批量更新服务"));
-    }
-  };
   if (!loading && loadError)
     return (
       <ErrorState message={loadError} retry={() => void loadServices(nodeId)} />
@@ -2060,32 +2033,6 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
           添加服务
         </button>
       </div>
-      {selected.length > 0 && (
-        <div className="selection-bar">
-          <strong>已选择 {selected.length} 项</strong>
-          <button
-            className="button button-secondary"
-            type="button"
-            onClick={() => void batch(true)}
-          >
-            启用
-          </button>
-          <button
-            className="button button-secondary"
-            type="button"
-            onClick={() => void batch(false)}
-          >
-            停用
-          </button>
-          <button
-            className="link-button"
-            type="button"
-            onClick={() => setSelected([])}
-          >
-            取消选择
-          </button>
-        </div>
-      )}
       {loading ? (
         <Loading />
       ) : services.length ? (
@@ -2099,14 +2046,6 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
               <ServiceCard
                 key={service.id}
                 service={service}
-                selected={selected.includes(service.id)}
-                select={() =>
-                  setSelected((current) =>
-                    current.includes(service.id)
-                      ? current.filter((id) => id !== service.id)
-                      : [...current, service.id],
-                  )
-                }
                 edit={() => setEditor({ service })}
                 remove={() => void remove(service)}
                 enabled={(value) => void enabled(service, value)}
@@ -2159,8 +2098,6 @@ function ServicesPage({ api, setError, node }: PageProps & { node: Node }) {
 
 function ServiceCard({
   service,
-  selected,
-  select,
   edit,
   remove,
   enabled,
@@ -2168,8 +2105,6 @@ function ServiceCard({
 }: {
   service: Service;
   applying: boolean;
-  selected: boolean;
-  select: () => void;
   edit: () => void;
   remove: () => void;
   enabled: (value: boolean) => void;
@@ -2184,12 +2119,8 @@ function ServiceCard({
   const version = service.runtime?.backendVersion ?? service.backendVersion;
   const updatable = !!service.latestBackendVersion && service.latestBackendVersion !== version;
   return (
-    <article className={`service-card ${selected ? "selected" : ""} ${applying ? "applying" : ""}`}>
+    <article className={`service-card ${applying ? "applying" : ""}`}>
       <div className="service-card-main">
-        <label className="check">
-          <input type="checkbox" checked={selected} onChange={select} />
-          <span className="sr-only">选择 {service.name}</span>
-        </label>
         <BackendMark badge={backend.badge} />
         <div className="service-identity">
           <div>
@@ -2894,7 +2825,7 @@ function ExitFields({ value, onChange, reveal }: { value: ExitForm; onChange: (v
 function UsersPage({ api, setError }: PageProps) {
   const [users, setUsers] = useState<User[]>(() => readCache<User[]>("users:list") ?? []);
   const [groups, setGroups] = useState<UserGroup[]>(() => readCache<UserGroup[]>("users:groups") ?? []);
-  const [groupEditor, setGroupEditor] = useState<{ group: UserGroup | null; name: string; autoInclude: boolean; serviceIds: string[] } | null>(null);
+  const [groupEditor, setGroupEditor] = useState<{ group: UserGroup | null; name: string; autoInclude: boolean; directOnly: boolean; serviceIds: string[] } | null>(null);
   const [services, setServices] = useState<ServiceRef[]>(() => readCache<ServiceRef[]>("users:services") ?? []);
   const [usage, setUsage] = useState<Usage[]>(() => readCache<Usage[]>("users:usage") ?? []);
   const [previous, setPrevious] = useState<PreviousUsage[]>(() => readCache<PreviousUsage[]>("users:previous") ?? []);
@@ -3015,6 +2946,7 @@ function UsersPage({ api, setError }: PageProps) {
       await api.saveGroup(groupEditor.group?.id ?? null, {
         name: groupEditor.name,
         autoIncludeNewServices: groupEditor.autoInclude,
+        directOnly: groupEditor.directOnly,
         serviceIds: groupEditor.serviceIds,
       });
       setGroupEditor(null);
@@ -3050,7 +2982,7 @@ function UsersPage({ api, setError }: PageProps) {
           <button
             className="button button-secondary"
             type="button"
-            onClick={() => setGroupEditor({ group: null, name: "", autoInclude: false, serviceIds: [] })}
+            onClick={() => setGroupEditor({ group: null, name: "", autoInclude: false, directOnly: false, serviceIds: [] })}
           >
             新建用户组
           </button>
@@ -3083,6 +3015,7 @@ function UsersPage({ api, setError }: PageProps) {
                   <small>
                     {group.serviceIds.length} 个服务 · {group.memberCount} 名成员
                     {group.autoIncludeNewServices ? " · 新服务自动加入" : ""}
+                    {group.directOnly ? " · 禁用代理线路" : ""}
                   </small>
                   <div className="service-tags">
                     {group.serviceIds.slice(0, 6).map((id) => {
@@ -3096,7 +3029,7 @@ function UsersPage({ api, setError }: PageProps) {
                   <button
                     className="button button-secondary button-small"
                     type="button"
-                    onClick={() => setGroupEditor({ group, name: group.name, autoInclude: group.autoIncludeNewServices, serviceIds: group.serviceIds })}
+                    onClick={() => setGroupEditor({ group, name: group.name, autoInclude: group.autoIncludeNewServices, directOnly: group.directOnly, serviceIds: group.serviceIds })}
                   >
                     编辑
                   </button>
@@ -3265,6 +3198,16 @@ function UsersPage({ api, setError }: PageProps) {
               <span />
               以后新建的服务自动加入本组
             </label>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={groupEditor.directOnly}
+                onChange={(event) => setGroupEditor({ ...groupEditor, directOnly: event.currentTarget.checked })}
+              />
+              <span />
+              禁止使用代理线路
+            </label>
+            <p className="field-help">开启后，本组成员只能用直连出去的线路：经 HTTP / SOCKS 代理出去的线路不会出现在订阅里，节点也不接受他们的连接。</p>
             <div className="group-services">
               {[...new Set(services.map((service) => service.nodeName))].map((nodeName) => (
                 <fieldset key={nodeName}>

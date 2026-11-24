@@ -126,8 +126,6 @@ internal sealed record HealthServiceRecord(
     string? ErrorCode,
     string? ErrorMessage);
 
-internal sealed record BatchServiceEnabledItemRecord(Guid NodeId, Guid ServiceId, bool Enabled);
-internal sealed record BatchServiceEnabledNodeResult(Guid NodeId, long Revision);
 
 internal sealed record ServicePublicEndpointRecord(
     Guid ServiceId,
@@ -145,7 +143,8 @@ internal sealed record SubscriptionServiceRecord(
     string Credential,
     ServicePublicEndpointRecord PublicEndpoint,
     string? PinnedCertificateSha256 = null,
-    IReadOnlyList<SubscriptionRouteEntry>? Routes = null);
+    IReadOnlyList<SubscriptionRouteEntry>? Routes = null,
+    bool IncludeDefault = true);
 
 /// <summary>An extra line of a REALITY service as a subscription entry: same server, its own name and UUID.</summary>
 internal sealed record SubscriptionRouteEntry(Guid RouteId, string Name);

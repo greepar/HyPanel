@@ -61,7 +61,7 @@ internal static class SubscriptionEndpoints
             var entries = new List<SubscriptionProxy>();
             if (protocol.Project(service, document.RootElement, service.Name, service.Credential) is not { } main)
                 return [];
-            entries.Add(main);
+            if (service.IncludeDefault) entries.Add(main);
             foreach (var route in service.Routes ?? [])
                 if (protocol.Project(service, document.RootElement, route.Name,
                         ServiceRoute.Credential(service.Credential, route.RouteId)) is { } entry)
@@ -79,8 +79,12 @@ internal static class SubscriptionEndpoints
     private static string RenderMihomo(IEnumerable<SubscriptionProxy> proxies, string template)
     {
         var rendered = new List<(string Name, string Yaml)>();
-        foreach (var proxy in proxies)
+        // Mihomo rejects a profile with two proxies of one name; names can meet when a line shares another's name.
+        var taken = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var original in proxies)
         {
+            var proxy = original;
+            for (var copy = 2; !taken.Add(proxy.Name); copy++) proxy = original with { Name = $"{original.Name} ({copy})" };
             var yaml = new StringBuilder();
             proxy.AppendMihomo(yaml);
             rendered.Add((proxy.Name, yaml.ToString()));

@@ -85,11 +85,15 @@ internal abstract class MihomoEngineProvider<TConfig>(HttpClient? httpClient, Ti
             throw new InvalidOperationException("Mihomo users are invalid.");
 
         var routes = config.Routes?.OfType<XrayRouteConfig>().ToArray() ?? [];
-        // Every user logs in once per line: the default line with their credential, each route with a derived one.
-        var identities = users.SelectMany(user => routes
-                .Select(route => new MihomoIdentity(user.UserId, ServiceRoute.Credential(user.Credential, route.Id),
-                    ServiceRoute.UserTag(user.UserId, route.Id)))
-                .Prepend(new MihomoIdentity(user.UserId, user.Credential, ServiceRoute.UserTag(user.UserId))))
+        var defaultProxied = config.ProxyOrNull() is not null;
+        // Every user logs in once per line they may take: the default line with their credential, each route with a
+        // derived one. A direct-only user has no login on a line that leaves through a proxy.
+        var identities = users.SelectMany(user => (user.Admits(defaultProxied)
+                    ? [new MihomoIdentity(user.UserId, user.Credential, ServiceRoute.UserTag(user.UserId))]
+                    : Array.Empty<MihomoIdentity>())
+                .Concat(routes.Where(route => user.Admits(route.ProxyOrNull() is not null))
+                    .Select(route => new MihomoIdentity(user.UserId, ServiceRoute.Credential(user.Credential, route.Id),
+                        ServiceRoute.UserTag(user.UserId, route.Id)))))
             .ToArray();
         var listener = BuildListener(config, identities, desiredState);
         listener["name"] = "hypanel-in";
@@ -106,8 +110,10 @@ internal abstract class MihomoEngineProvider<TConfig>(HttpClient? httpClient, Ti
                 target = $"route-{route.Id:N}";
                 proxies.Add((JsonNode)Upstream(routeProxy, target));
             }
-            if (users.Count > 0)
-                rules.Add((JsonNode)$"IN-USER,{string.Join('/', users.Select(user => ServiceRoute.UserTag(user.UserId, route.Id)))},{target}");
+            var routeUsers = users.Where(user => user.Admits(route.ProxyOrNull() is not null))
+                .Select(user => ServiceRoute.UserTag(user.UserId, route.Id)).ToArray();
+            if (routeUsers.Length > 0)
+                rules.Add((JsonNode)$"IN-USER,{string.Join('/', routeUsers)},{target}");
         }
         // Everything else leaves through the upstream proxy when there is one, failing closed like the other engines.
         var proxy = config.ProxyOrNull();

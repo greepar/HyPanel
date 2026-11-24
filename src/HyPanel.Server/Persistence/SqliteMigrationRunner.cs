@@ -4,7 +4,7 @@ namespace HyPanel.Server.Persistence;
 
 internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
 {
-    public const long CurrentSchemaVersion = 33;
+    public const long CurrentSchemaVersion = 34;
     private const long InitialSchemaVersion = 1;
     private const long CommandExpirySchemaVersion = 2;
     private const long ServiceInstancesSchemaVersion = 3;
@@ -731,6 +731,15 @@ internal sealed class SqliteMigrationRunner(SqliteConnectionFactory connectionFa
                 ALTER TABLE certificates ADD COLUMN acme_account_ciphertext BLOB NULL;
                 ALTER TABLE certificates ADD COLUMN acme_account_tag BLOB NULL;
                 INSERT INTO schema_migrations (version, applied_at_utc) VALUES (33, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                """, cancellationToken);
+        }
+
+        if (!await IsAppliedAsync(connection, transaction, 34, cancellationToken))
+        {
+            // A direct-only group's members get no line that leaves through an upstream proxy.
+            await ExecuteAsync(connection, transaction, """
+                ALTER TABLE user_groups ADD COLUMN direct_only INTEGER NOT NULL DEFAULT 0;
+                INSERT INTO schema_migrations (version, applied_at_utc) VALUES (34, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
                 """, cancellationToken);
         }
 

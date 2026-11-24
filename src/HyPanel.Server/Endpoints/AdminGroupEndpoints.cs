@@ -3,7 +3,7 @@ using HyPanel.Server.Persistence;
 
 namespace HyPanel.Server.Endpoints;
 
-/// <summary>User groups: each group lists the services its members may use.</summary>
+/// <summary>User groups: each group lists the services its members may use, and whether they may use proxied lines.</summary>
 internal static class AdminGroupEndpoints
 {
     private const int MaximumNameLength = 64;
@@ -40,7 +40,8 @@ internal static class AdminGroupEndpoints
         var access = await authorization.AuthorizeAsync(request, ct);
         if (access != AdminAccessResult.Allowed) return AdminAuthorization.Failure(access);
         if (!TryName(body.Name, out var name) || body.ServiceIds is { Length: > MaximumServices }) return Results.BadRequest();
-        if (!await repository.SaveGroupAsync(id, name, body.AutoIncludeNewServices, body.ServiceIds ?? [], create, ct))
+        if (!await repository.SaveGroupAsync(id, name, body.AutoIncludeNewServices, body.ServiceIds ?? [], create, ct,
+                body.DirectOnly))
             return create ? Results.Conflict() : Results.NotFound();
         var group = (await repository.GetGroupsAsync(ct)).Single(item => item.Id == id);
         return Results.Json(Map(group), ServerJsonSerializerContext.Default.UserGroupResponse,
@@ -67,5 +68,5 @@ internal static class AdminGroupEndpoints
     }
 
     private static UserGroupResponse Map(UserGroupRecord group) => new(group.Id, group.Name, group.IsDefault,
-        group.AutoIncludeNewServices, [.. group.ServiceIds], group.MemberCount);
+        group.AutoIncludeNewServices, [.. group.ServiceIds], group.MemberCount, group.DirectOnly);
 }

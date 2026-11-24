@@ -64,8 +64,6 @@ namespace HyPanel.Server.Endpoints;
 [JsonSerializable(typeof(Guid[]))]
 [JsonSerializable(typeof(ServicePublicEndpointRequest))]
 [JsonSerializable(typeof(ServicePublicEndpointResponse))]
-[JsonSerializable(typeof(BatchServiceEnabledRequest))]
-[JsonSerializable(typeof(BatchServiceEnabledResponse))]
 [JsonSerializable(typeof(HealthSummaryResponse))]
 [JsonSerializable(typeof(SetAgentUpdatePolicyRequest))]
 [JsonSerializable(typeof(SetNodeTrafficResetDayRequest))]

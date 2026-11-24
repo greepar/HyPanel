@@ -132,7 +132,6 @@ public static class Program
         AdminServicesEndpoints.Map(app);
         AdminCertificatesEndpoints.Map(app);
         AdminBackendEndpoints.Map(app);
-        AdminServiceBatchEndpoints.Map(app);
         AdminGroupEndpoints.Map(app);
         SubscriptionTemplateEndpoints.Map(app);
         AdminObservationEndpoints.Map(app);

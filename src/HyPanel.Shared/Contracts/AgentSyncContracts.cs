@@ -158,9 +158,18 @@ public static class AcmeChallenges
     public const string Cloudflare = "cloudflare";
 }
 
+/// <param name="DirectOnly">
+/// The user's group may not use upstream proxies: the Agent leaves out the lines (default or route) that leave through
+/// one. The Panel already drops a user who would have no line left.
+/// </param>
 public sealed record BackendUser(
     Guid UserId,
-    string Credential);
+    string Credential,
+    bool DirectOnly = false)
+{
+    /// <summary>Whether this user may take a line; <paramref name="proxied"/> says the line leaves through a proxy.</summary>
+    public bool Admits(bool proxied) => !(proxied && DirectOnly);
+}
 
 public sealed record BackendArtifact(
     string BackendType,

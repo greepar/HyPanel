@@ -291,6 +291,23 @@ public sealed class XrayProviderTests
     }
 
     [TestMethod]
+    public async Task DirectOnlyUserGetsNoClientOnAProxiedRoute()
+    {
+        var config = CreateConfigJson().TrimEnd('}') +
+            $",\"routes\":[{{\"id\":\"{RouteId}\",\"name\":\"法国\",\"upstreamProxyType\":\"socks5\",\"upstreamProxyHost\":\"fr.example\",\"upstreamProxyPort\":1080}}]}}";
+        var desired = CreateDesiredState(configJson: config);
+        desired = desired with { Users = [.. desired.Users!.Select(user => user with { DirectOnly = true })] };
+        using var document = JsonDocument.Parse((await provider.RenderConfigAsync(desired, CancellationToken.None)).Content);
+        var root = document.RootElement;
+
+        var clients = root.GetProperty("inbounds")[0].GetProperty("settings").GetProperty("clients");
+        Assert.AreEqual(1, clients.GetArrayLength(), "only the direct default line");
+        Assert.AreEqual(ClientId, clients[0].GetProperty("id").GetString());
+        Assert.IsFalse(root.TryGetProperty("routing", out var routing) && routing.ValueKind != JsonValueKind.Null,
+            "no rule names a user the route does not admit");
+    }
+
+    [TestMethod]
     public async Task RouteWithIncompleteProxyIsRejected()
     {
         var config = CreateConfigJson().TrimEnd('}') +

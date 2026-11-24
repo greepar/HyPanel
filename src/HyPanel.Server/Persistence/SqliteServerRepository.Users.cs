@@ -382,9 +382,11 @@ internal sealed partial class SqliteServerRepository
         await using var c = await connectionFactory.OpenAsync(ct);
         await using var cmd = c.CreateCommand();
         cmd.CommandText = """
-                          SELECT k.user_id,k.service_id,k.backend_type,k.nonce,k.ciphertext,k.tag,k.status,k.created_at_utc,k.updated_at_utc
+                          SELECT k.user_id,k.service_id,k.backend_type,k.nonce,k.ciphertext,k.tag,k.status,k.created_at_utc,k.updated_at_utc,
+                                 COALESCE(g.direct_only,0)
                           FROM user_service_credentials k
                           JOIN users u ON u.id=k.user_id
+                          LEFT JOIN user_groups g ON g.id=u.group_id
                           WHERE k.service_id=@service
                             AND (@eligible=0 OR (k.status='Active' AND u.enabled=1
                               AND (u.expires_at_utc IS NULL OR u.expires_at_utc>@now)
@@ -403,7 +405,8 @@ internal sealed partial class SqliteServerRepository
             var credential = credentialProtector.Unprotect(userId, id, backend,
                 new ProtectedCredential((byte[])r[3], (byte[])r[4], (byte[])r[5]));
             records.Add(new UserServiceCredentialRecord(userId, id, backend, credential, r.GetString(6),
-                SqliteValue.ToDateTimeOffset(r.GetString(7)), SqliteValue.ToDateTimeOffset(r.GetString(8))));
+                SqliteValue.ToDateTimeOffset(r.GetString(7)), SqliteValue.ToDateTimeOffset(r.GetString(8)),
+                r.GetInt64(9) == 1));
         }
         return records;
     }
@@ -546,7 +549,8 @@ internal sealed partial class SqliteServerRepository
         await using var c = await connectionFactory.OpenAsync(ct);
         await using var user = c.CreateCommand();
         user.CommandText = """
-                           SELECT u.id FROM users u
+                           SELECT u.id,COALESCE(g.direct_only,0) FROM users u
+                           LEFT JOIN user_groups g ON g.id=u.group_id
                            WHERE u.subscription_token_hash=@hash AND u.enabled=1
                              AND (u.expires_at_utc IS NULL OR u.expires_at_utc>@now)
                              AND (u.traffic_limit_bytes IS NULL OR
@@ -554,13 +558,19 @@ internal sealed partial class SqliteServerRepository
                            """;
         user.Parameters.Add("@hash", SqliteType.Blob).Value = TokenHash(token);
         user.Parameters.AddWithValue("@now", SqliteValue.ToUtcText(now));
-        var userId = await user.ExecuteScalarAsync(ct) as string;
-        if (userId is null) return null;
+        string userId;
+        bool directOnly;
+        await using (var found = await user.ExecuteReaderAsync(ct))
+        {
+            if (!await found.ReadAsync(ct)) return null;
+            userId = found.GetString(0);
+            directOnly = found.GetInt64(1) == 1;
+        }
 
         var services = new List<SubscriptionServiceRecord>();
         await using var cmd = c.CreateCommand();
         cmd.CommandText = """
-                           SELECT s.id,n.display_name || ' · ' || s.name,s.backend_type,s.config_json,
+                           SELECT s.id,s.name,s.backend_type,s.config_json,
                                   COALESCE(p.host,CASE WHEN rn.id IS NULL THEN a.public_ipv4 ELSE ra.public_ipv4 END),
                                   COALESCE(p.port,CASE WHEN rn.id IS NULL THEN NULL ELSE CAST(json_extract(s.config_json,'$.relayPort') AS INTEGER) END,
                                            CAST(json_extract(s.config_json,'$.listenPort') AS INTEGER)),
@@ -602,32 +612,45 @@ internal sealed partial class SqliteServerRepository
             var san = r.IsDBNull(11) ? null : r.GetString(11);
             var pem = r.IsDBNull(12) ? null : r.GetString(12);
             var serverName = r.IsDBNull(6) ? ServerNameFor(san, r.GetString(13), serviceId) : r.GetString(6);
-            var name = r.IsDBNull(14) ? r.GetString(1) : $"{CountryFlag(r.GetString(14))} {r.GetString(1)}";
+            var nodeName = r.GetString(13);
+            var defaultCountry = r.IsDBNull(14) ? null : r.GetString(14);
             var updated = SqliteValue.ToDateTimeOffset(r.GetString(7));
             // A node with a public IPv6 gets a second entry dialling it unless the service turned that off; an explicit
             // endpoint replaces both.
             var hosts = new List<(string Host, string Suffix)>(2);
             if (!r.IsDBNull(4)) hosts.Add((r.GetString(4), ""));
             if (!r.IsDBNull(15)) hosts.Add((r.GetString(15), " · IPv6"));
-            // Extra lines of a REALITY service: flagged with their proxy's country, or the node's when they go direct.
-            var routes = BackendDefinitionCatalog.Has(backend, BackendFeatures.Routes)
-                ? ServiceRoute.Parse(r.GetString(3)) : [];
+            // A direct-only group sees only the lines that go out directly; the Agent admits no others for them.
+            var lines = ServiceLines.Of(backend, r.GetString(3));
+            if (directOnly && !lines.AnyDirect) continue;
+            var routes = directOnly ? [.. lines.Routes.Where(static route => route.Proxy is null)] : lines.Routes;
+            // Extra lines: labelled with their proxy's country, or the node's when they go direct.
             var routeCountries = routes.Count == 0 || r.IsDBNull(16) ? null : RouteCountries(r.GetString(16));
             var nodeCountry = r.IsDBNull(17) ? null : r.GetString(17);
             foreach (var (host, suffix) in hosts)
-                services.Add(new SubscriptionServiceRecord(SqliteValue.ToGuid(userId), serviceId, name + suffix, backend,
+                services.Add(new SubscriptionServiceRecord(SqliteValue.ToGuid(userId), serviceId,
+                    SubscriptionName(defaultCountry, r.GetString(1) + suffix, nodeName), backend,
                     r.GetString(3), credential,
                     new ServicePublicEndpointRecord(serviceId, host, r.GetInt32(5), serverName, updated),
                     SelfSignedFingerprint(pem),
-                    routes.Count == 0 ? null : routes.Select(route =>
-                    {
-                        var country = route.Proxy is null ? nodeCountry : routeCountries?.GetValueOrDefault(route.Id);
-                        var label = $"{r.GetString(1)} · {route.Name}{suffix}";
-                        return new SubscriptionRouteEntry(route.Id, country is null ? label : $"{CountryFlag(country)} {label}");
-                    }).ToArray()));
+                    routes.Count == 0 ? null : routes.Select(route => new SubscriptionRouteEntry(route.Id,
+                        SubscriptionName(route.Proxy is null ? nodeCountry : routeCountries?.GetValueOrDefault(route.Id),
+                            route.Name + suffix, nodeName))).ToArray(),
+                    IncludeDefault: !(directOnly && lines.DefaultProxied)));
         }
 
         return services;
+    }
+
+    /// <summary>
+    /// A subscription entry's name: where traffic leaves (flag and country code), the line's own name, then the node it
+    /// enters through, e.g. "🇯🇵 JP · WebshareJp · From jp-nb".
+    /// </summary>
+    internal static string SubscriptionName(string? countryCode, string line, string nodeName)
+    {
+        var flag = countryCode is null ? string.Empty : CountryFlag(countryCode);
+        var origin = $"{line} · From {nodeName}";
+        return flag.Length == 0 ? origin : $"{flag} {countryCode!.ToUpperInvariant()} · {origin}";
     }
 
     private static Dictionary<Guid, string>? RouteCountries(string json)
